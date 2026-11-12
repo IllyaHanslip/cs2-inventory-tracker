@@ -130,6 +130,8 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
   around it. Steam prices can therefore be missing for a while; the app retries every 12 hours.
 - **Skinport, Market.CSGO and Waxpeer** publish free price lists. They're fetched once and cached for 30
   minutes. **CSFloat** uses its official API.
+- **Item names** for autocomplete come from CSFloat's public item list (downloaded weekly, no key needed) plus
+  the market price lists, so you can add items nobody is selling right now, such as an unlisted Sticker Slab.
 - **Marketplaces that need your login** (such as BUFF163) are deliberately not automated. Add their prices
   as manual quotes.
 - **Storage Unit contents** aren't visible in public Steam inventories, so they're entered by hand.

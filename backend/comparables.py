@@ -22,16 +22,14 @@ from urllib.parse import quote
 
 from config import Config
 
-from . import cache, evidence
+from . import cache, catalogue, evidence
 from .classify import applied_hash_name
 from .http_client import ApiError, AuthError, RateLimitError
 from .markets import SOURCES
 
-SCHEMA_URL = "https://csfloat.com/api/v1/schema"
 LISTINGS_URL = "https://csfloat.com/api/v1/listings"
 SALES_URL = "https://csfloat.com/api/v1/history/{name}/sales"
 ITEM_URL = "https://csfloat.com/item/{id}"
-SCHEMA_CACHE_SECONDS = 7 * 24 * 3600
 RESULT_CACHE_SECONDS = 3600
 MAX_KEY_STICKERS = 3
 ASKING_DISCOUNT = 0.85   # listings are asking prices; sales usually clear somewhat lower
@@ -43,22 +41,16 @@ EXTRA_LIMIT = 0.25       # other stickers may add at most 25 % of a comparable's
 # ---------------------------------------------------------------------------
 def _sticker_schema() -> dict[str, str]:
     """CSFloat sticker/patch ID (as text) -> market name, from the public schema (cached a week)."""
-    key = "csfloat_sticker_names"
-    cached = cache.get_cached(key, SCHEMA_CACHE_SECONDS)
+    cached = cache.get_cached(catalogue.STICKERS_KEY, catalogue.SCHEMA_CACHE_SECONDS)
     if cached is not None:
         return cached
     try:
-        resp = SOURCES["csfloat"].client.get(SCHEMA_URL)
-        if resp.status_code != 200:
-            raise ApiError(f"CSFloat schema returned HTTP {resp.status_code}")
-        names = {str(k): v["market_hash_name"] for k, v in resp.json()["stickers"].items() if v.get("market_hash_name")}
-    except (ApiError, ValueError, KeyError, TypeError) as exc:
-        stale = cache.get_stale(key)
+        return catalogue.refresh_schema()["stickers"]
+    except ApiError as exc:
+        stale = cache.get_stale(catalogue.STICKERS_KEY)
         if stale is not None:
             return stale
         raise ApiError(f"Couldn't load CSFloat's sticker list ({exc})") from None
-    cache.set_cached(key, names)
-    return names
 
 
 def sticker_names() -> dict[int, str]:

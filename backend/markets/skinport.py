@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from config import Config
 
-from .. import cache
 from ..http_client import ApiError, RateLimitedClient
 from .bulk import BulkPriceList
 
@@ -41,10 +40,3 @@ class Skinport(BulkPriceList):
             (row.get("market_hash_name"), row.get("min_price"), row.get("quantity"), row.get("item_page"))
             for row in data
         ]
-
-    def all_names(self, allow_fetch: bool = True) -> list[str]:
-        """Every CS2 item name Skinport knows about (used for autocomplete)."""
-        if not allow_fetch:
-            rows = cache.get_stale(self._cache_key()) or []
-            return [r[0] for r in rows]
-        return [r[0] for r in self.load_rows()]

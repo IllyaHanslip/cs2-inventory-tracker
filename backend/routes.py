@@ -9,7 +9,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from config import Config
 
-from . import comparables, db, evidence, fees, history, portfolio, settings, storage
+from . import catalogue, comparables, db, evidence, fees, history, portfolio, settings, storage
 from .classify import APPLIED_KINDS, CATEGORIES, EXTERIORS, applied_hash_name, categorize, exterior_from_float, exterior_from_name
 from .currency import FxConverter, last_source
 from .http_client import ApiError, RateLimitError
@@ -596,29 +596,14 @@ def item_history():
 # ---------------------------------------------------------------------------
 @bp.get("/names")
 def names():
-    query = request.args.get("q", "").strip().lower()
-    kind = request.args.get("kind")
+    """Autocomplete over every known item - not just ones currently for sale (see catalogue.py)."""
+    query = _text(request.args.get("q"), "q", 200) or ""
     if len(query) < 2:
         return jsonify(names=[])
     owned = [r["market_hash_name"] for r in db.query("SELECT DISTINCT market_hash_name FROM items")]
     owned += [applied_hash_name(r["kind"], r["name"]) for r in db.query("SELECT DISTINCT kind, name FROM item_stickers")]
-    try:
-        allow_fetch = "skinport" in settings.get("enabled_markets", [])
-        market_names = SOURCES["skinport"].all_names(allow_fetch=allow_fetch)
-    except ApiError:
-        market_names = []
-    prefix = APPLIED_KINDS.get(kind, "").lower()
-    terms = query.split()
-    matches = []
-    for name in dict.fromkeys(owned + market_names):
-        lower = name.lower()
-        if prefix and not lower.startswith(prefix):
-            continue
-        if all(t in lower for t in terms):
-            matches.append(name)
-            if len(matches) >= 25:
-                break
-    return jsonify(names=matches)
+    prefix = APPLIED_KINDS.get(request.args.get("kind") or "", "")
+    return jsonify(names=catalogue.search(query, owned=owned, prefix=prefix))
 
 
 @bp.get("/export.csv")
