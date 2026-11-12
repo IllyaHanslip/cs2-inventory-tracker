@@ -3,13 +3,17 @@
 
 import { api } from './api.js';
 import { confirmDialog, editItem, openItem, suggestNames } from './dialogs.js';
+import { markClean, protect, protectForm } from './guard.js';
 import { MarketFilter, availableMarkets, cheapest, cheapestHtml } from './market-filter.js';
 import { applySortWithin, cycleSort, getSort, sortItems } from './sortable.js';
-import { esc, money, number, state, thumbHtml, toast } from './util.js';
+import { esc, money, number, state, store, thumbHtml, toast } from './util.js';
 
 let app;
 const manager = { id: null, data: null, pendingRows: null, filter: null };
 const $ = (selector) => document.querySelector(selector);
+// Rows typed into "Add items" are saved per container as you go, so closing the window,
+// reloading the page or restarting the app doesn't lose them.
+const draftKey = (id) => `draft:container:${id}`;
 
 export const ICONS = {
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
@@ -42,6 +46,11 @@ export function init(appRef) {
   app = appRef;
   setupNewContainerForm();
   setupManagerEvents();
+  protectForm($('#new-container-dialog'),
+    'You have unsaved changes - press Create and add items, or Cancel to discard them.');
+  protect($('#container-dialog'), () => Boolean(document.querySelector('#container-dialog #add-rows'))
+    && collectRows().some((r) => r.name.trim()),
+  "You have items you haven't added yet - press Add to container, or Close (they're kept as a draft for next time).");
 }
 
 /** Re-render the container manager if it's open (e.g. after editing one of its items). */
@@ -192,6 +201,7 @@ export function newContainer() {
   const form = $('#new-container-form');
   form.reset();
   $('#new-container-error').hidden = true;
+  markClean($('#new-container-dialog'));
   $('#new-container-dialog').showModal();
   form.elements.name_tag.focus();
 }
@@ -213,6 +223,28 @@ function collectRows() {
     name: row.querySelector('[data-f="name"]').value,
     qty: row.querySelector('[data-f="qty"]').value,
   }));
+}
+
+function loadDraft(id) {
+  const rows = store.get(draftKey(id), null);
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((r) => r && typeof r.name === 'string' && r.name.trim())
+    .slice(0, 100).map((r) => ({ name: r.name.slice(0, 200), qty: String(r.qty ?? 1).slice(0, 6) }));
+}
+
+function saveDraft() {
+  if (!manager.id || !document.querySelector('#add-rows')) return;
+  const rows = collectRows().filter((r) => r.name.trim());
+  if (rows.length) store.set(draftKey(manager.id), rows);
+  else store.remove(draftKey(manager.id));
+}
+
+function clearRows() {
+  document.querySelectorAll('#add-rows .add-row').forEach((row) => row.remove());
+  $('#add-rows').insertAdjacentHTML('beforeend', addRowHtml());
+  $('#draft-note')?.remove();
+  manager.pendingRows = null;
+  store.remove(draftKey(manager.id));
 }
 
 export async function openContainer(id, { focusAdd = false, animate = true } = {}) {
@@ -249,7 +281,8 @@ function renderManager({ container: c, contents, currency, capacity }, candidate
   const used = c.contents_count;
   const room = Math.max(capacity - used, 0);
   $('#container-title').textContent = c.label;
-  const rows = manager.pendingRows && manager.pendingRows.length ? manager.pendingRows : [{}];
+  const draft = manager.pendingRows && manager.pendingRows.length ? [] : loadDraft(c.id);
+  const rows = manager.pendingRows && manager.pendingRows.length ? manager.pendingRows : draft.length ? draft : [{}];
   $('#container-body').innerHTML = `
     <div class="crate-stage manager-top">${crateSvg()}
       <div class="capacity-wrap">
@@ -263,6 +296,8 @@ function renderManager({ container: c, contents, currency, capacity }, candidate
     </div>
     <section class="panel">
       <h4>Add items</h4>
+      ${draft.length ? `<p class="draft-note" id="draft-note">Restored ${number(draft.length)} item${draft.length === 1 ? '' : 's'}
+        you typed earlier but hadn't added yet. <button type="button" class="link-btn small" data-act="clear-rows">Clear them</button></p>` : ''}
       <div id="add-rows">${rows.map(addRowHtml).join('')}</div>
       <div class="add-actions">
         <button type="button" class="btn btn-small" data-act="add-row">+ Another item</button>
@@ -357,6 +392,10 @@ function setupManagerEvents() {
         const rows = document.querySelectorAll('#add-rows .add-row');
         if (rows.length > 1) target.closest('.add-row').remove();
         else rows[0].querySelectorAll('input').forEach((input) => { input.value = input.dataset.f === 'qty' ? '1' : ''; });
+        saveDraft();
+      } else if (act === 'clear-rows') {
+        clearRows();
+        $('#add-rows [data-f="name"]')?.focus();
       } else if (act === 'add-submit') await submitAdd();
       else if (act === 'add-detailed') editItem(null, { container_id: manager.id });
       else if (act === 'move-in') {
@@ -377,6 +416,7 @@ function setupManagerEvents() {
     }
   });
   dialog.addEventListener('input', (event) => {
+    if (event.target.closest('#add-rows')) saveDraft();
     if (event.target.matches('#add-rows [data-f="name"]')) suggestNames(event.target, 'name-suggestions');
     if (event.target.id === 'contents-search') {
       const q = event.target.value.trim().toLowerCase();
@@ -410,9 +450,7 @@ async function submitAdd() {
   });
   const stacked = result.stacked ? ` (${result.stacked} stacked onto items already there)` : '';
   toast(`Added ${number(total)} item${total === 1 ? '' : 's'}${stacked}. ${number(result.contents_count)} / ${number(capacity)} used.`, 'ok');
-  document.querySelectorAll('#add-rows .add-row').forEach((row) => row.remove());
-  manager.pendingRows = null;
-  $('#add-rows').insertAdjacentHTML('beforeend', addRowHtml());
+  clearRows();
   await afterChange();
   $('#add-rows [data-f="name"]')?.focus();
 }
@@ -487,6 +525,7 @@ export async function deleteContainer(container) {
   if (!count) {
     if (steam) return false;
     await api(`/containers/${container.id}`, { method: 'DELETE' });
+    store.remove(draftKey(container.id));
     toast(`Deleted ${label}`, 'ok');
     if ($('#container-dialog').open && manager.id === container.id) $('#container-dialog').close();
     await app.refreshAll();
@@ -507,6 +546,7 @@ export async function deleteContainer(container) {
   });
   if (!choice) return false;
   await api(`/containers/${container.id}`, { method: 'DELETE', params: { contents: choice } });
+  if (!steam) store.remove(draftKey(container.id));
   toast(steam ? `Emptied ${label}` : `Deleted ${label}${choice === 'keep' ? ' and moved its items to your main inventory' : ''}`, 'ok');
   if (!steam && $('#container-dialog').open && manager.id === container.id) $('#container-dialog').close();
   await afterChange();

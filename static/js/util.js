@@ -120,6 +120,11 @@ export const store = {
       window.localStorage.setItem(`cs2t:${key}`, JSON.stringify(value));
     } catch { /* ignore */ }
   },
+  remove(key) {
+    try {
+      window.localStorage.removeItem(`cs2t:${key}`);
+    } catch { /* ignore */ }
+  },
 };
 
 export function toast(message, kind = 'info', timeout = 6000) {

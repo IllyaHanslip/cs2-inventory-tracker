@@ -4,6 +4,7 @@
 import { api } from './api.js';
 import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
 import * as containers from './containers.js';
+import { initDialogs, markClean, protectForm } from './guard.js';
 import { MarketFilter, cheapest } from './market-filter.js';
 import { applySortWithin } from './sortable.js';
 import {
@@ -35,10 +36,14 @@ const ALL_FIELDS = ['market_hash_name', 'category', 'exterior', 'quantity', 'nam
 
 export function init(appRef) {
   app = appRef;
+  initDialogs();
   for (const dialog of document.querySelectorAll('dialog')) {
-    dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
     dialog.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => dialog.close()));
   }
+  // Forms you type into don't close from a stray click outside (see guard.js).
+  protectForm($('#edit-dialog'), 'You have unsaved changes - press Save to keep them, or Cancel to discard them.');
+  protectForm($('#quote-dialog'), 'You have unsaved changes - press Save quote to keep them, or Cancel to discard them.');
+  protectForm($('#settings-dialog'), 'You have unsaved changes - press Save settings to keep them, or Cancel to discard them.');
   $('#item-dialog').addEventListener('close', () => {
     if (itemChart) itemChart.destroy();
     itemChart = null;
@@ -576,6 +581,7 @@ export async function editItem(item, defaults = {}) {
 
   $('#sticker-rows').innerHTML = (item?.stickers || []).map((s) => stickerRowHtml(s)).join('');
   const dialog = $('#edit-dialog');
+  markClean(dialog);
   if (!dialog.open) dialog.showModal();
   (isSteam ? form.elements.float_value : form.elements.market_hash_name).focus();
 }
@@ -614,6 +620,7 @@ export function addQuote(name = '') {
   populateCurrencies();
   form.elements.market_hash_name.value = name;
   form.elements.currency.value = state.status.currencies.includes('CNY') ? 'CNY' : state.currency;
+  markClean($('#quote-dialog'));
   $('#quote-dialog').showModal();
   (name ? form.elements.market_label : form.elements.market_hash_name).focus();
 }
@@ -730,5 +737,6 @@ export function openSettings() {
       <li><span class="missing-text">BUFF163</span> - can only be read while logged in, so it is never automated.
         Add BUFF prices with <em>+ Manual quote</em> instead.</li>
     </ul>`;
+  markClean($('#settings-dialog'));
   $('#settings-dialog').showModal();
 }

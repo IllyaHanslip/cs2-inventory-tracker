@@ -344,6 +344,17 @@ td.col-cat { white-space: nowrap; }
   padding: 12px 18px; border-top: 1px solid var(--border);
 }
 .dialog-actions .spacer { flex: 1; }
+/* A click outside a pop-up with unsaved input: it stays open, nudges and points at its buttons. */
+.dialog.nudge { animation: dialog-nudge 0.34s ease; }
+@keyframes dialog-nudge { 30% { transform: scale(1.012); } 65% { transform: scale(0.997); } }
+.btn.flash { outline: 2px solid var(--warning); outline-offset: 2px; animation: btn-flash 0.6s ease-in-out 3; }
+@keyframes btn-flash { 50% { outline-color: transparent; } }
+.nudge-hint {
+  flex-basis: 100%; order: -1; margin: 0 0 2px; font-size: 13px; color: var(--warning);
+  opacity: 0; transition: opacity 0.3s ease;
+}
+.nudge-hint.show { opacity: 1; }
+.draft-note { margin: 0; font-size: 13px; color: var(--text-secondary); }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
 .form-grid label, .pair label { display: flex; flex-direction: column; gap: 5px; color: var(--text-secondary); font-size: 13px; }
 .span-2 { grid-column: span 2; }
