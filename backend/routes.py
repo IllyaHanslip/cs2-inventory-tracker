@@ -9,7 +9,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from config import Config
 
-from . import catalogue, comparables, db, evidence, fees, history, portfolio, settings, storage
+from . import catalogue, comparables, db, evidence, fees, history, images, portfolio, settings, storage
 from .classify import APPLIED_KINDS, CATEGORIES, EXTERIORS, applied_hash_name, categorize, exterior_from_float, exterior_from_name
 from .currency import FxConverter, last_source
 from .http_client import ApiError, RateLimitError
@@ -342,6 +342,7 @@ def create_item():
             storage.check_capacity(conn, container_id, values["quantity"])
             storage.mark_storage(conn, container_id)
         item_id, stacked = storage.add_item(conn, values, stickers or [])
+    images.ensure([values["market_hash_name"]])
     return jsonify(item=_get_item(item_id), stacked=stacked), 201
 
 
@@ -362,6 +363,8 @@ def update_item(item_id: int):
             )
         if stickers is not None:
             _replace_stickers(conn, item_id, stickers)
+    if values.get("market_hash_name"):
+        images.ensure([values["market_hash_name"]])
     return jsonify(item=_get_item(item_id))
 
 
@@ -459,6 +462,7 @@ def add_to_container(container_id: int):
                       "marketable": 1, "tradable": 1, "created_at": now, "updated_at": now}
             stacked += storage.add_item(conn, values, [])[1]
         used = storage.contents_count(conn, container_id)
+    images.ensure(name for name, _ in rows)
     return jsonify(added=len(rows) - stacked, stacked=stacked, contents_count=used, capacity=storage.CAPACITY), 201
 
 

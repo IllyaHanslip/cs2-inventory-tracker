@@ -38,6 +38,7 @@ def app(tmp_path, monkeypatch):
         "SKINPORT_CURRENCY": "EUR",
         "BULK_CACHE_MINUTES": 30,
         "CSFLOAT_API_KEY": "",
+        "ITEM_IMAGES": False,
     }
     for key, value in overrides.items():
         monkeypatch.setattr(Config, key, value)

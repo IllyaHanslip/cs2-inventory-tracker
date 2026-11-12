@@ -84,6 +84,7 @@ Most of them can also be changed later in the app's **Settings** dialog.
 | `STICKER_RATE_MIN` / `MAX`, `STICKER_PREMIUM_CAP` | Tune the sticker formula (5–15 % of loose price, capped at 100 % of the skin's price by default). |
 | `HOST`, `PORT` | Where the local server listens (default `127.0.0.1:5000`; keep `127.0.0.1` so only your PC can open it). |
 | `AUTO_DAILY_SNAPSHOT`, `AUTO_SYNC_STEAM` | Turn the automatic daily update and Steam re-sync on or off. |
+| `ITEM_IMAGES` | Find pictures for items you add by hand (default `true`). |
 
 ### API keys
 
@@ -132,6 +133,9 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
   minutes. **CSFloat** uses its official API.
 - **Item names** for autocomplete come from CSFloat's public item list (downloaded weekly, no key needed) plus
   the market price lists, so you can add items nobody is selling right now, such as an unlisted Sticker Slab.
+- **Pictures for items you add by hand** are looked up in [ByMykel's CSGO-API](https://github.com/ByMykel/CSGO-API)
+  item catalogue on GitHub. Only the file for that kind of item is downloaded (about 1 MB), at most once a day,
+  and the pictures themselves load from Steam like synced items. Set `ITEM_IMAGES=false` to turn this off.
 - **Marketplaces that need your login** (such as BUFF163) are deliberately not automated. Add their prices
   as manual quotes.
 - **Storage Unit contents** aren't visible in public Steam inventories, so they're entered by hand.
@@ -170,6 +174,8 @@ python scripts/check_secrets.py      # privacy check of everything that would be
   [Market.CSGO](https://market.csgo.com) and [Waxpeer](https://waxpeer.com).
 - **Exchange rates:** [Frankfurter](https://frankfurter.dev) (European Central Bank), with
   [ExchangeRate-API](https://www.exchangerate-api.com) as a fallback.
+- **Item names and pictures:** CSFloat's public item schema and [ByMykel's CSGO-API](https://github.com/ByMykel/CSGO-API)
+  (MIT); the pictures are served by Steam.
 - **Charts:** [Chart.js](https://www.chartjs.org) (MIT).
 
 This is an unofficial project, not affiliated with or endorsed by Valve Corporation, Steam, or any of the

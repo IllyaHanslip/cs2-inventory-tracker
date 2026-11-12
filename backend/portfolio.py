@@ -8,9 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from config import Config
-
-from . import db, evidence, history
+from . import db, evidence, history, images
 from .classify import CATEGORIES
 from .currency import last_source
 from .markets import MANUAL_PREFIX, SOURCES, market_label
@@ -60,12 +58,17 @@ def build_frame(valuator, scope: str = "total", with_changes: bool = True) -> pd
         row.id: container_label(row.name, row.name_tag if isinstance(row.name_tag, str) else None)
         for row in all_items[all_items["category"] == "container"].itertuples()
     }
-    icons = all_items.dropna(subset=["icon_url"]).drop_duplicates("market_hash_name").set_index("market_hash_name")["icon_url"]
+    with_icon = all_items[[isinstance(i, str) and i != "" for i in all_items["icon_url"]]]
+    icons = with_icon.drop_duplicates("market_hash_name").set_index("market_hash_name")["icon_url"].to_dict()
 
     items = all_items[all_items["source"] == "steam"].copy() if scope == "public" else all_items.copy()
     if items.empty:
         return items
-    # Manual items borrow the icon of a Steam item with the same name, when there is one.
+    # Manual items borrow the icon of a Steam item with the same name, else the catalogue's picture.
+    missing = {name for icon, name in zip(items["icon_url"], items["market_hash_name"])
+               if not (isinstance(icon, str) and icon) and name not in icons}
+    if missing:
+        icons.update(images.lookup(missing))
     items["icon_url"] = [
         icon if isinstance(icon, str) and icon else icons.get(name)
         for icon, name in zip(items["icon_url"], items["market_hash_name"])
@@ -277,7 +280,7 @@ def to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         item["best_market_label"] = market_label(item["best_market"]) if item["best_market"] else None
         item["payout_market_label"] = market_label(item["payout_market"]) if item["payout_market"] else None
         icon = rec.get("icon_url")
-        item["icon"] = f"{Config.STEAM_IMAGE_CDN}{icon}/128fx128f" if isinstance(icon, str) and icon else None
+        item["icon"] = images.icon_src(icon)
         item["stickers"] = [{k: _py(v) for k, v in s.items()} for s in (rec.get("stickers") or [])]
         item["quotes"] = rec.get("quotes") or []
         records.append(item)
@@ -394,7 +397,7 @@ def market_comparison(valuator, scope: str = "total") -> dict[str, Any]:
             "market_hash_name": name,
             "category": info["category"],
             "quantity": int(info["quantity"]),
-            "icon": f"{Config.STEAM_IMAGE_CDN}{icon}/128fx128f" if isinstance(icon, str) and icon else None,
+            "icon": images.icon_src(icon),
             "prices": prices,
             "valuation": valuator.price(name),
             "best_market": best_market.get(name) if name in best_market.index else None,

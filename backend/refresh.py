@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 from config import Config
 
-from . import comparables, currency, db, history, settings
+from . import comparables, currency, db, history, images, settings
 from .classify import applied_hash_name
 from .http_client import ApiError, AuthError, CancelledError, RateLimitError
 from .markets import SOURCES, MarketSource, Quote
@@ -206,6 +206,9 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
 
     # Items whose stickers are worth more than the skin: value them from CSFloat comparables.
     sticker_evidence = comparables.refresh_evidence(job)
+
+    job.update(message="Finding pictures for items added by hand…")
+    images.backfill()
 
     job.update(message="Saving today's snapshot…")
     snapshot = history.take_snapshot()

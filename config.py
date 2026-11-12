@@ -107,3 +107,5 @@ class Config:
 
     # --- Misc -----------------------------------------------------------------
     STEAM_IMAGE_CDN = _env("STEAM_IMAGE_CDN", "https://community.steamstatic.com/economy/image/")
+    # Look up pictures for manually added items in a public item catalogue (see backend/images.py).
+    ITEM_IMAGES = _bool("ITEM_IMAGES", True)

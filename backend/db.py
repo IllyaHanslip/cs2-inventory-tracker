@@ -132,6 +132,13 @@ CREATE TABLE IF NOT EXISTS api_cache (
     fetched_at REAL NOT NULL,
     payload    TEXT NOT NULL
 );
+
+-- Pictures for manually added items, by market name (see images.py).
+CREATE TABLE IF NOT EXISTS item_images (
+    market_hash_name TEXT PRIMARY KEY,
+    icon             TEXT NOT NULL,   -- Steam image hash, or a full Steam CDN URL
+    source           TEXT NOT NULL    -- catalogue file it came from
+);
 """
 
 

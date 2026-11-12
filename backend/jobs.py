@@ -153,22 +153,39 @@ def daily_job(job: Job) -> dict[str, Any]:
     return result
 
 
+def _find_pictures_once() -> None:
+    """Without the scheduler, still look for pictures for items added by hand once at start-up."""
+    from . import images
+
+    if SHUTDOWN.wait(5):
+        return
+    try:
+        images.backfill()
+    except Exception:  # noqa: BLE001
+        log.exception("Finding item pictures failed")
+
+
 def start_scheduler() -> None:
     """Checks at start-up and then hourly: runs the daily update once a day, and refreshes
     prices sooner when a market has no prices yet (e.g. just enabled, or a key just added)
     or the prices have gone stale."""
     if not Config.AUTO_DAILY_SNAPSHOT:
         log.info("Daily snapshot scheduler disabled")
+        threading.Thread(target=_find_pictures_once, name="item-pictures", daemon=True).start()
         return
 
     def loop() -> None:
-        from . import db
+        from . import db, images
         from .history import has_snapshot_today
         from .refresh import refresh_reasons
 
         if SHUTDOWN.wait(10):  # give the web server a moment to start
             return
         while not SHUTDOWN.is_set():
+            try:
+                images.backfill()  # pictures for items added by hand (cheap when there's nothing to do)
+            except Exception:  # noqa: BLE001
+                log.exception("Finding item pictures failed")
             try:
                 has_items = db.query_one("SELECT 1 FROM items LIMIT 1") is not None
                 if has_items and not jobs.busy():
