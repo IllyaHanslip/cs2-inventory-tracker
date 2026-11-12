@@ -1,0 +1,14 @@
+#!/bin/sh
+# Blocks a commit that contains API keys, real SteamIDs, e-mail addresses, personal
+# file paths or private files (.env, database, exports).
+# Turn it on once per copy of the repository:   git config core.hooksPath .githooks
+for py in python py python3; do
+    if command -v "$py" >/dev/null 2>&1; then
+        "$py" scripts/check_secrets.py --staged && exit 0
+        echo "" >&2
+        echo "Commit blocked by the privacy check above." >&2
+        exit 1
+    fi
+done
+echo "Commit blocked: Python was not found, so the privacy check could not run." >&2
+exit 1

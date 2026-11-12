@@ -1,0 +1,38 @@
+# Secrets - never commit your API keys
+.env
+.env.*
+!.env.example
+.private-words
+*.pem
+*.key
+
+# Local data: your inventory, prices and history live here
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.csv
+exports/
+*.log
+
+# Windows shortcuts contain paths from your PC
+*.lnk
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

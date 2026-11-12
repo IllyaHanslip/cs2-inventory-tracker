@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CS2 Inventory Intelligence</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23171a21'/%3E%3Cpath d='M7 22l6-7 5 4 7-9' stroke='%233987e5' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+          integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
+          crossorigin="anonymous"></script>
+  <script type="module" src="{{ url_for('static', filename='js/app.js') }}"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#1d212a"/><path d="M7 22l6-7 5 4 7-9" stroke="#3987e5" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span class="brand-name">CS2 Inventory Intelligence</span>
+    {% if demo %}<span class="badge badge-demo" title="Synthetic data - not a real inventory or real prices">Demo data</span>{% endif %}
+  </div>
+  <form id="sync-form" class="sync-form" autocomplete="off">
+    <label class="sr-only" for="steam-id">SteamID64 or Steam profile URL</label>
+    <input id="steam-id" name="steam_id" placeholder="SteamID64 or profile URL" spellcheck="false">
+    <button type="submit" class="btn btn-primary">Sync Steam</button>
+  </form>
+  <div class="topbar-actions">
+    <button id="refresh-btn" class="btn" type="button" title="Fetch the latest prices from every enabled market">Refresh prices</button>
+    <button id="settings-btn" class="btn btn-icon" type="button" aria-label="Settings" title="Settings">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+    </button>
+  </div>
+</header>
+
+<div id="job-banner" class="job-banner" role="status" aria-live="polite" hidden>
+  <div class="job-text"><strong id="job-label"></strong><span id="job-message"></span></div>
+  <div class="progress" aria-hidden="true"><div id="job-progress"></div></div>
+  <button id="job-cancel" class="btn btn-small" type="button">Cancel</button>
+</div>
+
+<main class="container">
+  <section class="stats" id="stats" aria-label="Portfolio summary"></section>
+  <p class="status-line" id="status-line"></p>
+
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button role="tab" id="tab-public" aria-controls="panel-public" data-tab="public">Public Inventory</button>
+    <button role="tab" id="tab-total" aria-controls="panel-total" data-tab="total">Total Portfolio</button>
+    <button role="tab" id="tab-containers" aria-controls="panel-containers" data-tab="containers">Containers <span class="tab-count" id="tab-containers-count"></span></button>
+    <button role="tab" id="tab-markets" aria-controls="panel-markets" data-tab="markets">Market Comparison &amp; Best Deals</button>
+  </nav>
+
+  <section class="tab-panel" id="panel-public" role="tabpanel" aria-labelledby="tab-public" hidden></section>
+  <section class="tab-panel" id="panel-total" role="tabpanel" aria-labelledby="tab-total" hidden></section>
+  <section class="tab-panel" id="panel-containers" role="tabpanel" aria-labelledby="tab-containers" hidden>
+    <div class="section-head">
+      <div>
+        <h2 class="section-title">Storage &amp; containers</h2>
+        <p class="muted section-intro">Steam's public inventory can't see inside Storage Units, so record what each one
+          holds here. Stored items count towards your Total Portfolio and are listed there too. Each container holds up
+          to 1,000 items.</p>
+      </div>
+      <button type="button" class="btn btn-primary btn-lg" id="ct-new">+ New container</button>
+    </div>
+    <div class="stats" id="ct-stats"></div>
+    <div class="sort-bar" id="ct-sort" role="group" aria-label="Sort containers"></div>
+    <div class="container-grid" id="ct-grid"></div>
+  </section>
+  <section class="tab-panel" id="panel-markets" role="tabpanel" aria-labelledby="tab-markets" hidden>
+    <div class="markets-top">
+      <div class="card">
+        <div class="card-head"><h2 class="card-title">Best deals summary</h2></div>
+        <div class="deal-stats" id="deal-stats"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2 class="card-title">Exchange rates</h2><span class="muted small" id="fx-meta"></span></div>
+        <div class="fx-list" id="fx-list"></div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <input type="search" id="mk-search" class="input search" placeholder="Search items…" aria-label="Search items">
+      <label class="field-inline">Items
+        <select id="mk-scope" class="input">
+          <option value="total">Total portfolio</option>
+          <option value="public">Public inventory</option>
+        </select>
+      </label>
+      <div class="segmented" id="mk-mode" role="group" aria-label="Which prices to compare">
+        <button type="button" data-mode="buy" title="Cheapest place to buy each item">Buying prices</button>
+        <button type="button" data-mode="sell" title="What you'd actually receive selling there, after selling and withdrawal fees">After selling fees</button>
+      </div>
+      <label class="check"><input type="checkbox" id="mk-multi"> Only items on 2+ of these markets</label>
+      <div class="toolbar-right">
+        <button type="button" class="btn btn-primary" id="mk-add-quote">+ Manual quote</button>
+      </div>
+    </div>
+    <div class="chips market-chips" id="mk-markets" role="group" aria-label="Compare these markets"></div>
+    <div class="medal-legend" id="mk-legend"></div>
+    <div class="card table-card">
+      <div class="table-scroll">
+        <table class="data" id="mk-table" data-sort-id="markets"><thead></thead><tbody></tbody></table>
+      </div>
+      <div class="empty" id="mk-empty" hidden></div>
+    </div>
+    <p class="note">Prices are the lowest current listing on each market, converted to your base currency with daily
+      exchange rates. "Cheapest" is the best place to <em>buy</em> right now among the markets you've selected. Market fees
+      and withdrawal limits differ between sites and are not included. Click any column heading to sort; click again to
+      reverse, and a third time to go back to the normal order.</p>
+  </section>
+</main>
+
+<footer class="footer">
+  <p>Prices: Steam Community Market, <a href="https://skinport.com" target="_blank" rel="noopener noreferrer">Skinport</a>,
+    <a href="https://csfloat.com" target="_blank" rel="noopener noreferrer">CSFloat</a>,
+    <a href="https://market.csgo.com" target="_blank" rel="noopener noreferrer">Market.CSGO</a> and
+    <a href="https://waxpeer.com" target="_blank" rel="noopener noreferrer">Waxpeer</a> public APIs.
+    Exchange rates: <a href="https://frankfurter.dev" target="_blank" rel="noopener noreferrer">Frankfurter</a> (ECB reference rates),
+    fallback <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">Rates by Exchange Rate API</a>.</p>
+  <p>Unofficial tool. Not affiliated with or endorsed by Valve Corporation, Steam, Skinport, CSFloat, Market.CSGO or
+    Waxpeer. Counter-Strike and
+    Steam are trademarks of Valve Corporation. Item images are served by Steam. Values are estimates, not financial advice.</p>
+</footer>
+
+<!-- ============================ Templates ============================ -->
+<template id="inventory-panel-tpl">
+  <div class="card chart-card" data-ref="chartCard">
+    <div class="card-head">
+      <div>
+        <h2 class="card-title" data-ref="chartTitle"></h2>
+        <div class="chart-headline"><span class="chart-value" data-ref="chartValue"></span><span data-ref="chartDelta"></span></div>
+      </div>
+      <div class="segmented" data-ref="ranges" role="group" aria-label="Chart range">
+        <button type="button" data-range="7d">7D</button>
+        <button type="button" data-range="30d">30D</button>
+        <button type="button" data-range="90d">90D</button>
+        <button type="button" data-range="1y">1Y</button>
+        <button type="button" data-range="all">All</button>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <canvas data-ref="chart" role="img"></canvas>
+      <div class="chart-empty" data-ref="chartEmpty" hidden></div>
+    </div>
+    <details class="data-details" data-ref="tableDetails">
+      <summary>Show data table</summary>
+      <div class="data-table-wrap" data-ref="chartTable"></div>
+    </details>
+  </div>
+
+  <div class="toolbar">
+    <input type="search" class="input search" data-ref="search" placeholder="Search items, stickers, name tags…" aria-label="Search">
+    <div class="chips" data-ref="chips" role="group" aria-label="Filter by category"></div>
+    <div class="toolbar-right">
+      <label class="check"><input type="checkbox" data-ref="stack"> Stack duplicates</label>
+      <label class="check" data-ref="contentsLabel"><input type="checkbox" data-ref="contents"> Show stored items</label>
+      <a class="btn" data-ref="export" download>Export CSV</a>
+      <button type="button" class="btn" data-ref="addContainer">+ New container</button>
+      <button type="button" class="btn btn-primary" data-ref="addItem">+ Add item</button>
+    </div>
+  </div>
+  <div class="chips market-chips" data-ref="marketChips" role="group" aria-label="Compare prices on these markets"></div>
+
+  <div class="card table-card" data-ref="tableCard">
+    <div class="table-scroll">
+      <table class="data inventory-table" data-ref="table">
+        <thead>
+          <tr>
+            <th class="col-icon"><span class="sr-only">Image</span></th>
+            <th data-sort="text" data-key="name">Item</th>
+            <th class="col-cat" data-sort="text" data-key="category">Category</th>
+            <th class="num" data-sort="num" data-key="qty">Qty</th>
+            <th class="num" data-sort="num" data-key="price">Price</th>
+            <th data-sort="num" data-key="cheapest">3 cheapest</th>
+            <th class="num" data-sort="num" data-key="stickers">Stickers</th>
+            <th class="num" data-sort="num" data-key="value">Value</th>
+            <th class="num" data-sort="num" data-key="payout" title="The most cash you'd get: sold where it pays out best, after that site's selling and withdrawal fees">After fees</th>
+            <th class="num" data-sort="num" data-key="change_24h">24h</th>
+            <th class="num" data-sort="num" data-key="change_7w">7w</th>
+            <th class="col-actions"><span class="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody data-ref="tbody"></tbody>
+      </table>
+    </div>
+    <div class="empty" data-ref="empty" hidden></div>
+  </div>
+</template>
+
+<!-- ============================ Dialogs ============================ -->
+<dialog id="item-dialog" class="dialog dialog-wide" aria-labelledby="item-title">
+  <div class="dialog-head"><h2 id="item-title">Item</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+  <div class="dialog-body" id="item-body"></div>
+  <div class="dialog-actions" id="item-actions"></div>
+</dialog>
+
+<dialog id="container-dialog" class="dialog dialog-wide" aria-labelledby="container-title">
+  <div class="dialog-head"><h2 id="container-title">Container</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+  <div class="dialog-body" id="container-body"></div>
+  <div class="dialog-actions" id="container-actions"></div>
+</dialog>
+
+<dialog id="edit-dialog" class="dialog" aria-labelledby="edit-title">
+  <form id="edit-form" novalidate>
+    <div class="dialog-head"><h2 id="edit-title">Add item</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+    <div class="dialog-body">
+      <p class="note" id="edit-steam-note" hidden>This item is synced from Steam, so its name, wear rating and stickers
+        come from Steam. You can still record float, pattern, a custom price, what you paid and notes.</p>
+      <div class="form-grid">
+        <label class="span-2 manual-only"><span>Item name <span class="muted">(exact market name)</span></span>
+          <input class="input" name="market_hash_name" list="name-suggestions" maxlength="200" required
+                 placeholder="e.g. AK-47 | Redline (Field-Tested)" autocomplete="off">
+        </label>
+        <label class="manual-only">Category
+          <select class="input" name="category"></select>
+        </label>
+        <label class="manual-only">Wear rating
+          <select class="input" name="exterior"></select>
+        </label>
+        <label>Float value <input class="input" name="float_value" type="number" step="any" min="0" max="1" placeholder="0.0000 – 1.0000"></label>
+        <label>Pattern seed <input class="input" name="paint_seed" type="number" step="1" min="0" max="100000"></label>
+        <label class="manual-only">Quantity <input class="input" name="quantity" type="number" step="1" min="1" value="1"></label>
+        <label class="manual-only">Name tag <input class="input" name="name_tag" maxlength="100"></label>
+        <label class="span-2 manual-only" id="container-field">Stored inside
+          <select class="input" name="container_id"></select>
+        </label>
+        <div class="span-2 pair">
+          <label><span>Custom unit price <span class="muted">(your value for the whole item, stickers included)</span></span>
+            <input class="input" name="custom_price" type="number" step="any" min="0"></label>
+          <label>Currency <select class="input currency-select" name="custom_price_currency"></select></label>
+        </div>
+        <div class="span-2 pair">
+          <label><span>Purchase price per unit <span class="muted">(for profit tracking)</span></span>
+            <input class="input" name="purchase_price" type="number" step="any" min="0"></label>
+          <label>Currency <select class="input currency-select" name="purchase_currency"></select></label>
+        </div>
+        <label class="span-2">Notes <textarea class="input" name="notes" rows="2" maxlength="2000"></textarea></label>
+      </div>
+      <fieldset class="stickers-field manual-only">
+        <legend>Applied stickers, patches &amp; charms</legend>
+        <div id="sticker-rows"></div>
+        <button type="button" class="btn btn-small" id="add-sticker">+ Add sticker</button>
+        <p class="hint">Applied stickers add only a share of their cheapest loose price (5–15 % by default, reduced by
+          scrape), and the total is capped relative to the skin's own price. Adjust both in Settings.</p>
+      </fieldset>
+      <p class="form-error" id="edit-error" role="alert" hidden></p>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="quote-dialog" class="dialog" aria-labelledby="quote-title">
+  <form id="quote-form" novalidate>
+    <div class="dialog-head"><h2 id="quote-title">Add manual price quote</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+    <div class="dialog-body">
+      <p class="note">Record a price you have seen on another marketplace (for example Buff163 in CNY). It is converted
+        to your base currency with today's exchange rate and included in comparisons and valuation.</p>
+      <div class="form-grid">
+        <label class="span-2">Item name <input class="input" name="market_hash_name" list="name-suggestions" required maxlength="200" autocomplete="off"></label>
+        <label class="span-2">Marketplace <input class="input" name="market_label" list="market-suggestions" required maxlength="40" placeholder="e.g. Buff163"></label>
+        <label>Price <input class="input" name="price" type="number" step="any" min="0" required></label>
+        <label>Currency <select class="input currency-select" name="currency"></select></label>
+      </div>
+      <p class="form-error" id="quote-error" role="alert" hidden></p>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn btn-primary">Save quote</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="settings-dialog" class="dialog" aria-labelledby="settings-title">
+  <form id="settings-form" novalidate>
+    <div class="dialog-head"><h2 id="settings-title">Settings</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+    <div class="dialog-body">
+      <div class="form-grid">
+        <label>Base currency <select class="input currency-select" name="base_currency"></select></label>
+        <label>Valuation method
+          <select class="input" name="valuation_strategy">
+            <option value="median">Median of all markets</option>
+            <option value="lowest">Lowest price (best deal)</option>
+            <option value="highest">Highest price</option>
+            <option value="mean">Average of all markets</option>
+            <option value="steam">Steam Market first</option>
+            <option value="skinport">Skinport first</option>
+            <option value="csfloat">CSFloat first</option>
+            <option value="marketcsgo">Market.CSGO first</option>
+            <option value="waxpeer">Waxpeer first</option>
+          </select>
+        </label>
+        <label>Sticker rate – cheap stickers (%) <input class="input" name="sticker_rate_min" type="number" step="0.5" min="0" max="100"></label>
+        <label>Sticker rate – expensive stickers (%) <input class="input" name="sticker_rate_max" type="number" step="0.5" min="0" max="100"></label>
+        <label class="span-2"><span>Max sticker premium <span class="muted">(% of the skin's own price; 100 = stickers can at most
+          double a skin's value, 3× that for 4-of-a-kind crafts)</span></span>
+          <input class="input" name="sticker_premium_cap" type="number" step="10" min="0" max="1000"></label>
+        <label class="span-2 check check-wrap"><input type="checkbox" name="sticker_evidence">
+          <span>Value items whose stickers are worth more than the skin from real CSFloat listings and sales with the
+            same stickers <span class="muted">(recommended; needs the CSFloat key, re-checked daily)</span></span></label>
+        <label class="span-2">Default SteamID64 <input class="input" name="steam_id" spellcheck="false" placeholder="7656119…"></label>
+      </div>
+      <fieldset class="markets-field">
+        <legend>Price sources</legend>
+        <div id="settings-markets"></div>
+      </fieldset>
+      <fieldset class="fees-field">
+        <legend>Selling &amp; cash-out fees</legend>
+        <p class="hint" id="fees-intro"></p>
+        <div class="table-scroll"><table class="data fees-table">
+          <thead><tr><th>Market</th><th class="num">Selling fee %</th><th class="num">Withdrawal fee %</th>
+            <th>Cash-out possible?</th></tr></thead>
+          <tbody id="settings-fees"></tbody>
+        </table></div>
+        <button type="button" class="link-btn small" id="fees-reset">Reset all fees to the defaults</button>
+      </fieldset>
+      <div class="keys-info" id="settings-keys"></div>
+      <p class="form-error" id="settings-error" role="alert" hidden></p>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn btn-primary">Save settings</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="confirm-dialog" class="dialog dialog-small" aria-labelledby="confirm-title">
+  <div class="dialog-head"><h2 id="confirm-title">Are you sure?</h2></div>
+  <div class="dialog-body">
+    <p id="confirm-message"></p>
+    <div class="form-grid single" id="confirm-fields" hidden></div>
+    <p class="form-error" id="confirm-error" role="alert" hidden></p>
+  </div>
+  <div class="dialog-actions" id="confirm-actions"></div>
+</dialog>
+
+<dialog id="new-container-dialog" class="dialog dialog-small" aria-labelledby="new-container-title">
+  <form id="new-container-form" novalidate>
+    <div class="dialog-head"><h2 id="new-container-title">New container</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+    <div class="dialog-body">
+      <div class="form-grid single">
+        <label>Label <span class="muted">(what you keep in it, like its in-game name tag)</span>
+          <input class="input" name="name_tag" maxlength="100" placeholder="e.g. Cases, Stickers, Investments" autocomplete="off">
+        </label>
+        <label>Container type
+          <input class="input" name="market_hash_name" maxlength="200" value="Storage Unit" list="container-types" autocomplete="off">
+        </label>
+      </div>
+      <p class="hint">Storage Units hold up to 1,000 items. You'll add the items on the next screen.</p>
+      <p class="form-error" id="new-container-error" role="alert" hidden></p>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn btn-primary">Create and add items</button>
+    </div>
+  </form>
+</dialog>
+<datalist id="container-types"><option value="Storage Unit"></option></datalist>
+
+<datalist id="name-suggestions"></datalist>
+<datalist id="sticker-suggestions"></datalist>
+<datalist id="market-suggestions">
+  <option value="Buff163"></option><option value="Youpin898"></option><option value="CS.MONEY"></option>
+  <option value="DMarket"></option><option value="Waxpeer"></option><option value="BitSkins"></option>
+  <option value="Tradeit.gg"></option><option value="Market.CSGO"></option>
+</datalist>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>

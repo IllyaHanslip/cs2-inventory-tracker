@@ -1,0 +1,7 @@
+flask>=3.0,<4
+requests>=2.31,<3
+pandas>=2.1,<3
+numpy>=1.26
+python-dotenv>=1.0
+# Skinport's API only answers with Brotli-compressed responses.
+brotli>=1.1
