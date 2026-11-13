@@ -6,6 +6,7 @@ out from the per-market prices saved every day, so it always uses your current f
 from __future__ import annotations
 
 import logging
+import math
 from datetime import date, timedelta
 from typing import Any
 
@@ -59,10 +60,14 @@ def take_snapshot(valuator=None) -> dict[str, Any]:
     )
 
     totals = {}
-    for scope, subset in (("public", frame[frame["source"] == "steam"]), ("total", frame)):
-        value = float(subset["total_value"].fillna(0).sum())  # after fees
-        market = float(subset["market_total_value"].fillna(0).sum())
-        count = int(subset["quantity"].sum())
+    # Each scope is valued exactly as its own tab values it: a stack split between Steam and a
+    # storage unit is counted together for "total" but only its Steam copies make up "public",
+    # and how many sell at a good price depends on how many there are.
+    public = portfolio.build_frame(v, "public", with_changes=False)
+    for scope, subset in (("public", public), ("total", frame)):
+        value = float(subset["total_value"].fillna(0).sum()) if not subset.empty else 0.0  # after fees
+        market = float(subset["market_total_value"].fillna(0).sum()) if not subset.empty else 0.0
+        count = int(subset["quantity"].sum()) if not subset.empty else 0
         totals[scope] = value
         db.execute(
             "INSERT INTO portfolio_snapshots (snapshot_date, scope, total_value, item_count, currency, market_value, "
@@ -172,21 +177,42 @@ def price_changes(names: list[str], valuator) -> pd.DataFrame:
     return result
 
 
-def portfolio_changes(scope: str, current_total: float, fx: FxConverter, base: str) -> dict[str, float | None]:
+def chained_change(points: list[tuple[float | None, int | None]]) -> float | None:
+    """% change along (value, item count) points in date order, leaving out every step where the
+    number of items changed: adding 50 capsules isn't a 50-capsule gain. With no items added or
+    removed this is simply last / first. None when no step compares like with like."""
+    growth, used = 1.0, False
+    for (v0, c0), (v1, c1) in zip(points, points[1:]):
+        if c0 != c1 or v0 is None or v1 is None or not (math.isfinite(v0) and math.isfinite(v1)) or v0 <= 0:
+            continue
+        growth *= v1 / v0
+        used = True
+    return (growth - 1) * 100 if used else None
+
+
+def portfolio_changes(scope: str, current_total: float, fx: FxConverter, base: str,
+                      current_count: int | None = None) -> dict[str, float | None]:
+    """How the portfolio's value moved over each window, from the saved daily totals to the value
+    now. Steps where items were added or removed are left out (see ``chained_change``)."""
     rows = db.query(
-        "SELECT snapshot_date AS date, total_value, currency FROM portfolio_snapshots WHERE scope = ? AND snapshot_date >= ?",
-        (scope, _days_ago(max(d + s for d, s in CHANGE_WINDOWS.values()))),
+        "SELECT snapshot_date AS date, total_value, item_count, currency FROM portfolio_snapshots "
+        "WHERE scope = ? AND snapshot_date >= ? AND snapshot_date < ? ORDER BY snapshot_date",
+        (scope, _days_ago(max(d + s for d, s in CHANGE_WINDOWS.values())), today()),
     )
     out: dict[str, float | None] = {col: None for col in CHANGE_WINDOWS}
     if not rows:
         return out
     hist = pd.DataFrame(rows)
-    hist["scope"] = scope
     hist["value"] = _to_base(hist, "total_value", fx, base)
+    hist = hist.dropna(subset=["value"])
     for col, (days, slack) in CHANGE_WINDOWS.items():
-        ref = _reference_values(hist.dropna(subset=["value"]), "scope", days, slack)
-        if scope in ref and ref[scope] > 0:
-            out[col] = (current_total - ref[scope]) / ref[scope] * 100
+        target, earliest = _days_ago(days), _days_ago(days + slack)
+        window = hist[(hist["date"] <= target) & (hist["date"] >= earliest)]
+        if window.empty:
+            continue
+        steps = hist[hist["date"] >= window["date"].max()]
+        points = [(float(v), int(c) if pd.notna(c) else None) for v, c in zip(steps["value"], steps["item_count"])]
+        out[col] = chained_change(points + [(current_total, current_count)])
     return out
 
 
@@ -206,8 +232,10 @@ def portfolio_history(scope: str, range_key: str, fx: FxConverter, base: str) ->
         sql += " AND snapshot_date >= ?"
         params.append(cutoff)
     rows = db.query(sql + " ORDER BY snapshot_date", params)
+    # "today" lets the dashboard draw today's point at the value it shows right now (which also
+    # counts anything you've changed since today's snapshot), so the two always agree.
     if not rows:
-        return {"labels": [], "values": [], "counts": [], "currency": base}
+        return {"labels": [], "values": [], "counts": [], "currency": base, "today": today()}
     df = pd.DataFrame(rows)
     df["value"] = _to_base(df, "total_value", fx, base)
     df.index = pd.to_datetime(df["date"])
@@ -217,6 +245,7 @@ def portfolio_history(scope: str, range_key: str, fx: FxConverter, base: str) ->
         "values": [round(v, 2) if pd.notna(v) else None for v in daily["value"]],
         "counts": [int(c) if pd.notna(c) else None for c in daily["item_count"]],
         "currency": base,
+        "today": today(),
     }
 
 

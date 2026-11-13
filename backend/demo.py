@@ -40,7 +40,7 @@ DEMO_ITEMS = [
      {"float_value": 0.1873, "stickers": [("sticker", "Crown (Foil)")]}),
     ("steam", "Sticker | Crown (Foil)", 2, 145.00, 330, {}),
     ("steam", "Sticker | Vitality (Holo) | Paris 2023", 3, 4.20, 200, {}),
-    ("steam", "Sticker Slab | IEM (Gold) | Rio 2022", 1, 1.10, 90, {}),
+    ("steam", "Sticker Slab | IEM (Gold) | Rio 2022", 1, 1.10, 100, {}),
     ("steam", "Recoil Case", 12, 0.29, 360, {}),
     ("steam", "Kilowatt Case", 5, 0.80, 240, {}),
     ("steam", "Paris 2023 Mirage Souvenir Package", 2, 3.10, 180, {}),
@@ -202,11 +202,27 @@ def seed() -> None:
                 counts[scope] += qty
         for scope in totals:
             if counts[scope]:
-                portfolio_rows.append((day, scope, round(totals[scope], 2), counts[scope], "USD"))
-    # Market-value totals, like a database from before values were after fees: converted at start-up.
-    db.executemany("INSERT OR REPLACE INTO portfolio_snapshots (snapshot_date, scope, total_value, item_count, currency) "
-                   "VALUES (?, ?, ?, ?, ?)", portfolio_rows)
+                portfolio_rows.append((day, scope, totals[scope], counts[scope]))
 
     settings.set_value("base_currency", "USD")
     settings.set_value("steam_id", "")
+
+    # Those are buying-price totals. The app charts what you'd get after fees, counting big stacks
+    # only for what they'd really sell for, so each day is scaled to end exactly at what the live
+    # valuation says today: the chart's last point and the headline are the same number.
+    from . import portfolio  # local imports: portfolio and valuation import this package's modules
+    from .valuation import Valuator
+
+    v = Valuator()
+    live = {}
+    for scope in ("public", "total"):
+        frame = portfolio.build_frame(v, scope, with_changes=False)
+        live[scope] = float(frame["total_value"].fillna(0).sum()) if not frame.empty else 0.0
+    last_market = {scope: value for day, scope, value, _ in portfolio_rows if day == days[-1]}
+    db.executemany(
+        "INSERT OR REPLACE INTO portfolio_snapshots (snapshot_date, scope, total_value, item_count, currency, "
+        "market_value, basis, screened) VALUES (?, ?, ?, ?, 'USD', ?, 'after_fees', 1)",
+        [(day, scope, round(value * live[scope] / last_market[scope], 2), count, round(value, 2))
+         for day, scope, value, count in portfolio_rows if last_market.get(scope)],
+    )
     settings.set_value("last_snapshot", db.utcnow_iso())

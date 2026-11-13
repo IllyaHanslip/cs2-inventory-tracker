@@ -1,5 +1,10 @@
 # CS2 Inventory Intelligence
 
+[![Tests](https://github.com/IllyaHanslip/cs2-inventory-tracker/actions/workflows/tests.yml/badge.svg)](https://github.com/IllyaHanslip/cs2-inventory-tracker/actions/workflows/tests.yml)
+[![Live demo](https://github.com/IllyaHanslip/cs2-inventory-tracker/actions/workflows/pages.yml/badge.svg)](https://illyahanslip.github.io/cs2-inventory-tracker/)
+[![Latest release](https://img.shields.io/github/v/release/IllyaHanslip/cs2-inventory-tracker)](https://github.com/IllyaHanslip/cs2-inventory-tracker/releases/latest)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
+
 A local dashboard that tracks what your Counter-Strike 2 inventory is worth across **Steam, Skinport, CSFloat,
 Market.CSGO and Waxpeer**, including your storage units, the real value of applied stickers, and how much cash
 you'd actually walk away with after each site's fees.
@@ -202,6 +207,12 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
 - **History and 24h / 7-week changes** come from the app's own daily snapshots, so they appear once it has run
   long enough. Item history is worked out after fees from each market's saved daily prices. Portfolio totals
   saved by older versions (at market value) are converted once, using each day's saved prices.
+- **Changes count price moves only.** The chart line shows what your portfolio was worth each day, so it jumps
+  when you add items, but a % change never counts added or removed items as a gain or loss: days when the
+  number of items changed are left out (the chart says "price moves only" when that happened in its range).
+  Today's point on the chart is always the value shown above it.
+- **Portfolio mix over time** is an estimate for what you hold now: each item's value today, followed back
+  through its own daily price.
 
 ## Data sources and limitations
 

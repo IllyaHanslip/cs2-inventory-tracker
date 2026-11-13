@@ -2,8 +2,24 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
+### What's new in v1.0.1
+
+- The value above each chart and the chart's last point are now always the same number, even
+  just after you add or remove items.
+- The % changes (24h, 7 weeks and each chart range) count price moves only: filling a storage unit
+  or adding 50 capsules no longer shows up as a gain.
+- "Portfolio mix over time" now ends exactly at today's split, including custom prices, applied
+  stickers and big stacks.
+- The Public inventory's saved daily value now matches what the Public tab shows when a stack is
+  split between Steam and a storage unit.
+- Only storage units have an "Open" button: cases, capsules and souvenir packages no longer do,
+  and identical cases stack again.
+
+### Good to know
+
 - Your data and settings are kept in `%LOCALAPPDATA%\CS2 Inventory Intelligence` (put an optional
-  `.env` file there, e.g. for a CSFloat API key - see the README).
+  `.env` file there, e.g. for a CSFloat API key - see the README). Updating is just downloading the
+  new file: your data stays where it is.
 - Windows may say *"Windows protected your PC"* because the app isn't code-signed: click
   **More info → Run anyway**. The file is built automatically by GitHub Actions from this
   release's source code (see the "Windows app" workflow).

@@ -10,6 +10,24 @@ import {
   CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, isStorage, money, number, state, store, thumbHtml, toast,
 } from './util.js';
 
+/** % change along daily values, leaving out each day the number of items changed: adding 50
+ *  capsules isn't a gain. With nothing added or removed it's simply last / first. Same rule as the
+ *  server's 24h and 7-week figures (history.chained_change). */
+export function chainedChange(values, counts = []) {
+  let growth = 1;
+  let used = false;
+  let skipped = false;
+  for (let i = 1; i < values.length; i += 1) {
+    const before = values[i - 1];
+    const after = values[i];
+    if (before === null || after === null || !(before > 0)) continue;
+    if ((counts[i - 1] ?? null) !== (counts[i] ?? null)) { skipped = true; continue; }
+    growth *= after / before;
+    used = true;
+  }
+  return { pct: used ? (growth - 1) * 100 : null, skipped };
+}
+
 export class InventoryView {
   constructor(root, scope, app) {
     this.root = root;
@@ -191,7 +209,7 @@ export class InventoryView {
       this.marketFilter.setMarkets(availableMarkets(state.status, this.items.map((i) => i.quotes)));
       this.renderTable();
       this.app.updateSummary(this.scope, data.summary);
-      this.renderHeadline();
+      this.renderChart();
     } catch (error) {
       toast(error.message, 'error');
     } finally {
@@ -438,16 +456,46 @@ export class InventoryView {
     applySortWithin(r.mixTable);
   }
 
+  /** The saved daily values with today's point set to the value shown above the chart (it also
+   *  counts anything changed since today's snapshot), so the headline and the line always agree. */
+  chartSeries() {
+    const h = this.history;
+    if (!h || !this.summary || !h.today || !h.labels.length) return h;
+    const now = Math.round(this.summary.total_value * 100) / 100;
+    const labels = [...h.labels];
+    const values = [...h.values];
+    const counts = [...(h.counts || [])];
+    const last = labels[labels.length - 1];
+    if (last === h.today) {
+      values[values.length - 1] = now;
+      counts[counts.length - 1] = this.summary.item_count;
+    } else if (last < h.today) {
+      // Days with no snapshot carry the last value across, as the server does between snapshots.
+      const day = new Date(`${last}T00:00:00Z`);
+      for (;;) {
+        day.setUTCDate(day.getUTCDate() + 1);
+        const label = day.toISOString().slice(0, 10);
+        if (label > h.today) break;
+        labels.push(label);
+        values.push(label === h.today ? now : values[values.length - 1]);
+        counts.push(label === h.today ? this.summary.item_count : (counts[counts.length - 1] ?? null));
+      }
+    }
+    return { ...h, labels, values, counts };
+  }
+
   renderHeadline() {
     const r = this.refs;
     if (!this.summary) return;
     r.chartValue.textContent = money(this.summary.total_value);
-    const h = this.history;
-    if (h && h.values.length > 1) {
-      const first = h.values.find((x) => x !== null && x > 0);
-      const last = this.summary.total_value;
+    const h = this.chartSeries();
+    const change = h ? chainedChange(h.values, h.counts) : null;
+    if (change && change.pct !== null) {
       const label = { '7d': '7 days', '30d': '30 days', '90d': '90 days', '1y': '1 year', all: 'all time' }[this.state.range];
-      r.chartDelta.innerHTML = first ? `${deltaHtml(((last - first) / first) * 100)} <span class="muted small">${esc(label)}</span>` : '';
+      const note = change.skipped
+        ? ` <span class="muted small" title="Days you added or removed items aren't counted as gains or losses, so this is how prices moved for what you held.">· price moves only</span>`
+        : '';
+      r.chartDelta.innerHTML = `${deltaHtml(change.pct)} <span class="muted small">${esc(label)}</span>${note}`;
     } else {
       r.chartDelta.innerHTML = '';
     }
@@ -459,21 +507,14 @@ export class InventoryView {
     r.chartCard.classList.add('is-loading');
     try {
       this.history = await api('/history/portfolio', { params: { scope: this.scope, range: this.state.range } });
-      const h = this.history;
-      const has = h.labels.length > 0;
+      const has = this.history.labels.length > 0;
       r.chartEmpty.hidden = has && chartsAvailable();
       if (!chartsAvailable()) {
         r.chartEmpty.textContent = 'Charts could not load (Chart.js is fetched from cdn.jsdelivr.net - check your internet connection).';
       } else if (!has) {
         r.chartEmpty.textContent = 'No history yet. A snapshot is saved after every price refresh and once a day while the app is running.';
       }
-      this.chart = renderLineChart(this.chart, r.chart, {
-        labels: h.labels,
-        series: [{ key: 'valuation', label: r.chartTitle.textContent, values: h.values, fill: true }],
-        currency: h.currency,
-      });
-      this.renderHeadline();
-      this.renderChartTable();
+      this.renderChart();
     } catch (error) {
       toast(error.message, 'error');
     } finally {
@@ -481,11 +522,27 @@ export class InventoryView {
     }
   }
 
+  /** Draws the line, headline and table from the history plus the latest headline value. Runs when
+   *  either arrives (they're fetched side by side) and whenever the items are reloaded. */
+  renderChart() {
+    const r = this.refs;
+    const h = this.chartSeries();
+    if (!h) { this.renderHeadline(); return; }
+    this.chart = renderLineChart(this.chart, r.chart, {
+      labels: h.labels,
+      series: [{ key: 'valuation', label: r.chartTitle.textContent, values: h.values, fill: true }],
+      currency: h.currency,
+    });
+    this.renderHeadline();
+    this.renderChartTable();
+  }
+
   renderChartTable() {
     const r = this.refs;
-    if (!r.tableDetails.open || !this.history) return;
-    r.chartTable.innerHTML = dataTableHtml(this.history.labels, [{ label: 'Value', values: this.history.values }],
-      this.history.currency, `chart-${this.scope}`);
+    const h = this.chartSeries();
+    if (!r.tableDetails.open || !h) return;
+    r.chartTable.innerHTML = dataTableHtml(h.labels, [{ label: 'Value', values: h.values }],
+      h.currency, `chart-${this.scope}`);
     applySortWithin(r.chartTable);
   }
 }

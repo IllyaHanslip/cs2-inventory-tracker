@@ -148,31 +148,51 @@ def mix_group(item_type: str | None) -> str:
 
 
 def mix(frame: pd.DataFrame, valuator, range_key: str = "90d") -> dict[str, Any]:
-    """How the after-fee value splits across groups now, and (estimated from each day's saved
-    prices for the items you hold now) how that split has changed."""
+    """How the after-fee value splits across groups now, and how that split has changed.
+
+    The history is an estimate for what you hold now: each item's value today, followed back
+    through that item's own daily price (the best you'd have got after fees). So the last bar is
+    exactly the split shown for "now" - big stacks, stickers and custom prices included - and
+    earlier bars move with each item's market. Items with no price history stay level."""
     from . import history
 
     labels = {key: label for key, label, _ in MIX_GROUPS}
+    empty_history = {"labels": [], "series": []}
     if frame.empty:
-        return {"groups": [], "history": {"labels": [], "series": []}}
+        return {"groups": [], "history": empty_history}
     groups = frame["tags"].map(lambda t: mix_group((t or {}).get("type")))
     now = frame.assign(group=groups).groupby("group")["total_value"].sum(min_count=1).fillna(0.0)
     current = [{"key": key, "label": labels[key], "value": float(now.get(key, 0.0))}
                for key, _label, _types in MIX_GROUPS if now.get(key, 0.0) > 0]
 
-    plain = frame[~frame["price_source"].isin(["custom", "evidence"]) & ~_storage(frame)]
-    plain = plain.assign(group=groups.loc[plain.index])
-    held = plain.groupby("market_hash_name").agg(quantity=("quantity", "sum"), group=("group", "first"))
+    held = frame[~_storage(frame) & (frame["total_value"].fillna(0) > 0)].assign(group=groups)
+    per_item = held.groupby("market_hash_name").agg(value=("total_value", "sum"), group=("group", "first"))
+    if per_item.empty:
+        return {"groups": current, "history": empty_history}
     days = history.RANGES.get(range_key, 90)
     since = history._days_ago(days) if days else None
-    daily = history.best_after_fees(held.index.tolist(), valuator, since)
+    daily = history.best_after_fees(per_item.index.tolist(), valuator, since)
     if daily.empty:
-        return {"groups": current, "history": {"labels": [], "series": []}}
-    daily = daily.join(held, on="market_hash_name")
-    daily["value"] = daily["value"] * daily["quantity"]
-    table = daily.pivot_table(index="date", columns="group", values="value", aggfunc="sum").fillna(0.0)
-    table.index = pd.to_datetime(table.index)
-    table = table.asfreq("D").ffill()
+        return {"groups": current, "history": empty_history}
+
+    prices = daily.pivot_table(index="date", columns="market_hash_name", values="value", aggfunc="last")
+    prices.index = pd.to_datetime(prices.index)
+    today = pd.Timestamp(history.today())
+    price_now = pd.Series({name: valuator.best_net.get(name) for name in per_item.index}, dtype="float64")
+    for name, price in price_now.dropna().items():
+        if price > 0:
+            prices.loc[today, name] = price            # today's bar uses today's live price
+    days_shown = pd.date_range(min(prices.index.min(), today), today, freq="D")
+    prices = prices.sort_index().reindex(days_shown).ffill().bfill()
+
+    columns = {}
+    for name, item in per_item.iterrows():
+        price = price_now.get(name)
+        if name in prices.columns and pd.notna(price) and price > 0:
+            columns[name] = item["value"] * prices[name] / price
+        else:
+            columns[name] = pd.Series(item["value"], index=days_shown)
+    table = pd.DataFrame(columns, index=days_shown).T.groupby(per_item["group"]).sum().T
     series = [{"key": key, "label": labels[key], "values": [round(float(v), 2) for v in table[key]]}
               for key, _label, _types in MIX_GROUPS if key in table.columns and table[key].sum() > 0]
     return {"groups": current, "history": {"labels": [d.strftime("%Y-%m-%d") for d in table.index], "series": series}}

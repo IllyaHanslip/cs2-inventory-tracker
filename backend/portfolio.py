@@ -407,8 +407,25 @@ def summarize(df: pd.DataFrame, valuator, scope: str) -> dict[str, Any]:
             "cash_out_missing": int((df["total_value"].notna() & df["payout_value"].isna()).sum()),
             "profit": float(df.loc[purchase.index, "profit"].fillna(0).sum()) if not purchase.empty else None,
         }
-    changes = history.portfolio_changes(scope, total, valuator.fx, valuator.base)
+    changes = history.portfolio_changes(scope, total, valuator.fx, valuator.base, stats["item_count"])
+    for col, value in changes.items():
+        if value is None:
+            # Items were added or removed at every step (say, a container filled in today), so
+            # the saved totals don't compare like with like: use how your items' prices moved.
+            changes[col] = held_change(df, col)
     return {"scope": scope, "currency": valuator.base, "total_value": total, **stats, **changes}
+
+
+def held_change(df: pd.DataFrame, col: str) -> float | None:
+    """Value-weighted price change (%) of the items you hold that have one; custom prices stay put."""
+    if df.empty or col not in df:
+        return None
+    rows = df[df[col].notna() & df["total_value"].notna() & (df["price_source"] != "custom") & (df[col] > -100)]
+    if rows.empty:
+        return None
+    now = float(rows["total_value"].sum())
+    before = float((rows["total_value"] / (1 + rows[col] / 100)).sum())
+    return (now - before) / before * 100 if before > 0 else None
 
 
 # ---------------------------------------------------------------------------

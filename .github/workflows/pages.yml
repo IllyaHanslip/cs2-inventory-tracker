@@ -1,12 +1,13 @@
 name: Live demo
 
 # Builds the read-only demo site (made-up inventory, see scripts/build_demo_site.py) and
-# publishes it with GitHub Pages. Rebuilt on every push and weekly, so its dates stay current.
+# publishes it with GitHub Pages. Rebuilt on every push and every morning, so its chart always
+# ends today and "updated" times stay current.
 on:
   push:
     branches: [main]
   schedule:
-    - cron: "17 5 * * 1"
+    - cron: "17 5 * * *"
   workflow_dispatch:
 
 permissions:
