@@ -591,8 +591,7 @@ def portfolio_history():
 @bp.get("/history/item")
 def item_history():
     name = _text(request.args.get("name"), "name", 300, required=True)
-    prefs = settings.get_all()
-    return jsonify(history.item_history(name, _range(), FxConverter.load(), prefs["base_currency"]))
+    return jsonify(history.item_history(name, _range(), Valuator()))
 
 
 # ---------------------------------------------------------------------------

@@ -46,7 +46,7 @@ const app = {
       `Steam sync: ${s.last_steam_sync ? relTime(s.last_steam_sync) : 'never'}`,
       `Prices updated: ${s.prices_updated ? relTime(s.prices_updated) : 'never'}`,
       `Last snapshot: ${s.last_snapshot ? relTime(s.last_snapshot) : 'none yet'}`,
-      `Valuation: ${s.settings.valuation_strategy}`,
+      'Values: after selling fees',
       `Markets: ${s.markets.filter((m) => m.enabled && m.available).map((m) => m.label).join(', ') || 'none'}`,
     ];
     if (s.fx.date) parts.push(`FX: ${s.fx.source || 'stored rates'}`);
@@ -122,24 +122,29 @@ const app = {
     const pub = this.summaries.public;
     const total = this.summaries.total;
     const cur = state.currency;
-    const tile = (label, value, foot) => `<div class="stat"><div class="stat-label">${esc(label)}</div>
+    const tile = (label, value, foot, title = '') => `<div class="stat"${title ? ` title="${esc(title)}"` : ''}><div class="stat-label">${esc(label)}</div>
       <div class="stat-value">${value}</div><div class="stat-foot">${foot}</div></div>`;
+    const afterFees = (summary) => `What you'd receive selling everything where it pays most, after each market's fees. `
+      + `At buying prices (market value) it would be ${money(summary.market_value, cur)}.`;
     const tiles = [];
     tiles.push(tile('Public inventory', pub ? money(pub.total_value, cur) : '…',
-      pub ? `${deltaHtml(pub.change_24h)} <span>24h · ${number(pub.item_count)} items</span>` : ''));
+      pub ? `${deltaHtml(pub.change_24h)} <span>24h · ${number(pub.item_count)} items · after fees</span>` : '',
+      pub ? afterFees(pub) : ''));
     tiles.push(tile('Total portfolio', total ? money(total.total_value, cur) : '…',
-      total ? `${deltaHtml(total.change_24h)} <span>24h · incl. manual &amp; containers</span>` : ''));
+      total ? `${deltaHtml(total.change_24h)} <span>24h · after fees · incl. manual &amp; containers</span>` : '',
+      total ? afterFees(total) : ''));
     tiles.push(tile('Cash-out value', total ? money(total.cash_out_value, cur) : '…',
-      total ? `<span title="Your whole portfolio at its full value (including custom prices and sticker values), each item sold where it pays out best, after that site's selling and withdrawal fees. Steam Wallet money can't be withdrawn, so Steam isn't counted.">after selling &amp; withdrawal fees${total.cash_out_missing ? ` · ${number(total.cash_out_missing)} Steam-only` : ''}</span>` : ''));
+      total ? `<span>money you could withdraw · Steam Wallet sales left out${total.cash_out_missing ? ` · ${number(total.cash_out_missing)} Steam-only` : ''}</span>` : '',
+      'Like Total portfolio, but each item is sold on the best market whose money you can withdraw. Steam pays into your Steam Wallet, and some markets (such as BUFF163) only pay out to certain accounts, so those are left out here.'));
     tiles.push(tile('7-week change', total ? deltaHtml(total.change_7w) : '…',
       '<span>total portfolio vs. 49 days ago</span>'));
     tiles.push(tile('Items tracked', total ? number(total.item_count) : '…',
       total ? `<span>${number(total.unique_items)} unique${total.unpriced_items ? ` · ${number(total.unpriced_items)} unpriced` : ''}</span>` : ''));
     tiles.push(tile('In containers', total ? money(total.value_in_containers, cur) : '…',
-      total ? `<span>${number(total.items_in_containers)} items in ${number(total.storage_containers)} container${total.storage_containers === 1 ? '' : 's'}</span>` : ''));
+      total ? `<span>${number(total.items_in_containers)} items in ${number(total.storage_containers)} container${total.storage_containers === 1 ? '' : 's'} · after fees</span>` : ''));
     if (total && total.purchase_value) {
       const pct = (total.profit / total.purchase_value) * 100;
-      tiles.push(tile('Profit / loss', money(total.profit, cur), `${deltaHtml(pct)} <span>on items with a purchase price</span>`));
+      tiles.push(tile('Profit / loss', money(total.profit, cur), `${deltaHtml(pct)} <span>if sold now, after fees · items with a purchase price</span>`));
     }
     document.getElementById('stats').innerHTML = tiles.join('');
   },

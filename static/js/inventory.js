@@ -4,7 +4,7 @@ import { api } from './api.js';
 import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
 import * as containers from './containers.js';
 import * as dialogs from './dialogs.js';
-import { MarketFilter, availableMarkets, cheapest, cheapestHtml } from './market-filter.js';
+import { MarketFilter, availableMarkets, bestToSell, noCashLabel, sellHtml } from './market-filter.js';
 import { applySort, applySortWithin } from './sortable.js';
 import {
   CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, money, number, state, store, thumbHtml, toast,
@@ -42,7 +42,7 @@ export class InventoryView {
   setup() {
     const r = this.refs;
     const isPublic = this.scope === 'public';
-    r.chartTitle.textContent = isPublic ? 'Public inventory value' : 'Total portfolio value';
+    r.chartTitle.textContent = isPublic ? 'Public inventory value after fees' : 'Total portfolio value after fees';
     r.chart.setAttribute('aria-label', `${r.chartTitle.textContent} over time`);
     r.table.dataset.sortId = `inventory-${this.scope}`;
     if (isPublic) {
@@ -77,7 +77,7 @@ export class InventoryView {
       this.load();
     });
 
-    // Market chips: which markets the "3 cheapest" column compares.
+    // Market chips: which markets the "Best 3 to sell" column compares.
     this.marketFilter = new MarketFilter(r.marketChips, `inventory-${this.scope}`, () => this.renderTable());
 
     r.stack.checked = this.state.stack;
@@ -175,6 +175,9 @@ export class InventoryView {
         if (item.display_value !== null) group.display_value = (group.display_value || 0) + item.display_value;
         if (item.total_value !== null) group.total_value = (group.total_value || 0) + item.total_value;
         if (item.payout_value !== null) group.payout_value = (group.payout_value || 0) + item.payout_value;
+        if (item.market_total_value !== null) group.market_total_value = (group.market_total_value || 0) + item.market_total_value;
+        if (item.profit !== null) group.profit = (group.profit || 0) + item.profit;
+        if (item.purchase_value !== null) group.purchase_value = (group.purchase_value || 0) + item.purchase_value;
       } else {
         const copy = { ...item, stack_ids: [item.id] };
         groups.set(key, copy);
@@ -257,21 +260,22 @@ export class InventoryView {
       : item.sticker_premium > 0
         ? `+${money(item.sticker_premium)}${item.sticker_capped ? '<div class="sub">capped</div>' : ''}`
         : '<span class="muted">—</span>';
-    const top = cheapest(item.quotes, this.marketFilter);
+    const top = bestToSell(item.sell_quotes, this.marketFilter);
     const v = (n) => (n === null || n === undefined ? '' : n);
+    const best = item.sell_quotes[0];
+    const via = best
+      ? `<div class="sub">via ${esc(item.sell_market_label)}${best.wallet ? ` · ${esc(noCashLabel(best.market, true))}` : ''}</div>`
+      : '';
     return `<tr class="row" tabindex="0" data-key="${esc(key)}" data-i="${index}">
       <td>${thumbHtml(item)}</td>
       <td data-v="${esc(item.name)}"><div class="item-name">${esc(item.name)} ${sourceBadge}${stored}</div>
         ${meta.length ? `<div class="item-meta">${meta.join(' · ')}</div>` : ''}${stickers}</td>
       <td class="col-cat">${esc(item.category_label)}</td>
       <td class="num" data-v="${item.quantity}">${qty}</td>
-      <td class="num" data-v="${v(item.unit_price)}">${money(item.unit_price)}${item.price_source === 'custom' ? '<span class="tag-custom">CUSTOM</span>' : ''}</td>
-      <td data-v="${v(top[0]?.price)}">${cheapestHtml(top, state.currency)}</td>
+      <td class="num" data-v="${v(item.unit_value)}">${money(item.unit_value)}${item.price_source === 'custom' ? '<span class="tag-custom">CUSTOM</span>' : ''}${via}</td>
+      <td data-v="${v(top[0]?.net)}">${sellHtml(top, state.currency)}</td>
       <td class="num" data-v="${item.sticker_premium || ''}">${stickerCell}</td>
       <td class="num strong" data-v="${v(valueNumber)}">${value}</td>
-      <td class="num" data-v="${v(item.payout_value)}">${item.payout_value !== null
-        ? `${money(item.payout_value)}<div class="sub">via ${esc(item.payout_market_label)}</div>`
-        : `<span class="muted" title="${item.quotes.some((q) => q.market === 'steam') ? 'Only Steam has a price - Steam Wallet money can\'t be withdrawn' : 'No price yet'}">—</span>`}</td>
       <td class="num" data-v="${v(item.change_24h)}">${deltaHtml(item.change_24h)}</td>
       <td class="num" data-v="${v(item.change_7w)}">${deltaHtml(item.change_7w)}</td>
       <td><div class="row-actions-cell">${actions.join('')}</div></td>

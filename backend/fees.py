@@ -54,22 +54,41 @@ def profile(market: str, overrides: dict[str, Any] | None = None) -> dict[str, A
     return result
 
 
-def net(market: str, price: float | None, overrides: dict[str, Any] | None = None,
-        to_eur: float | None = None) -> float | None:
-    """What you'd receive after selling at ``price`` on ``market`` and withdrawing the money.
+def breakdown(market: str, price: float | None, overrides: dict[str, Any] | None = None,
+              to_eur: float | None = None) -> dict[str, Any] | None:
+    """Step by step: selling at ``price`` on ``market``, then withdrawing the money.
     ``to_eur`` converts 1 unit of the price's currency to EUR (for Skinport's €1,000 tier)."""
     if price is None or price <= 0:
         return None
     p = profile(market, overrides)
     if p["mode"] == "on_top":
         received = price / (1 + p["sale"])
-        received = min(received, price - 0.02)  # each of Steam's two fees is at least 1p/1c
+        received = max(min(received, price - 0.02), 0.0)  # each of Steam's two fees is at least 1p/1c
+        rate = p["sale"]
     else:
         rate = p["sale"]
         if "sale_high" in p and to_eur and price * to_eur >= p["high_eur"]:
             rate = p["sale_high"]
         received = price * (1 - rate)
-    return max(received * (1 - p["withdraw"]), 0.0)
+    withdraw_fee = received * p["withdraw"]
+    return {
+        "gross": price,
+        "mode": p["mode"],
+        "sale_rate": rate,
+        "sale_fee": price - received,
+        "after_sale": received,
+        "withdraw_rate": p["withdraw"],
+        "withdraw_fee": withdraw_fee,
+        "net": max(received - withdraw_fee, 0.0),
+        "cash_out": bool(p["cash_out"]),
+    }
+
+
+def net(market: str, price: float | None, overrides: dict[str, Any] | None = None,
+        to_eur: float | None = None) -> float | None:
+    """What you'd receive after selling at ``price`` on ``market`` and withdrawing the money."""
+    steps = breakdown(market, price, overrides, to_eur)
+    return steps["net"] if steps else None
 
 
 def validate(raw: Any) -> dict[str, dict[str, Any]]:

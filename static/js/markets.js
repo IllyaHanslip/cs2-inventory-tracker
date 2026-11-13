@@ -1,12 +1,12 @@
 // "Market Comparison & Best Deals" tab. Everything here (columns, the top 3, spread, saving vs
 // Steam, the deals summary) is computed for the markets selected in the chips, in one of two modes:
+//   sell - (default) what you'd receive selling there after selling + withdrawal fees; higher is
+//          better. Steam is ranked too, marked as wallet money (it can't be withdrawn).
 //   buy  - each market's cheapest listing; lower is better.
-//   sell - what you'd receive selling there after selling + withdrawal fees; higher is better.
-//          Markets you can't cash out from (Steam Wallet) are shown but not ranked.
 
 import { api } from './api.js';
 import * as dialogs from './dialogs.js';
-import { MarketFilter } from './market-filter.js';
+import { MarketFilter, noCashLabel } from './market-filter.js';
 import { applySort } from './sortable.js';
 import {
   debounce, esc, longDate, money, number, relTime, safeUrl, state, store, thumbHtml, toast,
@@ -35,12 +35,13 @@ export class MarketsView {
     const saved = store.get('view:markets', {});
     this.el.scope.value = saved.scope || 'total';
     this.el.multi.checked = Boolean(saved.multi);
-    this.mode = saved.mode === 'sell' ? 'sell' : 'buy';
+    this.mode = store.get('markets:mode', 'sell') === 'buy' ? 'buy' : 'sell';
     this.filter = new MarketFilter(root.querySelector('#mk-markets'), 'comparison', () => this.render());
 
-    const persist = () => store.set('view:markets', {
-      scope: this.el.scope.value, multi: this.el.multi.checked, mode: this.mode,
-    });
+    const persist = () => {
+      store.set('view:markets', { scope: this.el.scope.value, multi: this.el.multi.checked });
+      store.set('markets:mode', this.mode);
+    };
     this.el.scope.addEventListener('change', () => { persist(); this.reload(); });
     this.el.multi.addEventListener('change', () => { persist(); this.render(); });
     this.el.mode.addEventListener('click', (event) => {
@@ -97,7 +98,7 @@ export class MarketsView {
             market: key, label: labels[key] || key, url: q.url, cash_out: q.cash_out,
             value: selling ? q.net : q.price_base,
           }))
-          .filter((q) => q.value !== null && q.value !== undefined && (!selling || q.cash_out));
+          .filter((q) => q.value !== null && q.value !== undefined);
         quotes.sort((a, b) => (selling ? b.value - a.value : a.value - b.value));
         const values = quotes.map((q) => q.value);
         const low = values.length ? Math.min(...values) : null;
@@ -126,16 +127,16 @@ export class MarketsView {
     this.renderDeals(rows, markets);
 
     const head = markets.map((m) => `<th class="num" data-sort="num" data-key="m:${esc(m.key)}"
-      ${selling && !m.cash_out ? 'title="Steam Wallet money can\'t be withdrawn"' : ''}>${esc(m.label)}${selling && !m.cash_out ? ' <span class="muted">(wallet)</span>' : ''}</th>`).join('');
+      ${selling && !m.cash_out ? `title="${esc(noCashLabel(m.key))}"` : ''}>${esc(m.label)}${selling && !m.cash_out ? ` <span class="muted">(${esc(noCashLabel(m.key, true))})</span>` : ''}</th>`).join('');
     const lastHead = selling
-      ? '<th class="num" data-sort="num" data-key="payout" title="Best payout after fees x quantity, at plain listing prices">Cash-out (listings)</th>'
+      ? '<th class="num" data-sort="num" data-key="payout" title="Best price after fees x quantity, at plain listing prices">You\'d receive</th>'
       : '<th class="num" data-sort="num" data-key="saving">Save vs Steam</th>';
     this.el.table.querySelector('thead').innerHTML = `<tr><th class="col-icon"><span class="sr-only">Image</span></th>
       <th data-sort="text" data-key="name">Item</th><th class="num" data-sort="num" data-key="qty">Qty</th>${head}
       <th class="num" data-sort="num" data-key="spread">Spread</th>${lastHead}</tr>`;
-    this.el.legend.innerHTML = `<span>${selling ? 'Best payouts after fees' : 'Cheapest places to buy'}:</span>
+    this.el.legend.innerHTML = `<span>${selling ? 'Best places to sell, after fees' : 'Cheapest places to buy'}:</span>
       ${MEDALS.map((label, i) => `<span><span class="medal m${i + 1}">${i + 1}</span>${label}</span>`).join('')}
-      ${selling ? '<span class="muted">Steam Wallet money cannot be withdrawn, so Steam is not ranked here. These are plain listing prices; the Cash-out value at the top of the page also counts your custom prices and sticker values, so it can be higher.</span>' : ''}`;
+      ${selling ? '<span class="muted">Steam is ranked too, but its money goes to your Steam Wallet and cannot be withdrawn. These are plain listing prices; your Total Portfolio also counts custom prices and sticker values.</span>' : ''}`;
 
     this.el.table.querySelector('tbody').innerHTML = rows.map((row, index) => {
       const cells = markets.map((m) => {
@@ -145,7 +146,7 @@ export class MarketsView {
         const url = safeUrl(quote.url);
         const value = `<span class="val">${money(shown, currency)}</span>`;
         let sub = '';
-        if (selling) sub = `<span class="orig">listed ${money(quote.price_base, currency)}${quote.cash_out ? '' : ' · wallet only'}</span>`;
+        if (selling) sub = `<span class="orig">listed ${money(quote.price_base, currency)}${quote.cash_out ? '' : ` · ${esc(noCashLabel(m.key, true))}`}</span>`;
         else if (quote.currency !== currency) sub = `<span class="orig">${money(quote.price, quote.currency)}</span>`;
         const title = `Updated ${relTime(quote.fetched_at)}${quote.volume ? ` · ${number(quote.volume)} listed/sold` : ''}`;
         const remove = m.key.startsWith('manual:')
@@ -197,11 +198,11 @@ export class MarketsView {
     if (this.mode === 'sell') {
       const total = rows.reduce((sum, r) => sum + (r.payout || 0), 0);
       this.el.deals.innerHTML = [
-        tile('Cash-out at listing prices', money(total, currency),
+        tile('After fees at listing prices', money(total, currency),
           'plain-skin listings on the selected markets · no custom prices or sticker value'),
-        tile('Items with a payout', `${number(priced.length)} / ${number(rows.length)}`, 'on markets you can withdraw from'),
-        tile('Usually best to sell on', top ? esc(top[0]) : '—', top ? `best payout on ${number(top[1])} items` : 'needs 2+ markets per item'),
-        tile('Widest payout gap', widest ? `${widest.spread.toFixed(0)}%` : '—', widest ? esc(widest.market_hash_name) : 'between best and worst market'),
+        tile('Items priced', `${number(priced.length)} / ${number(rows.length)}`, 'on the selected markets'),
+        tile('Usually best to sell on', top ? esc(top[0]) : '—', top ? `pays most for ${number(top[1])} items` : 'needs 2+ markets per item'),
+        tile('Widest gap', widest ? `${widest.spread.toFixed(0)}%` : '—', widest ? esc(widest.market_hash_name) : 'between best and worst market'),
       ].join('');
       return;
     }

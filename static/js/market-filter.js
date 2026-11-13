@@ -1,5 +1,5 @@
-// Market filter chips ("compare on specific markets") and the "3 cheapest" helpers
-// shared by every price list.
+// Market filter chips ("compare on specific markets") and the "best 3 to sell" / "3 cheapest"
+// helpers shared by every price list.
 
 import { esc, money, store } from './util.js';
 
@@ -73,4 +73,25 @@ export function cheapestHtml(top, currency) {
   if (!top.length) return '<span class="muted">—</span>';
   return `<ol class="cheapest">${top.map((q, i) => `<li class="${i === 0 ? 'first' : ''}"><span class="val">${money(q.price, currency)}</span>
     <span class="mkt">${esc(q.label)}</span></li>`).join('')}</ol>`;
+}
+
+/** The best-paying markets after fees among the selected ones (sell quotes arrive best first). */
+export function bestToSell(sellQuotes, filter, count = 3) {
+  return (sellQuotes || []).filter((q) => !filter || filter.includes(q.market)).slice(0, count);
+}
+
+/**
+ * Why money from a market can't be cashed out: Steam pays into your Steam Wallet; others
+ * (e.g. BUFF163) only pay out to some accounts, or you've marked them that way in Settings.
+ */
+export function noCashLabel(market, short = false) {
+  if (market === 'steam') return short ? 'wallet' : 'Steam Wallet only';
+  return short ? 'no cash-out' : 'no cash-out for most accounts';
+}
+
+/** Compact "£4.12 CSFloat" lines for the best-3-to-sell column; money you can't withdraw is tagged. */
+export function sellHtml(top, currency) {
+  if (!top.length) return '<span class="muted">—</span>';
+  return `<ol class="cheapest">${top.map((q, i) => `<li class="${i === 0 ? 'first' : ''}"><span class="val">${money(q.net, currency)}</span>
+    <span class="mkt">${esc(q.label)}${q.wallet ? ` <span class="wallet-tag" title="${esc(noCashLabel(q.market))}">${esc(noCashLabel(q.market, true))}</span>` : ''}</span></li>`).join('')}</ol>`;
 }

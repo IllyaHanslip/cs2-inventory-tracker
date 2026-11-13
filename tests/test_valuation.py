@@ -108,12 +108,14 @@ def test_custom_price_is_the_whole_value(client):
             "stickers": [{"kind": "sticker", "name": "Crown (Foil)"}]}
     client.post("/api/items", json=body, headers=HEADERS)
     item = client.get("/api/items?scope=total").get_json()["items"][0]
-    assert item["sticker_premium"] > 0 and item["unit_value"] > 9.0       # market-based: skin + capped premium
+    assert item["sticker_premium"] > 0 and item["market_unit_value"] > 9.0   # market-based: skin + capped premium
+    assert item["unit_value"] == pytest.approx((9.0 + item["sticker_premium"]) / 1.15)  # sold on Steam, after fees
     client.put(f"/api/items/{item['id']}", json={"custom_price": 60, "custom_price_currency": "USD",
                                                  "purchase_price": 60, "purchase_currency": "USD"}, headers=HEADERS)
     item = client.get("/api/items?scope=total").get_json()["items"][0]
-    assert item["unit_value"] == pytest.approx(60) and item["sticker_premium"] == 0
-    assert item["sticker_included"] and item["profit"] == pytest.approx(0)
+    assert item["market_unit_value"] == pytest.approx(60) and item["sticker_premium"] == 0
+    assert item["unit_value"] == pytest.approx(60 * 0.98 * 0.975)        # the custom price, after CSFloat's fees
+    assert item["sticker_included"] and item["profit"] == pytest.approx(60 * 0.98 * 0.975 - 60)
 
 
 def test_soft_cap():

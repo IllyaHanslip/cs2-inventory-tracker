@@ -41,12 +41,14 @@ def test_container_lifecycle(client):
 
     from backend.valuation import soft_cap
     sticker_premium = soft_cap(100 * 0.15, 4.0)          # capped relative to the $4 skin
-    contents_value = 10 * 0.5 + 4.0 + sticker_premium
+    steam = lambda price: price / 1.15                    # what you'd receive: Steam adds 15 % on top
+    contents_value = 10 * steam(0.5) + steam(4.0 + sticker_premium)
 
     data = client.get("/api/items?scope=total").get_json()
     # Contents are listed with everything else by default, and counted once in the total.
     assert len(data["items"]) == 4
-    assert data["summary"]["total_value"] == pytest.approx(4.0 + contents_value)
+    assert data["summary"]["total_value"] == pytest.approx(steam(4.0) + contents_value)
+    assert data["summary"]["market_value"] == pytest.approx(4.0 + 10 * 0.5 + 4.0 + sticker_premium)
     assert data["summary"]["items_in_containers"] == 11
     hidden = client.get("/api/items?scope=total&contents=hide").get_json()["items"]
     assert {i["name"] for i in hidden} == {"Storage Unit", "AK-47 | Slate (Minimal Wear)"}
@@ -72,7 +74,7 @@ def test_container_lifecycle(client):
     assert client.delete(f"/api/items/{box_id}", headers=HEADERS).status_code == 200
     remaining = client.get("/api/items?scope=total").get_json()
     assert len(remaining["items"]) == 3
-    assert remaining["summary"]["total_value"] == pytest.approx(4.0 + contents_value)
+    assert remaining["summary"]["total_value"] == pytest.approx(steam(4.0) + contents_value)
 
 
 def test_sorting_and_search(client):
@@ -121,7 +123,8 @@ def test_price_changes_from_snapshots(client):
     add_quote(name, "steam", 1.10)
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     weeks_ago = (date.today() - timedelta(days=50)).isoformat()
-    db.executemany("INSERT INTO price_snapshots VALUES (?, 'valuation', ?, ?, 'USD')",
+    # Changes compare what you'd receive after fees, worked out from each day's saved market prices.
+    db.executemany("INSERT INTO price_snapshots VALUES (?, 'steam', ?, ?, 'USD')",
                    [(name, yesterday, 1.0), (name, weeks_ago, 0.5)])
     item = client.get("/api/items?scope=total").get_json()["items"][0]
     assert item["change_24h"] == pytest.approx(10.0)
@@ -135,7 +138,7 @@ def test_snapshot_and_history_in_other_currency(client):
     client.put("/api/settings", json={"base_currency": "EUR"}, headers=HEADERS)
     history = client.get("/api/history/portfolio?scope=total&range=all").get_json()
     assert history["currency"] == "EUR"
-    assert history["values"][-1] == pytest.approx(3.6)       # 4 USD -> 3.60 EUR
+    assert history["values"][-1] == pytest.approx(4 / 1.15 * 0.9, abs=0.005)   # after Steam's fees, in EUR (rounded to the cent)
 
 
 def _fake_inventory(*asset_ids, unit_tag="Stash"):

@@ -17,7 +17,7 @@ CATEGORY_FILTERS = (*CATEGORIES, "in_container")
 SORT_COLUMNS = {
     "name": "name",
     "value": "display_value",
-    "price": "unit_price",
+    "price": "unit_value",
     "change_24h": "change_24h",
     "change_7w": "change_7w",
     "quantity": "quantity",
@@ -122,11 +122,50 @@ def build_frame(valuator, scope: str = "total", with_changes: bool = True) -> pd
     items["sticker_capped"] = [s["capped"] for s in summaries]
     items["sticker_no_base"] = [s["no_base"] for s in summaries]
     items["sticker_included"] = [s["included"] for s in summaries]
+    # Market value: what the item costs to buy - the valuation price plus counted sticker value.
+    # Kept for reference (Buy view, item breakdown); everything else uses the selling price below.
     has_value = items["unit_price"].notna() | (items["sticker_premium"] > 0)
-    items["unit_value"] = (items["unit_price"].fillna(0) + items["sticker_premium"]).where(has_value)
+    items["market_unit_value"] = (items["unit_price"].fillna(0) + items["sticker_premium"]).where(has_value)
+    items["market_total_value"] = items["market_unit_value"] * items["quantity"]
+
+    # Every market's current listing (base currency), cheapest first - for the buy view and market filters.
+    quote_lists: dict[str, list[dict]] = {}
+    if not valuator.quotes.empty:
+        for row in valuator.quotes.sort_values("price_base").itertuples():
+            quote_lists.setdefault(row.market_hash_name, []).append(
+                {"market": row.market, "label": market_label(row.market), "price": float(row.price_base),
+                 "url": row.url, "net": valuator.net(row.market, float(row.price_base)),
+                 "cash_out": valuator.cash_out(row.market)})
+    items["quotes"] = items["market_hash_name"].map(lambda n: quote_lists.get(n, []))
+
+    # Selling price: the most you'd receive on any market after its selling and withdrawal fees.
+    # Steam counts too (flagged "wallet": that money can't be withdrawn). Listing-priced items sell
+    # at each market's cheapest listing plus their sticker premium; custom and CSFloat-comparables
+    # values are whole-item prices, sold at that price on each market.
+    enabled = list(valuator.prefs["enabled_markets"])
+    sell_lists = []
+    for row in items.itertuples(index=False):
+        value = _num(row.market_unit_value)
+        if row.price_source in ("custom", "evidence"):
+            markets = list(dict.fromkeys(enabled + [q["market"] for q in row.quotes]))
+            options = valuator.sell_options(row.quotes, whole_value=value, markets=markets) if value else []
+        else:
+            options = valuator.sell_options(row.quotes, extra=row.sticker_premium or 0.0)
+        for option in options:
+            option["label"] = market_label(option["market"])
+        sell_lists.append(options)
+    best = [options[0] if options else None for options in sell_lists]
+    cash = [next((o for o in options if not o["wallet"]), None) for options in sell_lists]
+    items["sell_quotes"] = sell_lists
+    items["unit_value"] = pd.Series([b["net"] if b else None for b in best], index=items.index, dtype="float64")
+    items["sell_market"] = [b["market"] if b else None for b in best]
     items["total_value"] = items["unit_value"] * items["quantity"]
     items["purchase_value"] = pd.Series(purchase, index=items.index, dtype="float64") * items["quantity"]
     items["profit"] = items["total_value"] - items["purchase_value"]
+    # Cash-out: the same, counting only markets whose money you can withdraw.
+    items["payout_unit"] = pd.Series([c["net"] if c else None for c in cash], index=items.index, dtype="float64")
+    items["payout_market"] = [c["market"] if c else None for c in cash]
+    items["payout_value"] = items["payout_unit"] * items["quantity"]
 
     # Containers: roll up the value of everything stored inside them (within this scope).
     items["is_container"] = items["category"] == "container"
@@ -142,35 +181,6 @@ def build_frame(valuator, scope: str = "total", with_changes: bool = True) -> pd
     )
     items["display_value"] = items["total_value"].where(~items["is_container"], container_total)
     items["container_name"] = items["container_id"].map(lambda cid: labels.get(int(cid)) if pd.notna(cid) else None)
-
-    # Every market's current price (base currency), cheapest first - for "3 cheapest" and market filters.
-    quote_lists: dict[str, list[dict]] = {}
-    if not valuator.quotes.empty:
-        for row in valuator.quotes.sort_values("price_base").itertuples():
-            quote_lists.setdefault(row.market_hash_name, []).append(
-                {"market": row.market, "label": market_label(row.market), "price": float(row.price_base),
-                 "url": row.url, "net": valuator.net(row.market, float(row.price_base)),
-                 "cash_out": valuator.cash_out(row.market)})
-    items["quotes"] = items["market_hash_name"].map(lambda n: quote_lists.get(n, []))
-
-    # After fees: the most cash you'd get, selling where it pays out best (Steam Wallet doesn't count).
-    cash_markets = [m for m in valuator.prefs["enabled_markets"] if valuator.cash_out(m)]
-    payout_units, payout_markets = [], []
-    for row in items.itertuples(index=False):
-        if row.price_source in ("custom", "evidence") or (row.sticker_premium or 0) > 0:
-            # Whole-item values (and sticker premiums) aren't tied to one market's listing:
-            # apply the fees of the cheapest-to-sell market to the item's value.
-            value = row.unit_value if row.unit_value == row.unit_value else None
-            options = [(valuator.net(m, value), m) for m in cash_markets] if value else []
-        else:
-            options = [(q["net"], q["market"]) for q in row.quotes if q["cash_out"] and q["net"] is not None]
-        options = [o for o in options if o[0] is not None]
-        best = max(options) if options else (None, None)
-        payout_units.append(best[0])
-        payout_markets.append(best[1])
-    items["payout_unit"] = pd.Series(payout_units, index=items.index, dtype="float64")
-    items["payout_market"] = payout_markets
-    items["payout_value"] = items["payout_unit"] * items["quantity"]
 
     deals = valuator.best_deals()
     items["best_market"] = items["market_hash_name"].map(lambda n: deals.get(n, {}).get("market"))
@@ -265,6 +275,7 @@ ITEM_FIELDS = (
     "sticker_cap", "sticker_capped", "sticker_no_base", "sticker_included", "unit_value", "total_value", "display_value",
     "purchase_value", "profit", "change_24h", "change_7w", "best_market", "best_price", "quote_count",
     "quotes", "payout_unit", "payout_market", "payout_value", "stickers", "created_at", "updated_at",
+    "market_unit_value", "market_total_value", "sell_market", "sell_quotes",
 )
 
 
@@ -279,6 +290,8 @@ def to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         item["label"] = container_label(item["name"], item["name_tag"]) if item["is_container"] else item["name"]
         item["best_market_label"] = market_label(item["best_market"]) if item["best_market"] else None
         item["payout_market_label"] = market_label(item["payout_market"]) if item["payout_market"] else None
+        item["sell_market_label"] = market_label(item["sell_market"]) if item["sell_market"] else None
+        item["sell_quotes"] = rec.get("sell_quotes") or []
         icon = rec.get("icon_url")
         item["icon"] = images.icon_src(icon)
         item["stickers"] = [{k: _py(v) for k, v in s.items()} for s in (rec.get("stickers") or [])]
@@ -292,7 +305,8 @@ def summarize(df: pd.DataFrame, valuator, scope: str) -> dict[str, Any]:
         total = 0.0
         stats = {"item_count": 0, "unique_items": 0, "unpriced_items": 0, "sticker_premium": 0.0,
                  "containers": 0, "storage_containers": 0, "items_in_containers": 0, "value_in_containers": 0.0,
-                 "purchase_value": None, "profit": None, "cash_out_value": 0.0, "cash_out_missing": 0}
+                 "purchase_value": None, "profit": None, "cash_out_value": 0.0, "cash_out_missing": 0,
+                 "market_value": 0.0}
     else:
         total = float(df["total_value"].fillna(0).sum())
         purchase = df["purchase_value"].dropna()
@@ -308,6 +322,8 @@ def summarize(df: pd.DataFrame, valuator, scope: str) -> dict[str, Any]:
             "value_in_containers": float(df.loc[df["container_id"].notna(), "total_value"].fillna(0).sum()),
             "purchase_value": float(purchase.sum()) if not purchase.empty else None,
             "cash_out_value": float(df["payout_value"].fillna(0).sum()),
+            # For reference: what everything would cost to buy at current market prices.
+            "market_value": float(df["market_total_value"].fillna(0).sum()),
             # Priced items with no market you can cash out from (e.g. only a Steam price).
             "cash_out_missing": int((df["total_value"].notna() & df["payout_value"].isna()).sum()),
             "profit": float(df.loc[purchase.index, "profit"].fillna(0).sum()) if not purchase.empty else None,

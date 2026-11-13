@@ -58,6 +58,12 @@ def create_app(*, demo: bool = False, reset_demo: bool = False) -> Flask:
 
         if seed_if_empty():
             logging.getLogger(__name__).info("Demo database created at %s", Config.DATABASE_PATH)
+    try:
+        from backend.history import convert_market_snapshots
+
+        convert_market_snapshots()  # history saved before values were after fees (one-off)
+    except Exception:  # noqa: BLE001 - never stop the app starting over this
+        logging.getLogger(__name__).exception("Couldn't convert older portfolio history to after-fee values")
 
     app = Flask(__name__)
     app.json.sort_keys = False
@@ -174,8 +180,11 @@ def main() -> None:
     app = create_app(demo=demo, reset_demo=args.reset_demo)
 
     from backend.http_client import SHUTDOWN
-    from backend.jobs import start_scheduler
+    from backend.jobs import find_pictures_now, start_scheduler
 
+    # Pictures for items added by hand, before the page first loads (it would otherwise show
+    # placeholders until it next reloaded). Waits a few seconds at most.
+    find_pictures_now(timeout=8)
     start_scheduler()
     print(f"\n  CS2 Inventory Intelligence running at {url}"
           f"{'  (DEMO DATA)' if Config.DEMO else ''}\n"

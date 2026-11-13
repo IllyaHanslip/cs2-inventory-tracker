@@ -98,12 +98,17 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
 );
 CREATE INDEX IF NOT EXISTS ix_snapshots_name_date ON price_snapshots (market_hash_name, snapshot_date);
 
+-- total_value is what you'd receive selling everything after fees (basis 'after_fees');
+-- market_value is what it would cost to buy. Rows saved by older versions (basis 'market')
+-- are converted once at start-up, see history.convert_market_snapshots().
 CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     snapshot_date TEXT NOT NULL,
     scope         TEXT NOT NULL CHECK (scope IN ('public', 'total')),
     total_value   REAL NOT NULL,
     item_count    INTEGER NOT NULL,
     currency      TEXT NOT NULL,
+    market_value  REAL,
+    basis         TEXT NOT NULL DEFAULT 'market',
     PRIMARY KEY (snapshot_date, scope)
 );
 
@@ -185,6 +190,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "UPDATE items SET is_storage = 1 WHERE category = 'container' AND (market_hash_name = 'Storage Unit' "
             "OR id IN (SELECT container_id FROM items WHERE container_id IS NOT NULL))"
         )
+    snapshot_columns = {row[1] for row in conn.execute("PRAGMA table_info(portfolio_snapshots)")}
+    if "basis" not in snapshot_columns:
+        conn.execute("ALTER TABLE portfolio_snapshots ADD COLUMN market_value REAL")
+        conn.execute("ALTER TABLE portfolio_snapshots ADD COLUMN basis TEXT NOT NULL DEFAULT 'market'")
 
 
 def query(sql: str, params: tuple | list = ()) -> list[dict[str, Any]]:

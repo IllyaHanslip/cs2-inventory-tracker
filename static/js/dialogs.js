@@ -5,7 +5,7 @@ import { api } from './api.js';
 import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
 import * as containers from './containers.js';
 import { initDialogs, markClean, protectForm } from './guard.js';
-import { MarketFilter, cheapest } from './market-filter.js';
+import { MarketFilter, noCashLabel } from './market-filter.js';
 import { applySortWithin } from './sortable.js';
 import {
   CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, longDate, money, number, relTime, safeUrl, state,
@@ -238,6 +238,43 @@ function kv(label, value, cls = '') {
   return `<dt class="${cls}">${esc(label)}</dt><dd class="${cls}">${value}</dd>`;
 }
 
+const pctText = (rate) => `${+(rate * 100).toFixed(2)}%`;
+
+/** One market's fees as text, e.g. "2% sale + 2.5% withdrawal" or "15% on top (Steam)". */
+function feeText(q) {
+  const sale = q.mode === 'on_top' ? `${pctText(q.sale_rate)} on top` : `${pctText(q.sale_rate)} sale`;
+  return q.withdraw_rate ? `${sale} + ${pctText(q.withdraw_rate)} withdrawal` : sale;
+}
+
+/** The selling-price breakdown: price on the best market -> fees -> what you receive. */
+function sellingSteps(item, wholeItem) {
+  const best = item.sell_quotes[0];
+  if (!best) {
+    return [kv('Selling price', item.is_container && item.contents_count
+      ? '<span class="muted small">the container itself has no market price</span>'
+      : '<span class="muted small">no market price yet - press Refresh prices, or set a custom price with Edit</span>')];
+  }
+  const premium = !wholeItem && item.sticker_premium > 0 ? item.sticker_premium : 0;
+  const cash = item.sell_quotes.find((q) => !q.wallet);
+  const start = wholeItem
+    ? kv(item.price_source === 'custom' ? 'Your custom price' : 'Value from CSFloat comparables', money(best.gross))
+    : kv(`Cheapest ${best.label} listing`, money(best.gross - premium));
+  return [
+    kv('Best place to sell', `${esc(best.label)}${best.wallet ? ` <span class="wallet-tag">${esc(noCashLabel(best.market))}</span>` : ''}`),
+    start,
+    premium ? kv('+ Sticker value', `+${money(premium)}`) : '',
+    premium ? kv('Selling price', money(best.gross)) : '',
+    kv(best.mode === 'on_top' ? `− Steam fees (${pctText(best.sale_rate)}, paid by the buyer on top)` : `− Selling fee (${pctText(best.sale_rate)})`,
+      `−${money(best.sale_fee)}`),
+    best.withdraw_rate ? kv(`− Withdrawal fee (${pctText(best.withdraw_rate)})`, `−${money(best.withdraw_fee)}`) : '',
+    kv(item.quantity > 1 ? 'You receive (each)' : 'You receive', money(best.net), item.quantity > 1 ? '' : 'total'),
+    item.quantity > 1 ? kv(`You receive (× ${number(item.quantity)})`, money(item.total_value), 'total') : '',
+    best.wallet ? kv('Best cash option', cash
+      ? `${money(cash.net)} each <span class="muted small">on ${esc(cash.label)} (money from ${esc(best.label)} cannot be withdrawn)</span>`
+      : '<span class="muted small">none yet - no market you can cash out from has a price</span>') : '',
+  ];
+}
+
 function itemBodyHtml(item) {
   const badges = [
     `<span class="badge ${item.source === 'steam' ? 'badge-steam' : ''}">${item.source === 'steam' ? 'Steam inventory' : 'Manual'}</span>`,
@@ -249,23 +286,16 @@ function itemBodyHtml(item) {
   const stacked = item.stack_ids && item.stack_ids.length > 1
     ? `<p class="note">This row combines ${number(item.stack_ids.length)} identical entries. Edit and delete apply to the first one.</p>`
     : '';
-  const sourceText = item.price_source === 'custom'
-    ? '<span class="muted small">custom</span>'
-    : item.price_source ? `<span class="muted small">${esc(STRATEGY_LABELS[item.price_source] || item.price_source)}</span>` : '';
   const wholeItem = item.price_source === 'custom' || item.price_source === 'evidence';
-  const valuation = [
-    wholeItem
-      ? kv(item.price_source === 'custom' ? 'Your custom price' : 'Value from CSFloat', `${money(item.unit_price)} ${sourceText}`)
-      : kv('Market price', `${money(item.unit_price)} ${sourceText}`),
+  const valuation = [...sellingSteps(item, wholeItem),
+    item.is_container ? kv('Stored inside', `${money(item.contents_value)} <span class="muted small">(${number(item.contents_count)} items, after fees)</span>`) : '',
+    item.is_container ? kv('Total', money(item.display_value), 'total') : '',
+    kv('Market value', item.market_unit_value !== null
+      ? `${money(item.market_unit_value)} each <span class="muted small">to buy · ${wholeItem
+        ? (item.price_source === 'custom' ? 'your custom price' : 'CSFloat comparables')
+        : esc(STRATEGY_LABELS[item.price_source] || item.price_source || '')}</span>`
+      : '—'),
     wholeItem ? kv('Plain skin (markets)', money(item.market_price)) : '',
-    kv('Sticker premium', item.sticker_premium > 0 ? `+${money(item.sticker_premium)}` : (item.sticker_included ? 'included' : '—')),
-    kv('Unit value', money(item.unit_value)),
-    kv('Quantity', number(item.quantity)),
-    item.is_container ? kv('Contents', `${money(item.contents_value)} <span class="muted small">(${number(item.contents_count)} items)</span>`) : '',
-    kv('Total value', money(item.display_value), 'total'),
-    kv('After fees', item.payout_value !== null
-      ? `${money(item.payout_value)} <span class="muted small">selling on ${esc(item.payout_market_label)}</span>`
-      : '<span class="muted small">no cash-out price (Steam Wallet only, or not priced yet)</span>'),
     item.purchase_value !== null ? kv('Paid', money(item.purchase_value)) : '',
     item.profit !== null && item.purchase_value ? kv('Profit / loss', `${money(item.profit)} ${deltaHtml((item.profit / item.purchase_value) * 100)}`) : '',
     kv('24 hours', deltaHtml(item.change_24h)),
@@ -320,7 +350,7 @@ function itemBodyHtml(item) {
       <div><h3>${esc(item.name)}</h3><div class="badges">${badges}</div></div></div>
     ${stacked}
     <div class="detail-grid">
-      <div class="panel"><h4>Valuation</h4><dl class="kv">${valuation}</dl></div>
+      <div class="panel"><h4>Selling price</h4><dl class="kv">${valuation}</dl></div>
       <div class="panel"><h4>Details</h4><dl class="kv">${details}</dl></div>
     </div>
     <div class="panel"><h4>Prices across markets</h4>
@@ -372,53 +402,64 @@ async function loadItemQuotes(item) {
     const data = await api('/quotes', { params: { name: item.market_hash_name, item: item.id } });
     if (!box.isConnected) return;
     box.classList.remove('muted');
-    const quotes = data.quotes.map((q) => ({ ...q, price: q.price_base, original: q.price }));
-    const missing = data.missing || [];
+    // One row per market you could sell on: what you'd receive there after its fees, best first.
+    const raw = new Map(data.quotes.map((q) => [q.market, q]));
+    const rows = item.sell_quotes.map((q) => ({ ...q, raw: raw.get(q.market) }));
+    const listed = new Set(rows.map((q) => q.market));
+    const missing = (data.missing || []).filter((m) => !listed.has(m.market));
+    const whole = item.price_source === 'custom' || item.price_source === 'evidence';
+    const premium = !whole && item.sticker_premium > 0 ? item.sticker_premium : 0;
+    const cur = data.currency;
     renderStickerMatch(data);
     let render = () => {};
     const filter = new MarketFilter($('#item-market-chips'), 'item-quotes', () => render());
-    filter.setMarkets([...quotes, ...missing].map((q) => ({ key: q.market, label: q.label })));
+    filter.setMarkets([...rows, ...missing].map((q) => ({ key: q.market, label: q.label })));
     render = () => {
-      const shown = quotes.filter((q) => filter.includes(q.market));
+      const shown = rows.filter((q) => filter.includes(q.market));
       const absent = missing.filter((m) => filter.includes(m.market));
-      const top = cheapest(shown, null);
-      const sell = shown.filter((q) => q.cash_out && q.net !== null).sort((a, b) => b.net - a.net).slice(0, 3);
-      $('#item-cheapest').innerHTML = (top.length
-        ? `<div class="cheapest-strip"><span class="filter-label">3 cheapest to buy</span>${top.map((q, i) => `<span class="cheap-pill${i === 0 ? ' first' : ''}">
-            <span class="rank">${i + 1}</span> ${money(q.price, data.currency)} <span class="mkt">${esc(q.label)}</span></span>`).join('')}</div>`
-        : '') + (sell.length
-        ? `<div class="cheapest-strip"><span class="filter-label">Best to sell (cash after fees)</span>${sell.map((q, i) => `<span class="cheap-pill${i === 0 ? ' first' : ''}">
-            <span class="rank">${i + 1}</span> ${money(q.net, data.currency)} <span class="mkt">${esc(q.label)}</span></span>`).join('')}</div>`
-        : '');
+      const top = shown.slice(0, 3);
+      $('#item-cheapest').innerHTML = top.length
+        ? `<div class="cheapest-strip"><span class="filter-label">Best 3 to sell (after fees)</span>${top.map((q, i) => `<span class="cheap-pill${i === 0 ? ' first' : ''}">
+            <span class="rank">${i + 1}</span> ${money(q.net, cur)} <span class="mkt">${esc(q.label)}${q.wallet ? ` · ${esc(noCashLabel(q.market, true))}` : ''}</span></span>`).join('')}</div>`
+        : '';
       if (!shown.length && !absent.length) {
         box.innerHTML = '<p class="muted">No markets selected.</p>';
         return;
       }
       const priced = shown.map((q, i) => {
-        const url = safeUrl(q.url);
+        const url = safeUrl(q.url || q.raw?.url);
         const name = url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(q.label)}</a>` : esc(q.label);
-        const best = i === 0 && shown.length > 1 ? ' <span class="badge badge-best">Cheapest</span>' : '';
+        const best = i === 0 && shown.length > 1 ? ' <span class="badge badge-best">Best</span>' : '';
+        const listing = q.raw ? q.raw.price_base : null;
+        const original = q.raw && q.raw.currency !== cur ? `<div class="sub">${money(q.raw.price, q.raw.currency)}</div>` : '';
+        const fee = q.sale_fee + q.withdraw_fee;
+        const grossNote = premium ? `<div class="sub">listing + ${money(premium, cur)} stickers</div>`
+          : whole ? '<div class="sub">the item value</div>' : '';
         return `<tr data-i="${i}"><td class="num" data-v="${i + 1}">${i + 1}</td><td data-v="${esc(q.label)}">${name}${best}</td>
-          <td class="num" data-v="${q.price}">${money(q.price, data.currency)}</td>
-          <td class="num" data-v="${q.net ?? ''}" title="${esc(q.fee_note || '')}">${money(q.net, data.currency)}${q.cash_out ? '' : '<div class="sub">Steam Wallet only</div>'}</td>
-          <td class="num" data-v="${q.original}">${q.currency !== data.currency ? money(q.original, q.currency) : '<span class="muted">—</span>'}</td>
-          <td class="num" data-v="${q.volume ?? ''}">${q.volume !== null ? number(q.volume) : '—'}</td>
-          <td class="muted small" data-v="${esc(q.fetched_at)}">${esc(relTime(q.fetched_at))}</td></tr>`;
+          <td class="num strong" data-v="${q.net}">${money(q.net, cur)}${q.wallet ? `<div class="sub">${esc(noCashLabel(q.market))}</div>` : ''}</td>
+          <td class="num" data-v="${q.gross}">${money(q.gross, cur)}${grossNote}</td>
+          <td class="num" data-v="${fee}" title="${esc(q.raw?.fee_note || '')}">−${money(fee, cur)}<div class="sub">${esc(feeText(q))}</div></td>
+          <td class="num" data-v="${listing ?? ''}">${listing !== null ? money(listing, cur) : '<span class="muted">—</span>'}${original}</td>
+          <td class="num" data-v="${q.raw?.volume ?? ''}">${q.raw && q.raw.volume !== null ? number(q.raw.volume) : '—'}</td>
+          <td class="muted small" data-v="${esc(q.raw?.fetched_at || '')}">${q.raw ? esc(relTime(q.raw.fetched_at)) : '—'}</td></tr>`;
       });
       const unpriced = absent.map((m, j) => `<tr data-i="${shown.length + j}" class="dim">
           <td class="num" data-v=""></td><td data-v="${esc(m.label)}">${esc(m.label)}</td>
-          <td colspan="5" class="muted small" data-v="">${esc(m.status)}</td></tr>`);
+          <td colspan="6" class="muted small" data-v="">${esc(m.status)}</td></tr>`);
+      const basis = whole
+        ? `${item.price_source === 'custom' ? 'your custom price' : 'the value from CSFloat comparables'}, sold on each market`
+        : `each market's cheapest listing of this skin${premium ? ', plus the sticker value counted for this item' : ''}`;
       box.innerHTML = `<div class="table-scroll"><table class="data" data-sort-id="item-quotes"><thead><tr>
           <th class="num" data-sort="num" data-key="rank">#</th><th data-sort="text" data-key="market">Market</th>
-          <th class="num" data-sort="num" data-key="price">Price (${esc(data.currency)})</th>
-          <th class="num" data-sort="num" data-key="net" title="After this site's selling and withdrawal fees - hover a value for the fee details">You'd receive</th>
-          <th class="num" data-sort="num" data-key="original">Original</th>
+          <th class="num" data-sort="num" data-key="net" title="The selling price minus this market's selling and withdrawal fees">You'd receive</th>
+          <th class="num" data-sort="num" data-key="gross">Selling price</th>
+          <th class="num" data-sort="num" data-key="fees" title="Hover a value for this market's fee details">Fees</th>
+          <th class="num" data-sort="num" data-key="listing">Listing (${esc(cur)})</th>
           <th class="num" data-sort="num" data-key="volume">Listings / volume</th>
           <th data-sort="text" data-key="updated">Updated</th></tr></thead>
         <tbody>${priced.concat(unpriced).join('')}</tbody></table></div>
-        <p class="hint">"You'd receive" is what selling at that price would leave you with after the site's selling and
-          withdrawal fees (hover it for details; change fees in Settings). These are each market's cheapest listing of this skin. Their price lists don't include stickers,
-          so ${item.stickers.length ? 'your stickers are valued separately (see the CSFloat sticker match above)' : 'stickers aren\'t reflected here'}.</p>`;
+        <p class="hint">"You'd receive" is the selling price minus that market's selling and withdrawal fees (change fees in Settings).
+          The selling price here is ${basis}. Steam pays into your Steam Wallet, which can't be withdrawn.</p>`;
       applySortWithin(box);
     };
     render();
@@ -634,7 +675,7 @@ export function addQuote(name = '') {
 const pct = (rate) => +(rate * 100).toFixed(2);
 
 function renderFees(fees) {
-  $('#fees-intro').textContent = `Used for "After fees" and "You'd receive". Defaults come from public fee information `
+  $('#fees-intro').textContent = `Every price and value on the page is what you'd receive after these fees. Defaults come from public fee information `
     + `(${fees.checked}); marketplaces change their fees, so adjust them to match your account. Steam adds its fee on `
     + 'top of what you receive, and Steam Wallet money can\'t be withdrawn.';
   $('#settings-fees').innerHTML = fees.markets.map((m) => `<tr data-market="${esc(m.key)}"

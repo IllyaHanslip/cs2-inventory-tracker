@@ -153,16 +153,20 @@ def daily_job(job: Job) -> dict[str, Any]:
     return result
 
 
-def _find_pictures_once() -> None:
-    """Without the scheduler, still look for pictures for items added by hand once at start-up."""
+def find_pictures_now(timeout: float) -> None:
+    """Find pictures for items added by hand, waiting at most ``timeout`` seconds. A slow download
+    carries on in the background (later page loads pick it up), so start-up is never held long."""
     from . import images
 
-    if SHUTDOWN.wait(5):
-        return
-    try:
-        images.backfill()
-    except Exception:  # noqa: BLE001
-        log.exception("Finding item pictures failed")
+    def run() -> None:
+        try:
+            images.backfill()
+        except Exception:  # noqa: BLE001
+            log.exception("Finding item pictures failed")
+
+    worker = threading.Thread(target=run, name="item-pictures", daemon=True)
+    worker.start()
+    worker.join(timeout)
 
 
 def start_scheduler() -> None:
@@ -171,7 +175,6 @@ def start_scheduler() -> None:
     or the prices have gone stale."""
     if not Config.AUTO_DAILY_SNAPSHOT:
         log.info("Daily snapshot scheduler disabled")
-        threading.Thread(target=_find_pictures_once, name="item-pictures", daemon=True).start()
         return
 
     def loop() -> None:

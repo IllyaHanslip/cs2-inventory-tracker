@@ -245,6 +245,10 @@ ol.cheapest li { display: flex; gap: 6px; align-items: baseline; white-space: no
 ol.cheapest .val { font-weight: 600; color: var(--text-primary); }
 ol.cheapest li.first .val { color: var(--good-text); }
 ol.cheapest .mkt, .rank-cell .mkt { color: var(--text-muted); font-size: 12px; }
+.wallet-tag {
+  display: inline-block; padding: 0 5px; border: 1px solid var(--border-strong); border-radius: 4px;
+  font-size: 10.5px; line-height: 15px; color: var(--text-secondary); vertical-align: 1px;
+}
 .cheapest-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
 .cheap-pill {
   display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 10px; border-radius: 999px;

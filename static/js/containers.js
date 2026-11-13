@@ -4,7 +4,7 @@
 import { api } from './api.js';
 import { confirmDialog, editItem, openItem, suggestNames } from './dialogs.js';
 import { markClean, protect, protectForm } from './guard.js';
-import { MarketFilter, availableMarkets, cheapest, cheapestHtml } from './market-filter.js';
+import { MarketFilter, availableMarkets, bestToSell, sellHtml } from './market-filter.js';
 import { applySortWithin, cycleSort, getSort, sortItems } from './sortable.js';
 import { esc, money, number, state, store, thumbHtml, toast } from './util.js';
 
@@ -123,7 +123,7 @@ export class ContainersView {
     this.root.querySelector('#ct-stats').innerHTML = [
       tile('Containers', number(summary.containers), '<span>storage units and other containers</span>'),
       tile('Items stored', number(summary.items_stored), '<span>across all containers</span>'),
-      tile('Stored value', money(summary.value_stored, currency), '<span>included in your Total Portfolio</span>'),
+      tile('Stored value', money(summary.value_stored, currency), '<span>after fees · included in your Total Portfolio</span>'),
       tile('Space used', summary.capacity ? `${((summary.items_stored / summary.capacity) * 100).toFixed(1)}%` : '—',
         `<span>${number(summary.items_stored)} of ${number(summary.capacity)} slots</span>`),
     ].join('');
@@ -347,11 +347,12 @@ function renderContents(contents, currency, animate = false) {
   wrap.innerHTML = contents.length ? `
     <div class="table-scroll"><table class="data ${animate ? 'reveal-rows' : ''}" id="contents-table" data-sort-id="container-contents">
       <thead><tr><th class="col-icon"><span class="sr-only">Image</span></th><th data-sort="text" data-key="name">Item</th>
-        <th class="num" data-sort="num" data-key="qty">Qty</th><th class="num" data-sort="num" data-key="each">Each</th>
-        <th data-sort="num" data-key="cheapest">3 cheapest</th>
+        <th class="num" data-sort="num" data-key="qty">Qty</th>
+        <th class="num" data-sort="num" data-key="each" title="What you'd receive for one after fees, selling where it pays most">Each</th>
+        <th data-sort="num" data-key="cheapest" title="What you'd receive on each market after its fees">Best 3 to sell</th>
         <th class="num" data-sort="num" data-key="value">Value</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>${contents.map((item, i) => {
-        const top = cheapest(item.quotes, manager.filter);
+        const top = bestToSell(item.sell_quotes, manager.filter);
         return `<tr data-i="${i}" data-id="${item.id}" data-name="${esc(item.name.toLowerCase())}" style="--i:${Math.min(i, 20)}">
         <td>${thumbHtml(item)}</td>
         <td data-v="${esc(item.name)}"><button type="button" class="link-btn" data-act="view" data-id="${item.id}">${esc(item.name)}</button>
@@ -361,7 +362,7 @@ function renderContents(contents, currency, animate = false) {
           ].filter(Boolean).join(' · ')}</div>` : ''}</td>
         <td class="num strong" data-v="${item.quantity}">${number(item.quantity)}</td>
         <td class="num" data-v="${item.unit_value ?? ''}">${money(item.unit_value, currency)}</td>
-        <td data-v="${top[0]?.price ?? ''}">${cheapestHtml(top, currency)}</td>
+        <td data-v="${top[0]?.net ?? ''}">${sellHtml(top, currency)}</td>
         <td class="num strong" data-v="${item.total_value ?? ''}">${money(item.total_value, currency)}</td>
         <td><div class="row-actions-cell">
           <button type="button" class="icon-btn" data-act="edit" data-id="${item.id}" aria-label="Edit ${esc(item.name)}" title="Edit">${ICONS.edit}</button>

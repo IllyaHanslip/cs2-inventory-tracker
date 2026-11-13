@@ -24,13 +24,13 @@ login.
 - **Realistic sticker values**: applied stickers add only a share of their loose price. Where the stickers are
   worth more than the skin, the item is valued from real CSFloat listings and sales of the same skin with the
   same stickers.
-- **What you'd really get**: an *After fees* value for every item, a portfolio *Cash-out value*, and a market
-  comparison you can flip between buying prices and selling-after-fees. Steam Wallet money is treated as
-  non-withdrawable.
+- **What you'd really get**: every price and value is what you'd receive selling, after each market's selling
+  and withdrawal fees. The item view breaks it down step by step (listing price, sticker value, each fee). A
+  separate *Cash-out value* counts only money you can withdraw, since Steam Wallet money can't be.
 - **History**: a daily snapshot builds 7-day to all-time charts of your portfolio and of each item on every
-  market.
-- **Easy to explore**: sort any column, filter by category or market, see the 3 cheapest markets for every
-  item, and export to CSV.
+  market, after fees.
+- **Easy to explore**: sort any column, filter by category or market, see the 3 best markets to sell every
+  item on, compare buying prices too, and export to CSV.
 
 | Market comparison | Containers | Item detail |
 |---|---|---|
@@ -80,7 +80,7 @@ Most of them can also be changed later in the app's **Settings** dialog.
 | `STEAM_ID64` | Your SteamID64, so you don't have to paste it each time. |
 | `BASE_CURRENCY` | Currency everything is shown in, e.g. `GBP`, `USD`, `EUR`. |
 | `ENABLED_MARKETS` | Any of `steam,skinport,csfloat,marketcsgo,waxpeer`. |
-| `VALUATION_STRATEGY` | How one value is picked from several markets: `median` (default), `lowest`, `highest`, `mean`, or a single market. |
+| `VALUATION_STRATEGY` | How an item's *market value* (its buying price, shown for reference) is picked from several markets: `median` (default), `lowest`, `highest`, `mean`, or a single market. |
 | `STICKER_RATE_MIN` / `MAX`, `STICKER_PREMIUM_CAP` | Tune the sticker formula (5–15 % of loose price, capped at 100 % of the skin's price by default). |
 | `HOST`, `PORT` | Where the local server listens (default `127.0.0.1:5000`; keep `127.0.0.1` so only your PC can open it). |
 | `AUTO_DAILY_SNAPSHOT`, `AUTO_SYNC_STEAM` | Turn the automatic daily update and Steam re-sync on or off. |
@@ -100,8 +100,12 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
 ## How values are worked out
 
 - **Market prices**: each market's cheapest current listing of the item, converted with that day's exchange rate.
-- **Item value**: the median of the enabled markets by default. A **custom price** you set on an item always
-  wins.
+- **Selling price** (what every price and value on the page shows): the most you'd receive on any market after
+  its fees. For each market, that's its cheapest listing plus your stickers' value, minus the selling fee and
+  withdrawal fee; the best market wins. Steam counts too, marked as Steam Wallet money. A **custom price** you
+  set (or a CSFloat-comparables value) is treated as the item's full price and sold where fees are lowest.
+- **Market value**: what the item would cost to buy (the median of the markets by default), shown for reference
+  in the item view and the Total portfolio tile's tooltip.
 - **Applied stickers**:
   - Each sticker adds 5–15 % of its cheapest loose price. The rate rises on a log scale from $1 to $100
     stickers, is ×1.2 for four identical stickers, and is reduced by scrape.
@@ -110,8 +114,8 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
     instead: recent sales and listings of the same skin with the same valuable stickers. Comparables carrying
     other valuable stickers are set aside, and asking prices are discounted. This is re-checked daily, and the
     item view shows the evidence.
-- **After fees and cash-out value**: each item is assumed sold where it pays out best, minus that site's selling
-  fee and withdrawal fee. Defaults (as of November 2026, editable in Settings):
+- **Fees** (defaults as of November 2026, editable in Settings). The **Cash-out value** tile sells each item on
+  the best market you can withdraw from:
 
   | Market | Selling fee | Withdrawal fee | Counts as cash? |
   |---|---|---|---|
@@ -122,7 +126,9 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
   | Waxpeer | 6 % | ~2 % (crypto) | Yes |
   | BUFF163 (manual quotes) | 2.5 % | 1 % | No by default (only verified Chinese residents can withdraw) |
 
-- **24h / 7-week changes** come from the app's own daily snapshots, so they appear once it has run long enough.
+- **History and 24h / 7-week changes** come from the app's own daily snapshots, so they appear once it has run
+  long enough. Item history is worked out after fees from each market's saved daily prices. Portfolio totals
+  saved by older versions (at market value) are converted once, using each day's saved prices.
 
 ## Data sources and limitations
 

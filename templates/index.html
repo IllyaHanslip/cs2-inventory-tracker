@@ -84,8 +84,8 @@
         </select>
       </label>
       <div class="segmented" id="mk-mode" role="group" aria-label="Which prices to compare">
+        <button type="button" data-mode="sell" title="What you'd receive selling there, after selling and withdrawal fees">Selling (after fees)</button>
         <button type="button" data-mode="buy" title="Cheapest place to buy each item">Buying prices</button>
-        <button type="button" data-mode="sell" title="What you'd actually receive selling there, after selling and withdrawal fees">After selling fees</button>
       </div>
       <label class="check"><input type="checkbox" id="mk-multi"> Only items on 2+ of these markets</label>
       <div class="toolbar-right">
@@ -167,11 +167,10 @@
             <th data-sort="text" data-key="name">Item</th>
             <th class="col-cat" data-sort="text" data-key="category">Category</th>
             <th class="num" data-sort="num" data-key="qty">Qty</th>
-            <th class="num" data-sort="num" data-key="price">Price</th>
-            <th data-sort="num" data-key="cheapest">3 cheapest</th>
+            <th class="num" data-sort="num" data-key="price" title="What you'd receive for one, selling where it pays most, after that market's selling and withdrawal fees">Price</th>
+            <th data-sort="num" data-key="cheapest" title="What you'd receive on each market after its fees, best first">Best 3 to sell</th>
             <th class="num" data-sort="num" data-key="stickers">Stickers</th>
-            <th class="num" data-sort="num" data-key="value">Value</th>
-            <th class="num" data-sort="num" data-key="payout" title="The most cash you'd get: sold where it pays out best, after that site's selling and withdrawal fees">After fees</th>
+            <th class="num" data-sort="num" data-key="value" title="Price x quantity: what you'd receive after fees">Value</th>
             <th class="num" data-sort="num" data-key="change_24h">24h</th>
             <th class="num" data-sort="num" data-key="change_7w">7w</th>
             <th class="col-actions"><span class="sr-only">Actions</span></th>
@@ -276,7 +275,7 @@
     <div class="dialog-body">
       <div class="form-grid">
         <label>Base currency <select class="input currency-select" name="base_currency"></select></label>
-        <label>Valuation method
+        <label>Market value (buying prices)
           <select class="input" name="valuation_strategy">
             <option value="median">Median of all markets</option>
             <option value="lowest">Lowest price (best deal)</option>

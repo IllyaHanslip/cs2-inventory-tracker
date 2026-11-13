@@ -30,14 +30,16 @@ def test_evidence_becomes_the_items_value(client):
     sig = evidence.signature([{"kind": "sticker", "name": "Team Dignitas | Katowice 2014"}])
     evidence.save(item_id, sig, 118.0, "USD", "1 usable listing (listed now with Team Dignitas)", ["note"])
     item = get_item(client)
-    assert item["price_source"] == "evidence" and item["unit_value"] == pytest.approx(118.0)
+    assert item["price_source"] == "evidence" and item["market_unit_value"] == pytest.approx(118.0)
+    assert item["unit_value"] == pytest.approx(118.0 * 0.98 * 0.975)   # sold on CSFloat: lowest fees
+    assert item["sell_market"] == "csfloat"
     assert item["sticker_included"] and item["sticker_premium"] == 0
     assert item["market_price"] == pytest.approx(9.0)          # plain skin still shown
     assert item["change_24h"] is None                            # not comparable with plain-skin history
 
     # A custom price still wins over evidence.
     client.put(f"/api/items/{item_id}", json={"custom_price": 60, "custom_price_currency": "USD"}, headers=HEADERS)
-    assert get_item(client)["unit_value"] == pytest.approx(60)
+    assert get_item(client)["market_unit_value"] == pytest.approx(60)
     client.put(f"/api/items/{item_id}", json={"custom_price": ""}, headers=HEADERS)
 
     # Evidence measured for different stickers is ignored.
@@ -64,7 +66,7 @@ def test_refresh_gathers_evidence_for_items_that_need_it(client, monkeypatch):
     monkeypatch.setattr(comparables, "find_comparables", fake_find)
     result = comparables.refresh_evidence()
     assert asked == [SKIN] and result == {"checked": 1, "valued": 1}   # the plain case isn't compared
-    assert get_item(client)["unit_value"] == pytest.approx(110.0)
+    assert get_item(client)["market_unit_value"] == pytest.approx(110.0)
     assert comparables.refresh_evidence() == {"checked": 0, "valued": 0}  # not re-checked within a day
     assert evidence.load_all()[item_id]["basis"] == "2 usable sales"
 

@@ -51,14 +51,52 @@ class Valuator:
         high = self.fx.convert(Config.STICKER_PRICE_HIGH, "USD", self.base) or Config.STICKER_PRICE_HIGH
         self._sticker_low = max(low, 0.01)
         self._sticker_high = max(high, self._sticker_low * 1.01)
+        self._best_net: dict[str, float] | None = None
 
     # ------------------------------------------------------------------- fees
     def net(self, market: str, price: float | None) -> float | None:
         """What you'd receive after selling at ``price`` on ``market`` and withdrawing it."""
         return fees.net(market, price, self.fee_overrides, self._to_eur)
 
+    def fee_steps(self, market: str, price: float | None) -> dict[str, Any] | None:
+        """Selling price -> selling fee -> withdrawal fee -> what you receive, on ``market``."""
+        return fees.breakdown(market, price, self.fee_overrides, self._to_eur)
+
     def cash_out(self, market: str) -> bool:
         return bool(fees.profile(market, self.fee_overrides)["cash_out"])
+
+    @property
+    def best_net(self) -> dict[str, float]:
+        """Per item name: the most you'd receive for a plain copy (no stickers) on any market, after fees."""
+        if self._best_net is None:
+            nets: dict[str, float] = {}
+            for name, market, price in zip(self.quotes["market_hash_name"], self.quotes["market"], self.quotes["price_base"]):
+                value = self.net(market, float(price))
+                if value is not None and value > nets.get(name, 0.0):
+                    nets[name] = value
+            self._best_net = nets
+        return self._best_net
+
+    def sell_options(self, market_quotes: list[dict[str, Any]], extra: float = 0.0,
+                     whole_value: float | None = None, markets: list[str] | None = None) -> list[dict[str, Any]]:
+        """What you'd receive selling one item on each market, best first.
+
+        Priced from listings: each market's cheapest listing plus ``extra`` (the sticker premium).
+        ``whole_value`` (a custom or CSFloat-comparables value) is sold at that price on every
+        market in ``markets`` instead. Steam is included; its money is wallet-only (``wallet``)."""
+        if whole_value is not None:
+            urls = {q["market"]: q.get("url") for q in market_quotes}
+            asks = [(m, whole_value, urls.get(m)) for m in (markets or [])]
+        else:
+            asks = [(q["market"], q["price"] + (extra or 0.0), q.get("url")) for q in market_quotes]
+        options = []
+        for market, price, url in asks:
+            steps = self.fee_steps(market, price)
+            if steps is None:
+                continue
+            options.append({"market": market, "url": url, "wallet": not steps["cash_out"], **steps})
+        options.sort(key=lambda o: -o["net"])
+        return options
 
     # ------------------------------------------------------------------ quotes
     def _liquidity(self) -> dict[str, tuple[int, float]]:

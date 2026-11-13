@@ -203,7 +203,9 @@ def seed() -> None:
         for scope in totals:
             if counts[scope]:
                 portfolio_rows.append((day, scope, round(totals[scope], 2), counts[scope], "USD"))
-    db.executemany("INSERT OR REPLACE INTO portfolio_snapshots VALUES (?, ?, ?, ?, ?)", portfolio_rows)
+    # Market-value totals, like a database from before values were after fees: converted at start-up.
+    db.executemany("INSERT OR REPLACE INTO portfolio_snapshots (snapshot_date, scope, total_value, item_count, currency) "
+                   "VALUES (?, ?, ?, ?, ?)", portfolio_rows)
 
     settings.set_value("base_currency", "USD")
     settings.set_value("steam_id", "")
