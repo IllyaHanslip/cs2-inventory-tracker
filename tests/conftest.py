@@ -45,6 +45,12 @@ def app(tmp_path, monkeypatch):
 
     from app import create_app
     from backend import db
+    from backend.markets import SOURCES
+
+    def offline(*args, **kwargs):
+        raise AssertionError("tests must not touch the network")
+
+    monkeypatch.setattr(SOURCES["skinport"].sales_client, "get", offline)
 
     application = create_app()
     db.executemany(

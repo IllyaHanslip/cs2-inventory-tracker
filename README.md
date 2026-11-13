@@ -27,6 +27,9 @@ login.
 - **What you'd really get**: every price and value is what you'd receive selling, after each market's selling
   and withdrawal fees. The item view breaks it down step by step (listing price, sticker value, each fee). A
   separate *Cash-out value* counts only money you can withdraw, since Steam Wallet money can't be.
+- **No silly prices**: rarely traded items often have one listing priced far above what they sell for (say a
+  Sticker Slab listed at £1,500 that sells for 62p). Those listings are spotted and ignored automatically, using
+  recent sales, the other markets and, for slabs, the sticker inside. The item view shows what was ignored and why.
 - **History**: a daily snapshot builds 7-day to all-time charts of your portfolio and of each item on every
   market, after fees.
 - **Easy to explore**: sort any column, filter by category or market, see the 3 best markets to sell every
@@ -69,6 +72,18 @@ python app.py --open
 The app keeps running while its window is open. Prices refresh by themselves: on start-up, then hourly checks,
 with a full update (Steam re-sync, prices, snapshot) once a day. **Refresh prices** fetches immediately.
 
+**Keep it updating while the app is closed (Windows):** this adds a scheduled task, for your account only, that
+runs the daily update in the background, every day at 12:00 (or as soon as the PC is next on) and a few minutes
+after you sign in. It does nothing if the dashboard is open or today's update is already done, and logs to
+`data\update.log`. Days the PC is off all day are skipped; charts carry the last value across.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1            # add -Time 18:30 to change the time
+powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1 -Remove    # remove it again
+```
+
+On other systems, schedule `python app.py --update` with cron or similar.
+
 ## Configuration
 
 Settings live in a **`.env`** file next to `app.py`. Copy `.env.example` to `.env`; every value is optional.
@@ -104,6 +119,14 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
   its fees. For each market, that's its cheapest listing plus your stickers' value, minus the selling fee and
   withdrawal fee; the best market wins. Steam counts too, marked as Steam Wallet money. A **custom price** you
   set (or a CSFloat-comparables value) is treated as the item's full price and sold where fees are lowest.
+- **Price check**: a listing is ignored when it's more than 3 times (and at least $1 above) the item's recent
+  sales (Skinport's sales history, or Steam's median sale price), or without sales, its price on the other
+  markets. A Sticker Slab with neither is compared with the sticker inside: a slab can be cracked open to get its
+  sticker back, so it's worth at least that much, and is ignored above 4 times it. Cheap listings are never
+  ignored. When every listing is ignored, the item is valued from its recent sales, or a slab from the sticker
+  inside. This is a simple statistical rule rather than a trained model, so each decision can be explained.
+  Rare patterns and floats aren't priced separately: an item is valued like the cheapest copy of that skin,
+  so set a custom price for one that's worth more.
 - **Market value**: what the item would cost to buy (the median of the markets by default), shown for reference
   in the item view and the Total portfolio tile's tooltip.
 - **Applied stickers**:
@@ -136,7 +159,8 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
   The app spaces out its requests, backs off when Steam says "slow down" (HTTP 429), and doesn't try to get
   around it. Steam prices can therefore be missing for a while; the app retries every 12 hours.
 - **Skinport, Market.CSGO and Waxpeer** publish free price lists. They're fetched once and cached for 30
-  minutes. **CSFloat** uses its official API.
+  minutes. **CSFloat** uses its official API. Skinport's public **sales history** (what items actually sold for
+  over the last 7–90 days) is fetched the same way and used for the price check.
 - **Item names** for autocomplete come from CSFloat's public item list (downloaded weekly, no key needed) plus
   the market price lists, so you can add items nobody is selling right now, such as an unlisted Sticker Slab.
 - **Pictures for items you add by hand** are looked up in [ByMykel's CSGO-API](https://github.com/ByMykel/CSGO-API)
@@ -172,7 +196,7 @@ python scripts/check_secrets.py      # privacy check of everything that would be
 | `backend/` | Flask API, SQLite storage, Steam sync, market sources, valuation, fees, history |
 | `static/`, `templates/` | The dashboard (vanilla JavaScript + Chart.js) |
 | `tests/` | pytest suite |
-| `scripts/` | Privacy check and desktop-shortcut helper |
+| `scripts/` | Privacy check, desktop-shortcut helper and the daily-update scheduled task |
 
 ## Credits
 

@@ -14,6 +14,7 @@ class Quote:
     currency: str
     volume: int | None = None
     url: str | None = None
+    sold_price: float | None = None   # median recent sale price, when the market reports one
 
 
 class MarketSource:

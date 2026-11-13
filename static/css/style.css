@@ -429,6 +429,9 @@ dl.kv .total { font-weight: 700; }
 .preview { list-style: none; margin: 0; padding: 0; color: var(--text-secondary); font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
 .preview li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .preview .qty { color: var(--text-primary); font-weight: 600; }
+.preview .link-btn { color: inherit; text-decoration: none; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.preview .link-btn:hover { color: var(--text-primary); text-decoration: underline; }
+#contents-table tbody tr.row { cursor: pointer; }
 .container-card footer { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; }
 .container-card footer .btn-danger { margin-left: auto; }
 .new-card {

@@ -90,7 +90,8 @@ def test_refresh_reasons(client, monkeypatch):
     reasons = refresh_reasons()
     assert "Market.CSGO has no prices yet" in reasons and "Waxpeer has no prices yet" in reasons
     assert not any("CSFloat" in r for r in reasons)                 # no key, so it's not expected
-    settings.set_value("market_attempts", {k: db.utcnow_iso() for k in SOURCES})
+    assert "recent sales haven't been fetched yet" in reasons
+    settings.set_value("market_attempts", {k: db.utcnow_iso() for k in [*SOURCES, "sales"]})
     db.execute("UPDATE market_prices SET fetched_at = ?", (db.utcnow_iso(),))
     assert refresh_reasons() == []                                  # tried recently - don't hammer
     db.execute("UPDATE market_prices SET fetched_at = '2020-01-01T00:00:00+00:00'")

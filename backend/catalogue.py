@@ -138,9 +138,22 @@ def known_names(allow_fetch: bool = True) -> list[tuple[str, str]]:
     names = dict.fromkeys(catalogue)
     for key in keys[1:]:
         names.update(dict.fromkeys(row[0] for row in cache.get_stale(key) or [] if row and row[0]))
-    entries = [(name.lower(), name) for name in names]
+    entries = [(name.casefold(), name) for name in names]
     _memo = (version, entries)
     return entries
+
+
+def canonical(name: str) -> str:
+    """Steam's exact spelling of a typed item name. Names are matched exactly everywhere ("NiKo"
+    and "niko" are different items), so a name typed in the wrong case would never get a price.
+    It's corrected only when exactly one known item has that name ignoring case; otherwise it's
+    kept as typed. Never downloads anything."""
+    if not name:
+        return name
+    matches = {known for lower, known in known_names(allow_fetch=False) if lower == name.casefold()}
+    if name in matches or len(matches) != 1:
+        return name
+    return next(iter(matches))
 
 
 def _wear_split(lower: str) -> tuple[str, int]:
@@ -157,14 +170,16 @@ def search(query: str, owned: Iterable[str] = (), prefix: str = "", limit: int =
     """Names containing every word of the query, best first: items you own, then names where each
     word typed starts a word ('ak' -> AK-47 before StatTrak), names starting with what you typed,
     then shorter names (plain before StatTrak), each skin's wears from Factory New to Battle-Scarred."""
-    query = query.strip().lower()
+    typed = query.strip()
+    query = typed.casefold()
     terms = query.split()
+    exact_terms = typed.split()   # as typed, for ranking exact-case matches first ("NiKo" before "niko")
     prefix = prefix.lower()
     if not terms:
         return []
     word_starts = [re.compile(r"(?<!\w)" + re.escape(t)) for t in terms]
     owned = {name for name in owned if name}
-    candidates = [(name.lower(), name) for name in owned] + known_names(allow_fetch)
+    candidates = [(name.casefold(), name) for name in owned] + known_names(allow_fetch)
     seen: set[str] = set()
     matches = []
     for lower, name in candidates:
@@ -173,5 +188,7 @@ def search(query: str, owned: Iterable[str] = (), prefix: str = "", limit: int =
         seen.add(name)
         stem, wear = _wear_split(lower)
         mid_word = not all(p.search(lower) for p in word_starts)
-        matches.append(((name not in owned, mid_word, not lower.startswith(query), len(stem), stem, wear), name))
+        other_case = not all(t in name for t in exact_terms)
+        matches.append(((name not in owned, other_case, mid_word, not lower.startswith(query), len(stem), stem, wear),
+                        name))
     return [name for _, name in heapq.nsmallest(limit, matches)]

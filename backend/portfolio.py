@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from . import db, evidence, history, images
+from . import db, evidence, history, images, sanity
 from .classify import CATEGORIES
 from .currency import last_source
 from .markets import MANUAL_PREFIX, SOURCES, market_label
@@ -135,8 +135,16 @@ def build_frame(valuator, scope: str = "total", with_changes: bool = True) -> pd
             quote_lists.setdefault(row.market_hash_name, []).append(
                 {"market": row.market, "label": market_label(row.market), "price": float(row.price_base),
                  "url": row.url, "net": valuator.net(row.market, float(row.price_base)),
-                 "cash_out": valuator.cash_out(row.market)})
-    items["quotes"] = items["market_hash_name"].map(lambda n: quote_lists.get(n, []))
+                 "cash_out": valuator.cash_out(row.market), "basis": "listing"})
+
+    def quotes_for(name: str) -> list[dict]:
+        # No usable listing: recent sales, or for a slab the sticker inside (see Valuator.fallback_quotes).
+        found = quote_lists.get(name)
+        if found:
+            return found
+        return [{**q, "label": market_label(q["market"])} for q in valuator.fallback_quotes(name)]
+
+    items["quotes"] = items["market_hash_name"].map(quotes_for)
 
     # Selling price: the most you'd receive on any market after its selling and withdrawal fees.
     # Steam counts too (flagged "wallet": that money can't be withdrawn). Listing-priced items sell
@@ -159,6 +167,32 @@ def build_frame(valuator, scope: str = "total", with_changes: bool = True) -> pd
     items["sell_quotes"] = sell_lists
     items["unit_value"] = pd.Series([b["net"] if b else None for b in best], index=items.index, dtype="float64")
     items["sell_market"] = [b["market"] if b else None for b in best]
+    items["value_basis"] = [b["basis"] if b else None for b in best]   # listing / sales / sticker_inside / value
+
+    # What the price check knows about each item: recent sales, listings set aside, and for
+    # Sticker Slabs the sticker inside (a slab can be cracked open to get it back).
+    def sales_info(name: str) -> dict | None:
+        info = valuator.sales.get(name)
+        if not info:
+            return None
+        return {**info, "label": market_label(info["source"]), "trusted": name in valuator.trusted_sales}
+
+    def inside_info(name: str) -> dict | None:
+        inner = sanity.sticker_inside(name)
+        if not inner:
+            return None
+        options = valuator.sell_options(quotes_for(inner))
+        best_inner = options[0] if options else None
+        return {"name": inner, "market_value": valuator.price(inner),
+                "value": best_inner["net"] if best_inner else None,
+                "market": market_label(best_inner["market"]) if best_inner else None,
+                "market_key": best_inner["market"] if best_inner else None,
+                "wallet": best_inner["wallet"] if best_inner else False}
+
+    items["sales"] = items["market_hash_name"].map(sales_info)
+    items["set_aside"] = items["market_hash_name"].map(
+        lambda n: [{**a, "label": market_label(a["market"])} for a in valuator.set_aside.get(n, [])])
+    items["sticker_inside"] = items["market_hash_name"].map(inside_info)
     items["total_value"] = items["unit_value"] * items["quantity"]
     items["purchase_value"] = pd.Series(purchase, index=items.index, dtype="float64") * items["quantity"]
     items["profit"] = items["total_value"] - items["purchase_value"]
@@ -276,6 +310,7 @@ ITEM_FIELDS = (
     "purchase_value", "profit", "change_24h", "change_7w", "best_market", "best_price", "quote_count",
     "quotes", "payout_unit", "payout_market", "payout_value", "stickers", "created_at", "updated_at",
     "market_unit_value", "market_total_value", "sell_market", "sell_quotes",
+    "value_basis", "sales", "set_aside", "sticker_inside",
 )
 
 
@@ -292,6 +327,7 @@ def to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         item["payout_market_label"] = market_label(item["payout_market"]) if item["payout_market"] else None
         item["sell_market_label"] = market_label(item["sell_market"]) if item["sell_market"] else None
         item["sell_quotes"] = rec.get("sell_quotes") or []
+        item["set_aside"] = rec.get("set_aside") or []
         icon = rec.get("icon_url")
         item["icon"] = images.icon_src(icon)
         item["stickers"] = [{k: _py(v) for k, v in s.items()} for s in (rec.get("stickers") or [])]
@@ -349,7 +385,8 @@ def storage_overview(df: pd.DataFrame, capacity: int) -> dict[str, Any]:
     for record in to_records(storage):
         contents = inside[inside["container_id"] == record["id"]].sort_values("total_value", ascending=False, na_position="last")
         record["capacity"] = capacity
-        record["preview"] = [{"name": r.name, "quantity": int(r.quantity)} for r in contents.head(3).itertuples()]
+        record["preview"] = [{"id": int(r.id), "name": r.name, "quantity": int(r.quantity)}
+                             for r in contents.head(3).itertuples()]
         record["kinds"] = int(len(contents))
         records.append(record)
     records.sort(key=lambda r: (-(r["contents_value"] or 0), r["label"].lower()))

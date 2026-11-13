@@ -153,6 +153,49 @@ def daily_job(job: Job) -> dict[str, Any]:
     return result
 
 
+UPDATE_MARKER_MAX_AGE = 2 * 3600   # a marker older than this is left over from a crash
+
+
+def _update_marker():
+    return Config.DATA_DIR / ".update-running"
+
+
+def background_update_running() -> bool:
+    """True while ``app.py --update`` (the scheduled daily update) is working."""
+    marker = _update_marker()
+    try:
+        return time.time() - marker.stat().st_mtime < UPDATE_MARKER_MAX_AGE
+    except OSError:
+        return False
+
+
+def background_update() -> dict[str, Any]:
+    """The daily update without the dashboard open (``app.py --update``, run by the Windows
+    scheduled task from scripts/install-daily-update.ps1). Does nothing if today's snapshot is
+    already saved and prices are fresh."""
+    from . import db, images
+    from .history import has_snapshot_today
+    from .refresh import refresh_reasons
+
+    if db.query_one("SELECT 1 FROM items LIMIT 1") is None:
+        return {"skipped": "no items yet"}
+    snapshot_done = has_snapshot_today()
+    reasons = refresh_reasons()
+    if snapshot_done and not reasons:
+        return {"skipped": "already up to date today"}
+    marker = _update_marker()
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(str(time.time()), encoding="utf-8")
+    try:
+        images.backfill()
+        job = Job("daily", "Daily update")
+        result = refresh_job(job) if snapshot_done else daily_job(job)
+        return {"ran": "price refresh" if snapshot_done else "daily update", "reasons": reasons,
+                "result": result, "warnings": job.warnings}
+    finally:
+        marker.unlink(missing_ok=True)
+
+
 def find_pictures_now(timeout: float) -> None:
     """Find pictures for items added by hand, waiting at most ``timeout`` seconds. A slow download
     carries on in the background (later page loads pick it up), so start-up is never held long."""
@@ -191,7 +234,8 @@ def start_scheduler() -> None:
                 log.exception("Finding item pictures failed")
             try:
                 has_items = db.query_one("SELECT 1 FROM items LIMIT 1") is not None
-                if has_items and not jobs.busy():
+                # Skip while the scheduled background update (app.py --update) is doing the same work.
+                if has_items and not jobs.busy() and not background_update_running():
                     reasons = refresh_reasons()
                     if not has_snapshot_today():
                         log.info("No snapshot for today yet - starting the daily update")

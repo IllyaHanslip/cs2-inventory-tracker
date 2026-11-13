@@ -4,12 +4,14 @@
     python app.py --demo       # run with synthetic demo data (data/demo.db)
     python app.py --demo --reset-demo   # regenerate the demo data
     python app.py --open       # also open the dashboard in your browser (used by launch.bat)
+    python app.py --update     # daily update without the dashboard, then exit (scheduled task)
 """
 from __future__ import annotations
 
 import argparse
 import json
 import logging
+import logging.handlers
 import socket
 import sys
 import threading
@@ -94,6 +96,35 @@ def create_app(*, demo: bool = False, reset_demo: bool = False) -> Flask:
     return app
 
 
+def _background_update(url: str) -> int:
+    """``--update``: the daily update with no window (run by the scheduled task), logged to
+    data/update.log. If the dashboard is open, it keeps itself up to date, so this does nothing."""
+    Config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(Config.DATA_DIR / "update.log", maxBytes=256_000,
+                                                   backupCount=1, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
+    logging.getLogger().addHandler(handler)
+    log = logging.getLogger("update")
+    if _running_instance(url) is not None:
+        log.info("The dashboard is open and updates itself - nothing to do.")
+        return 0
+    try:
+        create_app()
+        from backend.jobs import background_update
+
+        outcome = background_update()
+    except Exception:  # noqa: BLE001 - log everything, there's no window to show it in
+        log.exception("Background update failed")
+        return 1
+    if outcome.get("skipped"):
+        log.info("Background update skipped: %s", outcome["skipped"])
+    else:
+        log.info("Background update done (%s; %s)", outcome["ran"], "; ".join(outcome["reasons"]) or "daily snapshot")
+        for warning in outcome.get("warnings", []):
+            log.warning(warning)
+    return 0
+
+
 def _running_instance(url: str) -> dict | None:
     """The /api/status payload if this app is already answering at ``url``, else None."""
     try:
@@ -150,6 +181,9 @@ def main() -> None:
     parser.add_argument("--port", type=int, help=f"port (default {Config.PORT})")
     parser.add_argument("--open", action="store_true",
                         help="open the dashboard in your browser (if already running, just open it)")
+    parser.add_argument("--update", action="store_true",
+                        help="refresh prices and save today's snapshot without the dashboard, then exit "
+                             "(used by the scheduled daily update)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
@@ -160,6 +194,9 @@ def main() -> None:
     demo = args.demo or args.reset_demo
     shown_host = "127.0.0.1" if Config.HOST in ("0.0.0.0", "::") else Config.HOST
     url = f"http://{shown_host}:{port}/"
+
+    if args.update:
+        sys.exit(_background_update(url))
 
     running = _running_instance(url)
     if running is not None:

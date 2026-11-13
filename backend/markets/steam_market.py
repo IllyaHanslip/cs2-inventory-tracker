@@ -48,8 +48,10 @@ class SteamMarket(MarketSource):
         if not data.get("success"):
             return None
         price = parse_money(data.get("lowest_price"))
+        sold = parse_money(data.get("median_price"))   # what it has recently sold for
         if price is None:
-            price = parse_money(data.get("median_price"))
+            price = sold
         if price is None:
             return None
-        return Quote(market_hash_name, price, "USD", parse_int(data.get("volume")), steam_listing_url(market_hash_name))
+        return Quote(market_hash_name, price, "USD", parse_int(data.get("volume")), steam_listing_url(market_hash_name),
+                     sold_price=sold)

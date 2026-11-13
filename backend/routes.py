@@ -252,6 +252,7 @@ def _parse_stickers(raw: Any) -> list[dict[str, Any]]:
         prefix = APPLIED_KINDS[kind]
         if name.lower().startswith(prefix.lower()):
             name = name[len(prefix):].strip()
+        name = catalogue.canonical(prefix + name)[len(prefix):]   # Steam's exact spelling, if unambiguous
         scrape = _number(entry.get("scrape"), "Sticker scrape", 0, 100) or 0.0
         scrape = scrape / 100 if scrape > 1 else scrape
         slot = slots.get(kind, 0)
@@ -274,7 +275,7 @@ def _parse_item(data: dict[str, Any], existing: dict[str, Any] | None) -> tuple[
 
     if not is_steam:
         if present("market_hash_name"):
-            name = _text(data.get("market_hash_name"), "Item name", 200, required=True)
+            name = catalogue.canonical(_text(data.get("market_hash_name"), "Item name", 200, required=True))
             values["market_hash_name"] = values["name"] = name
         name = values.get("market_hash_name") or existing["market_hash_name"]
         if present("category"):
@@ -447,7 +448,7 @@ def add_to_container(container_id: int):
     for number, entry in enumerate(entries, start=1):
         if not isinstance(entry, dict):
             raise ValueError(f"Row {number} is not valid.")
-        name = _text(entry.get("market_hash_name"), f"Item name (row {number})", 200, required=True)
+        name = catalogue.canonical(_text(entry.get("market_hash_name"), f"Item name (row {number})", 200, required=True))
         quantity = _number(entry.get("quantity", 1), f"Quantity (row {number})", 1, storage.CAPACITY, integer=True) or 1
         rows.append((name, quantity))
     now = db.utcnow_iso()

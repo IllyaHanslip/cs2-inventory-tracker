@@ -11,6 +11,7 @@ from config import Config
 
 from . import comparables, currency, db, history, images, settings
 from .classify import applied_hash_name
+from .sanity import sticker_inside
 from .http_client import ApiError, AuthError, CancelledError, RateLimitError
 from .markets import SOURCES, MarketSource, Quote
 
@@ -27,6 +28,8 @@ def tracked_names() -> list[str]:
         "SELECT DISTINCT market_hash_name FROM items WHERE marketable = 1 OR source = 'manual'"
     )}
     names.update(applied_hash_name(r["kind"], r["name"]) for r in db.query("SELECT DISTINCT kind, name FROM item_stickers"))
+    # The sticker inside each Sticker Slab: shown in its detail view and used to sanity-check its listings.
+    names.update(inner for n in list(names) if (inner := sticker_inside(n)))
     return sorted(n for n in names if n and n not in NEVER_LISTED)
 
 
@@ -48,6 +51,41 @@ def save_quotes(market: str, quotes: Iterable[Quote], *, manual: bool = False) -
         "currency = excluded.currency",
         [(q.market_hash_name, market, day, q.price, q.currency) for q in quotes],
     )
+    sold = [q for q in quotes if q.sold_price]
+    if sold:
+        save_sales(market, [(q.market_hash_name, q.sold_price, q.currency, q.volume, "recent") for q in sold])
+
+
+def save_sales(source: str, rows: list[tuple]) -> None:
+    """Store recent sale prices: rows of (name, price, currency, number of sales, period)."""
+    now = db.utcnow_iso()
+    db.executemany(
+        "INSERT INTO sale_prices (market_hash_name, source, price, currency, volume, period, fetched_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(market_hash_name, source) DO UPDATE SET price = excluded.price, "
+        "currency = excluded.currency, volume = excluded.volume, period = excluded.period, fetched_at = excluded.fetched_at",
+        [(name, source, price, currency, volume, period, now) for name, price, currency, volume, period in rows],
+    )
+
+
+def refresh_sales(names: list[str], job) -> int:
+    """Skinport's sales history for the items you track (one request, cached). Returns how many have sales."""
+    source = SOURCES["skinport"]
+    _note_attempt("sales")
+    job.update(message="Fetching recent sales from Skinport…")
+    try:
+        rows = source.sales()
+    except ApiError as exc:
+        job.warn(f"Skinport sales: {exc}")
+        return 0
+    wanted = set(names)
+    found = [(r[0], r[1], source.currency, r[2], r[3]) for r in rows if r[0] in wanted]
+    save_sales("skinport", found)
+    stale = sorted(wanted - {r[0] for r in found})   # no sales in 90 days any more
+    for i in range(0, len(stale), 800):
+        chunk = stale[i:i + 800]
+        db.execute(f"DELETE FROM sale_prices WHERE source = 'skinport' AND market_hash_name IN ({','.join('?' * len(chunk))})",
+                   chunk)
+    return len(found)
 
 
 def drop_quotes(market: str, names: list[str]) -> None:
@@ -100,6 +138,10 @@ def refresh_reasons() -> list[str]:
     newest = db.query_one("SELECT MAX(fetched_at) AS t FROM market_prices WHERE is_manual = 0")["t"]
     if newest and _hours_since(newest) > Config.PRICE_TTL_HOURS:
         reasons.append(f"prices are more than {Config.PRICE_TTL_HOURS:g} hours old")
+    if "skinport" in prefs["enabled_markets"] and not db.query_one("SELECT 1 FROM sale_prices WHERE source = 'skinport'")             and _hours_since(attempts.get("sales")) > Config.PRICE_TTL_HOURS:
+        reasons.append("recent sales haven't been fetched yet")
+    if db.query_one("SELECT 1 FROM portfolio_snapshots WHERE basis = 'after_fees' AND screened = 0"):
+        reasons.append("older history needs checking for unrealistic prices")
     return reasons
 
 
@@ -192,6 +234,9 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
         _mark_checked(key, *names)
         found[key] = len(quotes)
 
+    if "skinport" in prefs["enabled_markets"]:
+        found["sales"] = refresh_sales(names, job)
+
     work = {s.key: _stale(s.key, names, force) for s in per_item}
     counter = {"done": 0, "lock": threading.Lock()}
     job.update(progress=0, total=sum(len(todo) for todo in work.values()))
@@ -209,6 +254,9 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
 
     job.update(message="Finding pictures for items added by hand…")
     images.backfill()
+
+    # Older snapshots that counted an unrealistic listing are corrected now that sales are known.
+    history.remove_outlier_inflation()
 
     job.update(message="Saving today's snapshot…")
     snapshot = history.take_snapshot()

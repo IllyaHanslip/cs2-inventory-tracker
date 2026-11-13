@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     currency      TEXT NOT NULL,
     market_value  REAL,
     basis         TEXT NOT NULL DEFAULT 'market',
+    screened      INTEGER NOT NULL DEFAULT 0,   -- 1 once unrealistic listings are kept out (sanity.py)
     PRIMARY KEY (snapshot_date, scope)
 );
 
@@ -136,6 +137,19 @@ CREATE TABLE IF NOT EXISTS api_cache (
     cache_key  TEXT PRIMARY KEY,
     fetched_at REAL NOT NULL,
     payload    TEXT NOT NULL
+);
+
+-- Recent sale prices (what items actually sold for, not asking prices), used to spot
+-- unrealistic listings - see sanity.py. One row per item and source.
+CREATE TABLE IF NOT EXISTS sale_prices (
+    market_hash_name TEXT NOT NULL,
+    source           TEXT NOT NULL,   -- 'skinport' (sales history) or 'steam' (median sale price)
+    price            REAL NOT NULL,
+    currency         TEXT NOT NULL,
+    volume           INTEGER,         -- number of sales behind the price
+    period           TEXT,            -- e.g. '30 days'
+    fetched_at       TEXT NOT NULL,
+    PRIMARY KEY (market_hash_name, source)
 );
 
 -- Pictures for manually added items, by market name (see images.py).
@@ -194,6 +208,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "basis" not in snapshot_columns:
         conn.execute("ALTER TABLE portfolio_snapshots ADD COLUMN market_value REAL")
         conn.execute("ALTER TABLE portfolio_snapshots ADD COLUMN basis TEXT NOT NULL DEFAULT 'market'")
+    if "screened" not in snapshot_columns:
+        conn.execute("ALTER TABLE portfolio_snapshots ADD COLUMN screened INTEGER NOT NULL DEFAULT 0")
 
 
 def query(sql: str, params: tuple | list = ()) -> list[dict[str, Any]]:

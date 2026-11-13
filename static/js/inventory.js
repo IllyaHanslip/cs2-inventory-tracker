@@ -263,8 +263,9 @@ export class InventoryView {
     const top = bestToSell(item.sell_quotes, this.marketFilter);
     const v = (n) => (n === null || n === undefined ? '' : n);
     const best = item.sell_quotes[0];
+    const basisNote = { sales: ' · recent sales', sticker_inside: ' · sticker inside' }[best?.basis] || '';
     const via = best
-      ? `<div class="sub">via ${esc(item.sell_market_label)}${best.wallet ? ` · ${esc(noCashLabel(best.market, true))}` : ''}</div>`
+      ? `<div class="sub"${item.set_aside.length ? ` title="${number(item.set_aside.length)} unrealistic listing(s) ignored"` : ''}>via ${esc(item.sell_market_label)}${best.wallet ? ` · ${esc(noCashLabel(best.market, true))}` : ''}${basisNote}</div>`
       : '';
     return `<tr class="row" tabindex="0" data-key="${esc(key)}" data-i="${index}">
       <td>${thumbHtml(item)}</td>

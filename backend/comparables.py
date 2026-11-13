@@ -57,9 +57,25 @@ def sticker_names() -> dict[int, str]:
     return {int(k): v for k, v in _sticker_schema().items()}
 
 
-def sticker_ids() -> dict[str, int]:
-    """Lower-cased market name -> CSFloat sticker/patch ID."""
-    return {name.lower(): sticker_id for sticker_id, name in sticker_names().items()}
+class StickerIds(dict):
+    """Market name -> CSFloat sticker/patch ID, matched exactly: "NiKo" and "niko" are different
+    stickers. A name typed in the wrong case still matches, but only when exactly one sticker
+    has that name ignoring case."""
+
+    def __init__(self, names: dict[int, str]):
+        super().__init__({name: sticker_id for sticker_id, name in names.items()})
+        # Several IDs can share one name (re-releases); only a single *distinct name* is unambiguous.
+        distinct: dict[str, set[str]] = {}
+        for name in self:
+            distinct.setdefault(name.casefold(), set()).add(name)
+        self._unique = {k: self[next(iter(v))] for k, v in distinct.items() if len(v) == 1}
+
+    def find(self, name: str) -> int | None:
+        return self.get(name, self._unique.get(name.casefold()))
+
+
+def sticker_ids() -> StickerIds:
+    return StickerIds(sticker_names())
 
 
 def _reference_prices(valuator) -> dict[str, float]:
@@ -243,7 +259,7 @@ def _key_stickers(stickers: list[dict], ids: dict[str, int], valuator) -> list[d
     for s in stickers:
         if s.get("kind") not in ("sticker", "patch") or not s.get("loose_price"):
             continue
-        sticker_id = ids.get(applied_hash_name(s["kind"], s["name"]).lower())
+        sticker_id = ids.find(applied_hash_name(s["kind"], s["name"]))
         if sticker_id is not None:
             candidates.append({"id": sticker_id, "name": s["name"], "loose_price": s["loose_price"],
                                "slot": s.get("slot")})

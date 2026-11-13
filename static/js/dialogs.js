@@ -256,9 +256,13 @@ function sellingSteps(item, wholeItem) {
   }
   const premium = !wholeItem && item.sticker_premium > 0 ? item.sticker_premium : 0;
   const cash = item.sell_quotes.find((q) => !q.wallet);
+  const startLabel = {
+    sales: `Recent sales on ${best.label}`,
+    sticker_inside: `Sticker inside, cheapest ${best.label} listing`,
+  }[best.basis] || `Cheapest ${best.label} listing`;
   const start = wholeItem
     ? kv(item.price_source === 'custom' ? 'Your custom price' : 'Value from CSFloat comparables', money(best.gross))
-    : kv(`Cheapest ${best.label} listing`, money(best.gross - premium));
+    : kv(startLabel, money(best.gross - premium));
   return [
     kv('Best place to sell', `${esc(best.label)}${best.wallet ? ` <span class="wallet-tag">${esc(noCashLabel(best.market))}</span>` : ''}`),
     start,
@@ -269,11 +273,36 @@ function sellingSteps(item, wholeItem) {
     best.withdraw_rate ? kv(`− Withdrawal fee (${pctText(best.withdraw_rate)})`, `−${money(best.withdraw_fee)}`) : '',
     kv(item.quantity > 1 ? 'You receive (each)' : 'You receive', money(best.net), item.quantity > 1 ? '' : 'total'),
     item.quantity > 1 ? kv(`You receive (× ${number(item.quantity)})`, money(item.total_value), 'total') : '',
+    item.sales ? kv('Recent sales', `${money(item.sales.price)} <span class="muted small">${esc(item.sales.label)} · median of
+      ${number(item.sales.volume || 0)} sale${item.sales.volume === 1 ? '' : 's'} (${esc(item.sales.period || 'recent')})</span>`) : '',
+    item.set_aside.length ? kv('Ignored', `<span class="warn-text small">${number(item.set_aside.length)} unrealistic
+      listing${item.set_aside.length === 1 ? '' : 's'} - see Prices across markets</span>`) : '',
     best.wallet ? kv('Best cash option', cash
       ? `${money(cash.net)} each <span class="muted small">on ${esc(cash.label)} (money from ${esc(best.label)} cannot be withdrawn)</span>`
       : '<span class="muted small">none yet - no market you can cash out from has a price</span>') : '',
   ];
 }
+
+/** For a Sticker Slab: what the sticker sealed inside it is worth on its own. */
+function stickerInsideHtml(item) {
+  const s = item.sticker_inside;
+  if (!s) return '';
+  const value = s.value !== null
+    ? `<strong>${money(s.value)}</strong> <span class="muted small">after fees on ${esc(s.market)}${s.wallet ? ` (${esc(noCashLabel(s.market_key, true))})` : ''}
+        · ${money(s.market_value)} to buy</span>`
+    : '<span class="muted small">no price yet - it is fetched with the next price refresh</span>';
+  return `<div class="panel"><h4>Sticker inside</h4>
+    <dl class="kv">${kv(s.name, value)}</dl>
+    <p class="hint">A slab can be cracked open to get its sticker back, so it is worth at least about this much.
+      ${item.value_basis === 'sticker_inside' ? 'The slab itself has no realistic listing or sale right now, so it is valued as the sticker inside.' : ''}</p>
+  </div>`;
+}
+
+const ASIDE_REASONS = {
+  sales: (ref) => `more than 3 times its recent sales (${money(ref)})`,
+  markets: (ref) => `more than 3 times its price on the other markets (${money(ref)})`,
+  sticker_inside: (ref) => `far above the sticker inside it (${money(ref)})`,
+};
 
 function itemBodyHtml(item) {
   const badges = [
@@ -353,6 +382,7 @@ function itemBodyHtml(item) {
       <div class="panel"><h4>Selling price</h4><dl class="kv">${valuation}</dl></div>
       <div class="panel"><h4>Details</h4><dl class="kv">${details}</dl></div>
     </div>
+    ${stickerInsideHtml(item)}
     <div class="panel"><h4>Prices across markets</h4>
       <div class="chips market-chips" id="item-market-chips" role="group" aria-label="Show these markets"></div>
       <div id="item-sticker-match"></div><div id="item-cheapest"></div><div id="item-quotes" class="muted">Loading…</div></div>
@@ -433,8 +463,10 @@ async function loadItemQuotes(item) {
         const listing = q.raw ? q.raw.price_base : null;
         const original = q.raw && q.raw.currency !== cur ? `<div class="sub">${money(q.raw.price, q.raw.currency)}</div>` : '';
         const fee = q.sale_fee + q.withdraw_fee;
-        const grossNote = premium ? `<div class="sub">listing + ${money(premium, cur)} stickers</div>`
-          : whole ? '<div class="sub">the item value</div>' : '';
+        const grossNote = premium ? `<div class="sub">${q.basis === 'sales' ? 'sales' : 'listing'} + ${money(premium, cur)} stickers</div>`
+          : whole ? '<div class="sub">the item value</div>'
+            : q.basis === 'sales' ? '<div class="sub">recent sales</div>'
+              : q.basis === 'sticker_inside' ? '<div class="sub">sticker inside</div>' : '';
         return `<tr data-i="${i}"><td class="num" data-v="${i + 1}">${i + 1}</td><td data-v="${esc(q.label)}">${name}${best}</td>
           <td class="num strong" data-v="${q.net}">${money(q.net, cur)}${q.wallet ? `<div class="sub">${esc(noCashLabel(q.market))}</div>` : ''}</td>
           <td class="num" data-v="${q.gross}">${money(q.gross, cur)}${grossNote}</td>
@@ -446,6 +478,9 @@ async function loadItemQuotes(item) {
       const unpriced = absent.map((m, j) => `<tr data-i="${shown.length + j}" class="dim">
           <td class="num" data-v=""></td><td data-v="${esc(m.label)}">${esc(m.label)}</td>
           <td colspan="6" class="muted small" data-v="">${esc(m.status)}</td></tr>`);
+      const aside = item.set_aside.filter((a) => filter.includes(a.market)).map((a, j) => `<tr data-i="${shown.length + absent.length + j}" class="dim">
+          <td class="num" data-v=""></td><td data-v="${esc(a.label)}">${esc(a.label)}</td>
+          <td colspan="6" class="small warn-text" data-v="">Ignored: listed at ${money(a.price, cur)}, ${esc((ASIDE_REASONS[a.reason] || (() => 'unrealistic'))(a.reference))}</td></tr>`);
       const basis = whole
         ? `${item.price_source === 'custom' ? 'your custom price' : 'the value from CSFloat comparables'}, sold on each market`
         : `each market's cheapest listing of this skin${premium ? ', plus the sticker value counted for this item' : ''}`;
@@ -457,7 +492,7 @@ async function loadItemQuotes(item) {
           <th class="num" data-sort="num" data-key="listing">Listing (${esc(cur)})</th>
           <th class="num" data-sort="num" data-key="volume">Listings / volume</th>
           <th data-sort="text" data-key="updated">Updated</th></tr></thead>
-        <tbody>${priced.concat(unpriced).join('')}</tbody></table></div>
+        <tbody>${priced.concat(unpriced, aside).join('')}</tbody></table></div>
         <p class="hint">"You'd receive" is the selling price minus that market's selling and withdrawal fees (change fees in Settings).
           The selling price here is ${basis}. Steam pays into your Steam Wallet, which can't be withdrawn.</p>`;
       applySortWithin(box);

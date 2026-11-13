@@ -7,6 +7,7 @@ per item.
 from __future__ import annotations
 
 import math
+import statistics
 from collections import Counter
 from typing import Any
 
@@ -14,7 +15,7 @@ import pandas as pd
 
 from config import Config
 
-from . import db, fees
+from . import db, fees, sanity
 from . import settings as app_settings
 from .classify import applied_hash_name
 from .currency import FxConverter
@@ -37,7 +38,11 @@ class Valuator:
         self.prefs = prefs or app_settings.get_all()
         self.base: str = self.prefs["base_currency"]
         self.strategy: str = self.prefs["valuation_strategy"]
-        self.quotes = self._load_quotes()
+        self.sales = self._load_sales()
+        # Listings that can't be right are set aside (see sanity.py): name -> [{market, price, reason, reference}]
+        self.set_aside: dict[str, list[dict[str, Any]]] = {}
+        self.trusted_sales: dict[str, float] = {}
+        self.quotes = self._screen(self._load_quotes())
         self.prices = self._valuation_prices()
         # Applied stickers are valued from the cheapest listing (conservative), not the blend.
         self.lowest = (self.quotes.groupby("market_hash_name")["price_base"].min().to_dict()
@@ -86,15 +91,16 @@ class Valuator:
         market in ``markets`` instead. Steam is included; its money is wallet-only (``wallet``)."""
         if whole_value is not None:
             urls = {q["market"]: q.get("url") for q in market_quotes}
-            asks = [(m, whole_value, urls.get(m)) for m in (markets or [])]
+            asks = [(m, whole_value, urls.get(m), "value") for m in (markets or [])]
         else:
-            asks = [(q["market"], q["price"] + (extra or 0.0), q.get("url")) for q in market_quotes]
+            asks = [(q["market"], q["price"] + (extra or 0.0), q.get("url"), q.get("basis", "listing"))
+                    for q in market_quotes]
         options = []
-        for market, price, url in asks:
+        for market, price, url, basis in asks:
             steps = self.fee_steps(market, price)
             if steps is None:
                 continue
-            options.append({"market": market, "url": url, "wallet": not steps["cash_out"], **steps})
+            options.append({"market": market, "url": url, "wallet": not steps["cash_out"], "basis": basis, **steps})
         options.sort(key=lambda o: -o["net"])
         return options
 
@@ -120,6 +126,46 @@ class Valuator:
         # Quotes in a currency we have no rate for cannot be compared, so drop them.
         return df.dropna(subset=["price_base"])
 
+    def _load_sales(self) -> dict[str, dict[str, Any]]:
+        """Recent sale prices per item (base currency); the source with the most sales wins."""
+        out: dict[str, dict[str, Any]] = {}
+        for row in db.query("SELECT * FROM sale_prices"):
+            price = self.fx.convert(row["price"], row["currency"], self.base)
+            if not price or price <= 0:
+                continue
+            current = out.get(row["market_hash_name"])
+            if current is None or (row["volume"] or 0) > (current["volume"] or 0):
+                out[row["market_hash_name"]] = {"price": price, "volume": row["volume"], "source": row["source"],
+                                                "period": row["period"], "fetched_at": row["fetched_at"]}
+        return out
+
+    def _screen(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Set aside listings far above what the item really sells for (see sanity.py)."""
+        listed = set(df["market_hash_name"]) if not df.empty else set()
+        for name, info in self.sales.items():   # items with sales but no listing at all
+            if name not in listed:
+                self.trusted_sales[name] = info["price"]
+        if df.empty:
+            return df
+        usd = self.fx.convert(1.0, "USD", self.base) or 1.0
+        drop: list[Any] = []
+        reference: dict[str, float] = {}   # what kept evidence says each item is worth (for slabs)
+        groups = dict(tuple(df.groupby("market_hash_name")))
+        for name in sorted(groups, key=lambda n: n.startswith(sanity.SLAB_PREFIX)):  # stickers before slabs
+            group = groups[name]
+            listings = {m: float(p) for m, p in zip(group["market"], group["price_base"])}
+            inner_name = sanity.sticker_inside(name)
+            inner = reference.get(inner_name) if inner_name else None
+            sold = self.sales.get(name, {}).get("price")
+            kept, aside, trusted = sanity.screen(listings, sold, inner, usd)
+            if trusted:
+                self.trusted_sales[name] = trusted
+            reference[name] = trusted or (statistics.median(kept.values()) if kept else None)
+            for market, verdict in aside.items():
+                drop += list(group.index[group["market"] == market])
+                self.set_aside.setdefault(name, []).append({"market": market, "price": listings[market], **verdict})
+        return df.drop(index=drop)
+
     def _valuation_prices(self) -> dict[str, float]:
         df = self.quotes
         if df.empty:
@@ -139,7 +185,32 @@ class Valuator:
         return {name: float(value) for name, value in series.items()}
 
     def price(self, market_hash_name: str) -> float | None:
-        return self.prices.get(market_hash_name)
+        """Market value: the valuation strategy over usable listings, else the fallback below."""
+        found = self.prices.get(market_hash_name)
+        if found is None:
+            fallback = self.fallback_quotes(market_hash_name)
+            if fallback:
+                found = statistics.median(q["price"] for q in fallback)
+        return found
+
+    def fallback_quotes(self, market_hash_name: str) -> list[dict[str, Any]]:
+        """For an item with no usable listing: its recent sales (on the market they're from), or for
+        a Sticker Slab, the sticker inside (you can crack the slab open and sell the sticker)."""
+        if market_hash_name in self.prices:
+            return []
+        sold = self.trusted_sales.get(market_hash_name)
+        if sold:
+            info = self.sales.get(market_hash_name, {})
+            market = info.get("source") or "skinport"
+            return [{"market": market, "price": sold, "url": None, "basis": "sales",
+                     "net": self.net(market, sold), "cash_out": self.cash_out(market)}]
+        inner = sanity.sticker_inside(market_hash_name)
+        if inner and not self.quotes.empty:
+            rows = self.quotes[self.quotes["market_hash_name"] == inner].sort_values("price_base")
+            return [{"market": r.market, "price": float(r.price_base), "url": r.url, "basis": "sticker_inside",
+                     "net": self.net(r.market, float(r.price_base)), "cash_out": self.cash_out(r.market)}
+                    for r in rows.itertuples()]
+        return []
 
     def best_deals(self) -> dict[str, dict[str, Any]]:
         """Cheapest current quote per item, after currency normalisation."""

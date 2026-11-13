@@ -98,6 +98,7 @@ export class ContainersView {
       else if (card && act === 'open') openContainer(card.id);
       else if (card && act === 'add') openContainer(card.id, { focusAdd: true });
       else if (card && act === 'delete') deleteContainer(card);
+      else if (card && act === 'view-item') viewStoredItem(card.id, button.dataset.item);
     });
   }
 
@@ -144,8 +145,9 @@ export class ContainersView {
   cardHtml(c, currency) {
     const steam = c.source === 'steam';
     const preview = c.preview.length
-      ? `<ul class="preview">${c.preview.map((p) => `<li><span class="qty">${number(p.quantity)}×</span> ${esc(p.name)}</li>`).join('')}
-         ${c.kinds > c.preview.length ? `<li class="muted">+ ${number(c.kinds - c.preview.length)} more</li>` : ''}</ul>`
+      ? `<ul class="preview">${c.preview.map((p) => `<li><button type="button" class="link-btn preview-item" data-act="view-item"
+            data-id="${c.id}" data-item="${p.id}" title="Show details"><span class="qty">${number(p.quantity)}×</span> ${esc(p.name)}</button></li>`).join('')}
+         ${c.kinds > c.preview.length ? `<li><button type="button" class="link-btn muted" data-act="open" data-id="${c.id}">+ ${number(c.kinds - c.preview.length)} more</button></li>` : ''}</ul>`
       : '<p class="muted small">Empty. Add the items you keep in it.</p>';
     let remove = `<button type="button" class="btn btn-small btn-danger" data-act="delete" data-id="${c.id}">Delete</button>`;
     if (steam) {
@@ -245,6 +247,17 @@ function clearRows() {
   $('#draft-note')?.remove();
   manager.pendingRows = null;
   store.remove(draftKey(manager.id));
+}
+
+/** The detail view of one item stored in a container (from a container card). */
+async function viewStoredItem(containerId, itemId) {
+  try {
+    const { contents } = await api(`/containers/${containerId}`);
+    const item = contents.find((i) => String(i.id) === String(itemId));
+    if (item) openItem(item);
+  } catch (error) {
+    toast(error.message, 'error');
+  }
 }
 
 export async function openContainer(id, { focusAdd = false, animate = true } = {}) {
@@ -353,7 +366,7 @@ function renderContents(contents, currency, animate = false) {
         <th class="num" data-sort="num" data-key="value">Value</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>${contents.map((item, i) => {
         const top = bestToSell(item.sell_quotes, manager.filter);
-        return `<tr data-i="${i}" data-id="${item.id}" data-name="${esc(item.name.toLowerCase())}" style="--i:${Math.min(i, 20)}">
+        return `<tr class="row" tabindex="0" title="Show details" data-i="${i}" data-id="${item.id}" data-name="${esc(item.name.toLowerCase())}" style="--i:${Math.min(i, 20)}">
         <td>${thumbHtml(item)}</td>
         <td data-v="${esc(item.name)}"><button type="button" class="link-btn" data-act="view" data-id="${item.id}">${esc(item.name)}</button>
           ${item.stickers.length || item.float_value !== null ? `<div class="item-meta">${[
@@ -380,6 +393,13 @@ function renderContents(contents, currency, animate = false) {
 function setupManagerEvents() {
   const dialog = $('#container-dialog');
   dialog.addEventListener('click', async (event) => {
+    // Anywhere on a stored item's row (except its buttons) opens its detail view.
+    const row = event.target.closest('#contents-table tbody tr');
+    if (row && manager.data && !event.target.closest('button, a, input, select')) {
+      const stored = manager.data.contents.find((i) => String(i.id) === row.dataset.id);
+      if (stored) openItem(stored);
+      return;
+    }
     const target = event.target.closest('[data-act]');
     if (!target || !manager.data) return;
     const act = target.dataset.act;
@@ -425,6 +445,11 @@ function setupManagerEvents() {
     }
   });
   dialog.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && event.target.matches('#contents-table tbody tr')) {
+      const stored = manager.data?.contents.find((i) => String(i.id) === event.target.dataset.id);
+      if (stored) openItem(stored);
+      return;
+    }
     if (event.key === 'Enter' && event.target.closest('#add-rows')) {
       event.preventDefault();
       submitAdd().catch((error) => toast(error.message, 'error'));
