@@ -136,6 +136,49 @@ def _mark_checked(market: str, *names: str) -> None:
     )
 
 
+# After a market answers "too many requests" (Steam's HTTP 429), it's left alone for a while -
+# longer each time it happens again - instead of being asked again on every refresh, which only
+# keeps the limit in place. Any successful run resets it.
+REST_HOURS = (1, 3, 6, 12, 24)
+
+
+def resting_until(market: str) -> datetime | None:
+    """When a market that asked us to slow down may be asked again (None: it can be now)."""
+    rest = settings.get(f"rest:{market}") or {}
+    try:
+        until = datetime.fromisoformat(rest["until"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return until if until > datetime.now(timezone.utc) else None
+
+
+def _after_run(market: str, limited: bool) -> datetime | None:
+    rest = settings.get(f"rest:{market}") or {}
+    if not limited:
+        if rest:
+            settings.set_value(f"rest:{market}", {})
+        return None
+    level = int(rest.get("level", 0))
+    until = datetime.now(timezone.utc) + timedelta(hours=REST_HOURS[min(level, len(REST_HOURS) - 1)])
+    settings.set_value(f"rest:{market}", {"until": until.isoformat(timespec="seconds"), "level": level + 1})
+    return until
+
+
+def _most_valuable_first(names: list[str]) -> list[str]:
+    """Items worth the most in all (by any market's price) first, so the first prices that come in
+    from a slow, per-item market are the ones that matter most; items with no price yet last."""
+    from .valuation import Valuator
+
+    best = Valuator().best_net
+    held = {r["market_hash_name"]: r["n"] for r in db.query(
+        "SELECT market_hash_name, SUM(quantity) AS n FROM items GROUP BY market_hash_name")}
+    return sorted(names, key=lambda n: -(best.get(n) or 0) * (held.get(n) or 1))
+
+
+def _local_time(when: datetime) -> str:
+    return when.astimezone().strftime("%H:%M")
+
+
 def _note_attempt(market: str) -> None:
     attempts = settings.get("market_attempts") or {}
     attempts[market] = db.utcnow_iso()
@@ -189,11 +232,14 @@ def _stale(market: str, names: list[str], force: bool) -> list[str]:
 def _run_per_item_source(source: MarketSource, todo: list[str], job, counter: dict) -> tuple[int, str | None]:
     """Fetch one item at a time from a throttled source. Returns (prices found, warning)."""
     client = getattr(source, "client", None)
+    job.step(source.key, label=source.label, done=0, total=len(todo), note="starting")
     if client is not None:
-        client.listener = lambda message: job.update(message=message)
+        client.listener = lambda message: job.step(source.key, note=message)
         client.should_cancel = lambda: job.cancelled
     try:
-        return _fetch_items(source, todo, job, counter)
+        found, warning = _fetch_items(source, todo, job, counter)
+        job.step(source.key, note=warning or f"done: {found} price{'s' if found != 1 else ''} found", finished=True)
+        return found, warning
     finally:
         if client is not None:
             client.listener = client.should_cancel = None
@@ -205,6 +251,7 @@ def _fetch_items(source: MarketSource, todo: list[str], job, counter: dict) -> t
         if job.cancelled:
             return found, f"{source.label}: cancelled after {index} of {len(todo)} items."
         job.update(message=f"{source.label}: {name} ({index + 1}/{len(todo)})")
+        job.step(source.key, done=index, note=name)
         try:
             quote = source.fetch_one(name)
         except CancelledError:
@@ -212,8 +259,9 @@ def _fetch_items(source: MarketSource, todo: list[str], job, counter: dict) -> t
         except AuthError as exc:
             return found, str(exc)
         except RateLimitError as exc:
+            counter["limited"].add(source.key)
             done = f" after {index} of {len(todo)} items" if index else ""
-            return found, f"{exc} Stopped{done}; the rest are retried on the next refresh."
+            return found, f"{exc} Stopped{done}."
         except ApiError as exc:
             errors += 1
             if errors >= 5:
@@ -229,6 +277,7 @@ def _fetch_items(source: MarketSource, todo: list[str], job, counter: dict) -> t
         with counter["lock"]:
             counter["done"] += 1
             job.update(progress=counter["done"])
+        job.step(source.key, done=index + 1)
     return found, None
 
 
@@ -252,10 +301,18 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
         if not usable:
             job.warn(f"{source.label} skipped: {reason}.")
             continue
-        _note_attempt(key)
         if not source.bulk:
+            until = resting_until(key)
+            if until:
+                note = (f"{source.label} asked the app to slow down, so it's left alone until {_local_time(until)}; "
+                        "its prices are fetched again after that.")
+                job.warn(note)
+                job.step(key, label=source.label, note=f"resting until {_local_time(until)}", finished=True)
+                continue
+            _note_attempt(key)
             per_item.append(source)
             continue
+        _note_attempt(key)
         job.update(message=f"Fetching {source.label} prices…")
         try:
             quotes = source.fetch_bulk(set(names))
@@ -277,14 +334,19 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
     if "skinport" in prefs["enabled_markets"]:
         found["sales"] = refresh_sales(names, job)
 
-    work = {s.key: _stale(s.key, names, force) for s in per_item}
-    counter = {"done": 0, "lock": threading.Lock()}
+    ordered = _most_valuable_first(names) if per_item else names
+    work = {s.key: _stale(s.key, ordered, force) for s in per_item}
+    counter = {"done": 0, "lock": threading.Lock(), "limited": set()}
     job.update(progress=0, total=sum(len(todo) for todo in work.values()))
     if any(work.values()):
         with ThreadPoolExecutor(max_workers=len(per_item)) as pool:  # one thread per market
             futures = {s.key: pool.submit(_run_per_item_source, s, work[s.key], job, counter) for s in per_item}
             for key, future in futures.items():
                 count, warning = future.result()
+                until = _after_run(key, key in counter["limited"])
+                if until:
+                    warning = (f"{warning} It's left alone until {_local_time(until)} (longer each time it happens), "
+                               "then the rest are fetched, most valuable first.")
                 found[key] = count
                 if count:
                     fresh.append(key)

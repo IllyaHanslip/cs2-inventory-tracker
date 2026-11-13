@@ -20,6 +20,8 @@ from .refresh import price_from_saved_lists, save_quotes
 from .steam_inventory import resolve_steam_id
 from .valuation import Valuator
 
+# When this run of the app started: the dashboard shows dismissed notes again after a restart.
+STARTED_AT = db.utcnow_iso()
 bp = Blueprint("api", __name__, url_prefix="/api")
 
 
@@ -104,6 +106,7 @@ def status():
         fx={"date": fx.latest_date, "source": (last_source() or {}).get("source")},
         last_steam_sync=settings.get("last_steam_sync"),
         pending_changes=moves.pending_count(),
+        started_at=STARTED_AT,
         last_snapshot=settings.get("last_snapshot"),
         prices_updated=newest,
         last_daily_update=settings.get("last_daily_update"),
@@ -472,6 +475,14 @@ def add_to_container(container_id: int):
     images.ensure(name for name, _ in rows)
     price_from_saved_lists(name for name, _ in rows)
     return jsonify(added=len(rows) - stacked, stacked=stacked, contents_count=used, capacity=storage.CAPACITY), 201
+
+
+@bp.put("/containers/<int:container_id>/count")
+def set_container_count(container_id: int):
+    """The item count CS2 shows for a storage unit (Steam's public inventory hides storage units)."""
+    count = _number(_body().get("count"), "In-game count", 0, storage.CAPACITY, integer=True)
+    moves.set_game_count(container_id, count)
+    return jsonify(container_id=container_id, game_count=count)
 
 
 # ---------------------------------------------------------------------------

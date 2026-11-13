@@ -59,6 +59,10 @@ class FakeJob:
         if message:
             self.messages.append(message)
 
+    def step(self, key, label=None, done=None, total=None, note=None, finished=False):
+        if note:
+            self.messages.append(note)
+
     def warn(self, message):
         self.warnings.append(message)
 
@@ -85,10 +89,24 @@ def test_refresh_stops_politely_on_rate_limit(app):
     import threading
     source = FlakySource()
     job = FakeJob()
-    found, warning = refresh._run_per_item_source(source, ["A", "B", "C"], job, {"done": 0, "lock": threading.Lock()})
+    counter = {"done": 0, "lock": threading.Lock(), "limited": set()}
+    found, warning = refresh._run_per_item_source(source, ["A", "B", "C"], job, counter)
     assert found == 1
     assert source.calls == 2            # did not keep hammering after the 429
-    assert "rate-limiting" in warning and "next refresh" in warning
+    assert "rate-limiting" in warning and counter["limited"] == {"steam"}
     from backend import db
     checked = {r["market_hash_name"] for r in db.query("SELECT market_hash_name FROM price_checks")}
     assert checked == {"A"}             # B and C stay due, so they're retried next time
+
+
+def test_a_market_that_asks_to_slow_down_is_left_alone_for_longer_each_time(app):
+    from datetime import datetime, timezone
+    assert refresh.resting_until("steam") is None
+    hours = []
+    for _ in range(6):
+        until = refresh._after_run("steam", limited=True)
+        hours.append(round((until - datetime.now(timezone.utc)).total_seconds() / 3600))
+    assert hours == [1, 3, 6, 12, 24, 24]
+    assert refresh.resting_until("steam") is not None
+    refresh._after_run("steam", limited=False)          # a run without a 429 starts afresh
+    assert refresh.resting_until("steam") is None

@@ -37,6 +37,17 @@ const app = {
     await Promise.all([this.views.public.reload(), this.views.total.reload(), this.views.containers.reload()]);
     const job = state.status.job;
     if (job && job.status === 'running') this.watchJob(job);
+    // The app also refreshes prices by itself (when you start it, and its hourly check): show
+    // those too, so you can always see what's running and how far it's got.
+    if (!DEMO_SITE) setInterval(() => this.checkForJob(), 15000);
+  },
+
+  async checkForJob() {
+    if (this.pollTimer) return;
+    try {
+      const { job } = await api('/jobs/current');
+      if (job && job.status === 'running') this.watchJob(job);
+    } catch { /* server briefly unavailable */ }
   },
 
   async loadStatus() {
@@ -175,7 +186,17 @@ const app = {
       const { job } = await api(path, { method: 'POST', body });
       this.watchJob(job);
     } catch (error) {
-      toast(error.message, error.status === 409 ? 'warn' : 'error', 9000);
+      if (error.status !== 409) { toast(error.message, 'error', 9000); return; }
+      // Something is already running: show its progress instead.
+      try {
+        const { job } = await api('/jobs/current');
+        if (job && job.status === 'running') {
+          this.watchJob(job);
+          toast(`${job.label} is already running - its progress is shown at the top. You can cancel it there.`, 'info', 9000);
+          return;
+        }
+      } catch { /* fall through */ }
+      toast(error.message, 'warn', 9000);
     }
   },
 
@@ -183,7 +204,16 @@ const app = {
     const banner = document.getElementById('job-banner');
     banner.hidden = false;
     document.getElementById('job-label').textContent = `${job.label}:`;
-    document.getElementById('job-message').textContent = job.message || '';
+    const steps = job.steps || [];
+    document.getElementById('job-message').textContent = steps.length ? '' : (job.message || '');
+    const list = document.getElementById('job-steps');
+    list.hidden = !steps.length;
+    list.innerHTML = steps.map((step) => {
+      const count = step.total ? `${number(step.done)} of ${number(step.total)}` : '';
+      const left = step.seconds_left ? ` · about ${minutesText(step.seconds_left)} left` : '';
+      const note = step.note ? ` <span class="muted">· ${esc(step.note)}</span>` : '';
+      return `<li${step.finished ? ' class="finished"' : ''}><strong>${esc(step.label)}</strong> ${count}${left}${note}</li>`;
+    }).join('');
     const bar = document.getElementById('job-progress');
     const progress = bar.parentElement;
     if (job.total > 0) {
@@ -214,6 +244,7 @@ const app = {
         return;
       }
       clearInterval(this.pollTimer);
+      this.pollTimer = null;
       this.finishJob(current);
     }, 1500);
   },
@@ -242,6 +273,13 @@ const app = {
     await this.refreshAll();
   },
 };
+
+function minutesText(seconds) {
+  if (seconds < 90) return 'a minute';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} minutes`;
+  return `${(minutes / 60).toFixed(1)} hours`;
+}
 
 window.addEventListener('DOMContentLoaded', () => {
   if (DEMO_SITE) showDemoBanner();

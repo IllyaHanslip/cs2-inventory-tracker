@@ -225,8 +225,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "OR id IN (SELECT container_id FROM items WHERE container_id IS NOT NULL))"
         )
     if "steam_count" not in columns:
-        # How many items Steam says a storage unit holds (from its public inventory description).
+        # How many items Steam says a storage unit holds (if a public inventory ever includes it).
         conn.execute("ALTER TABLE items ADD COLUMN steam_count INTEGER")
+    if "game_count" not in columns:
+        # The item count CS2 shows for a storage unit, typed in by you (public inventories hide
+        # storage units), and when: moves confirmed after that keep it up to date.
+        conn.execute("ALTER TABLE items ADD COLUMN game_count INTEGER")
+        conn.execute("ALTER TABLE items ADD COLUMN game_count_at TEXT")
     snapshot_columns = {row[1] for row in conn.execute("PRAGMA table_info(portfolio_snapshots)")}
     if "basis" not in snapshot_columns:
         conn.execute("ALTER TABLE portfolio_snapshots ADD COLUMN market_value REAL")

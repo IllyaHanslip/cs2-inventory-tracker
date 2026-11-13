@@ -100,6 +100,17 @@ export class ContainersView {
       else if (card && act === 'add') openContainer(card.id, { focusAdd: true });
       else if (card && act === 'delete') deleteContainer(card);
       else if (card && act === 'view-item') viewStoredItem(card.id, button.dataset.item);
+      else if (card && act === 'set-count') {
+        button.closest('.game-count').outerHTML = countFormHtml(card);
+        this.root.querySelector(`.count-form[data-id="${card.id}"] input`)?.focus();
+      } else if (act === 'cancel-count') this.render();
+      else if (card && act === 'hide-count') { hideNote(card); this.render(); }
+    });
+    root.querySelector('#ct-grid').addEventListener('submit', (event) => {
+      const form = event.target.closest('.count-form');
+      if (!form) return;
+      event.preventDefault();
+      saveCount(form.dataset.id, form.elements.count.value).catch((error) => toast(error.message, 'error'));
     });
     root.querySelector('#ct-changes').addEventListener('click', (event) => {
       const button = event.target.closest('[data-act]');
@@ -145,9 +156,9 @@ export class ContainersView {
       <div class="card-head">
         <div>
           <h3 id="changes-title">Changes from your Steam syncs <span class="badge badge-warn">${number(changes.length)} to review</span></h3>
-          <p class="muted small">Moving items into or out of a storage unit happens in the game, where this app can't look.
-            After each Steam sync it compares what left your inventory or came back with each storage unit's item count
-            from Steam, and suggests what happened. Nothing changes until you confirm.</p>
+          <p class="muted small">Steam doesn't show what's in your storage units, but it does show items leaving your
+            inventory and coming back. After each Steam sync they're listed here with a best guess of what happened (the
+            storage unit that already holds the same item). Nothing changes until you confirm.</p>
         </div>
         ${suggested ? `<button type="button" class="btn btn-primary" data-act="changes-all">Confirm ${all}suggestion${suggested === 1 ? '' : 's'}</button>` : ''}
       </div>
@@ -226,7 +237,7 @@ export class ContainersView {
             <span class="badge">${esc(c.name)}</span></div></div>
       </header>
       ${capacityHtml(c.contents_count, c.capacity)}
-      ${steamCountHtml(c)}
+      ${countHtml(c)}
       <div class="card-value"><span class="value">${money(c.contents_value, currency)}</span><span class="muted small">stored value</span></div>
       ${preview}
       <footer>
@@ -238,15 +249,50 @@ export class ContainersView {
   }
 }
 
-/** Steam's own count of what's in a storage unit, next to what's listed here. */
-function steamCountHtml(c) {
-  if (c.steam_count === null || c.steam_count === undefined) return '';
-  const diff = c.steam_count - c.contents_count;
-  if (!diff) {
-    return `<p class="steam-count ok" title="Steam's item count for this storage unit matches the items listed here">✓ Matches Steam (${number(c.steam_count)} items)</p>`;
+// Hidden "items missing" notes: kept until the app restarts, then shown again.
+const HIDDEN_KEY = 'count-notes-hidden';
+const noteKey = (c, count) => `${c.id}:${count}:${c.contents_count}`;
+
+function hiddenNotes() {
+  const saved = store.get(HIDDEN_KEY, null);
+  return saved && saved.run === state.status?.started_at && Array.isArray(saved.keys) ? saved.keys : [];
+}
+
+function hideNote(c) {
+  const count = c.game_count ?? c.steam_count;
+  store.set(HIDDEN_KEY, { run: state.status?.started_at, keys: [...hiddenNotes(), noteKey(c, count)] });
+}
+
+/** The item count CS2 shows for a storage unit (typed in by you), next to what's listed here. */
+function countHtml(c) {
+  const count = c.game_count ?? c.steam_count;
+  const edit = `<button type="button" class="link-btn small" data-act="set-count" data-id="${c.id}">${count === null || count === undefined ? 'Add the item count CS2 shows' : 'edit'}</button>`;
+  if (count === null || count === undefined) {
+    return `<p class="game-count unset">${edit} <span class="muted small">to spot items you haven't listed</span></p>`;
   }
-  const gap = diff > 0 ? `${number(diff)} not listed yet` : `${number(-diff)} more listed than Steam has`;
-  return `<p class="steam-count off" title="Steam's own count for this storage unit">Steam says ${number(c.steam_count)} items · ${number(c.contents_count)} listed here (${gap})</p>`;
+  const diff = count - c.contents_count;
+  if (!diff) return `<p class="game-count ok">✓ Matches the count in game (${number(count)} items) · ${edit}</p>`;
+  if (hiddenNotes().includes(noteKey(c, count))) return '';
+  const gap = diff > 0 ? `${number(diff)} not listed yet` : `${number(-diff)} more listed than in game`;
+  return `<p class="game-count off"><span>In game: ${number(count)} items · ${number(c.contents_count)} listed here (${gap}) · ${edit}</span>
+    <button type="button" class="note-close" data-act="hide-count" data-id="${c.id}" aria-label="Hide this note until the app restarts"
+      title="Hide until the app restarts">×</button></p>`;
+}
+
+function countFormHtml(c) {
+  const count = c.game_count ?? c.steam_count ?? '';
+  return `<form class="count-form" data-id="${c.id}">
+    <label>Items CS2 shows for this unit <input class="input" type="number" min="0" max="1000" step="1" name="count" value="${count}"></label>
+    <button type="submit" class="btn btn-small btn-primary">Save</button>
+    <button type="button" class="btn btn-small" data-act="cancel-count">Cancel</button>
+  </form>`;
+}
+
+async function saveCount(id, value) {
+  const count = String(value).trim() === '' ? null : Number(value);
+  await api(`/containers/${id}/count`, { method: 'PUT', body: { count } });
+  toast(count === null ? 'In-game count removed.' : `In-game count saved: ${number(count)} items.`, 'ok');
+  await afterChange();
 }
 
 function changeRowHtml(c, units) {
@@ -262,10 +308,11 @@ function changeRowHtml(c, units) {
     ? ` went from ${number(c.unit_before)} to ${number(c.unit_after)} items in Steam (${moved >= 0 ? '+' : '−'}${number(Math.abs(moved))})` : '';
   let what;
   let options;
+  const holds = c.unit_holds ? ` already holds ${number(c.unit_holds)} of these` : '';
   if (c.kind === 'left') {
-    if (c.suggestion === 'store') what = `Left your Steam inventory · ${unit}${counted}`;
+    if (c.suggestion === 'store') what = `Left your Steam inventory · ${unit}${counted || holds}`;
     else if (c.suggestion === 'gone') what = 'Left your Steam inventory · no storage unit grew to match, so probably sold or traded';
-    else what = "Left your Steam inventory · Steam didn't say how many items your storage units hold, so choose where it went";
+    else what = 'Left your Steam inventory · into a storage unit, or sold or traded? Choose below';
     let current = '';
     if (c.suggestion === 'store') current = `store:${c.container_id}`;
     else if (c.suggestion === 'gone') current = 'gone';
@@ -273,7 +320,9 @@ function changeRowHtml(c, units) {
       ${units.map((u) => `<option value="store:${u.id}"${current === `store:${u.id}` ? ' selected' : ''}>Put in ${esc(u.label)}</option>`).join('')}
       <option value="gone"${current === 'gone' ? ' selected' : ''}>Sold or traded (stop tracking it)</option>`;
   } else {
-    what = `Back in your Steam inventory · ${unit}${counted}. It's still on that unit's list, so it's counted twice until you confirm`;
+    what = counted
+      ? `Back in your Steam inventory · ${unit}${counted}. It's still on that unit's list, so it's counted twice until you confirm`
+      : `Back in your Steam inventory · ${unit} lists ${number(c.unit_holds)} of these, so they may have come out of it (counted twice until you choose)`;
     options = `<option value="take_out:${c.container_id}" selected>Came out of ${unit}: take it off that list</option>
       <option value="keep">Bought or received: keep the list as it is</option>`;
   }
@@ -358,6 +407,21 @@ function saveDraft() {
   const rows = collectRows().filter((r) => r.name.trim());
   if (rows.length) store.set(draftKey(manager.id), rows);
   else store.remove(draftKey(manager.id));
+}
+
+/** In a container's window: the count CS2 shows for the unit, to compare with what's listed. */
+function managerCountHtml(c) {
+  const count = c.game_count ?? c.steam_count;
+  const diff = count === null || count === undefined ? null : count - c.contents_count;
+  let note = '<span class="muted small">Type the item count CS2 shows for this storage unit to spot anything not listed yet.</span>';
+  if (diff === 0) note = '<span class="ok-text small">✓ Matches what\'s listed</span>';
+  else if (diff > 0) note = `<span class="warn-text small">${number(diff)} not listed yet</span>`;
+  else if (diff < 0) note = `<span class="warn-text small">${number(-diff)} more listed than in game</span>`;
+  return `<div class="manager-count">
+    <label for="manager-count">In game</label>
+    <input class="input" id="manager-count" type="number" min="0" max="1000" step="1" value="${count ?? ''}" placeholder="items">
+    <button type="button" class="btn btn-small" data-act="save-count">Save</button> ${note}
+  </div>`;
 }
 
 /** Rows picked in "From an event": added to this list (filling empty rows) for you to check. */
@@ -446,6 +510,7 @@ function renderManager({ container: c, contents, currency, capacity }, candidate
     <div class="crate-stage manager-top">${crateSvg()}
       <div class="capacity-wrap">
         ${capacityHtml(used, capacity)}
+        ${managerCountHtml(c)}
         <div class="crate-summary" style="margin-top:12px">
           <div class="stat"><div class="stat-label">Stored value</div><div class="stat-value">${money(c.contents_value, currency)}</div></div>
           <div class="stat"><div class="stat-label">Container itself</div><div class="stat-value">${money(c.total_value, currency)}</div></div>
@@ -567,6 +632,7 @@ function setupManagerEvents() {
       } else if (act === 'add-submit') await submitAdd();
       else if (act === 'add-detailed') editItem(null, { container_id: manager.id });
       else if (act === 'add-event') openEventPicker(appendRows);
+      else if (act === 'save-count') await saveCount(manager.id, $('#manager-count').value);
       else if (act === 'move-in') {
         const id = $('#move-candidate').value;
         if (!id) return;

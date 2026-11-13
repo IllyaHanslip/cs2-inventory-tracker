@@ -35,6 +35,8 @@ class Job:
         self.result: Any = None
         self.warnings: list[str] = []
         self.cancelled = False
+        # Markets fetched one item at a time, side by side: each one's own progress.
+        self.steps: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     def update(self, message: str | None = None, progress: int | None = None, total: int | None = None) -> None:
@@ -45,6 +47,33 @@ class Job:
                 self.progress = progress
             if total is not None:
                 self.total = total
+
+    def step(self, key: str, label: str | None = None, done: int | None = None, total: int | None = None,
+             note: str | None = None, finished: bool = False) -> None:
+        """Progress of one part of the job (e.g. one market): done of total, and what it's doing."""
+        with self._lock:
+            entry = self.steps.setdefault(key, {"label": label or key, "done": 0, "total": 0, "note": "",
+                                                "started": time.monotonic(), "finished": False})
+            if label is not None:
+                entry["label"] = label
+            if done is not None:
+                entry["done"] = done
+            if total is not None:
+                entry["total"] = total
+            if note is not None:
+                entry["note"] = note
+            entry["finished"] = entry["finished"] or finished
+
+    def _steps(self) -> list[dict[str, Any]]:
+        out = []
+        for entry in self.steps.values():
+            left = None
+            elapsed = time.monotonic() - entry["started"]
+            if not entry["finished"] and entry["done"] and entry["total"] > entry["done"] and elapsed > 5:
+                left = round(elapsed / entry["done"] * (entry["total"] - entry["done"]))
+            out.append({"label": entry["label"], "done": entry["done"], "total": entry["total"],
+                        "note": entry["note"], "finished": entry["finished"], "seconds_left": left})
+        return out
 
     def warn(self, message: str) -> None:
         with self._lock:
@@ -65,6 +94,7 @@ class Job:
                 "error": self.error,
                 "result": self.result,
                 "warnings": list(self.warnings),
+                "steps": self._steps(),
             }
 
 

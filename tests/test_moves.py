@@ -173,3 +173,53 @@ def test_first_sync_after_updating_asks_instead_of_guessing_sold(client, steam):
     steam(make("unit-1", "Storage Unit", storage_count=1), make("unit-2", "Storage Unit", storage_count=1, name_tag="New"))
     new = [c for c in pending() if c["id"] != change["id"]]
     assert len(new) == 1 and new[0]["suggestion"] == "store" and new[0]["container_label"] == "New"
+
+
+# --------------------------------------------------------------------------- public inventories hide storage units
+def manual_unit(client, tag, **contents):
+    unit = client.post("/api/items", json={"market_hash_name": "Storage Unit", "category": "container", "name_tag": tag,
+                                           "is_storage": True}, headers=HEADERS).get_json()["item"]["id"]
+    if contents:
+        client.post(f"/api/containers/{unit}/items", json={"items": [{"market_hash_name": n.replace("_", " "), "quantity": q}
+                                                                     for n, q in contents.items()]}, headers=HEADERS)
+    return unit
+
+
+def test_without_storage_units_in_steam_the_unit_holding_the_item_is_suggested(client, steam):
+    stash = manual_unit(client, "Stash", Recoil_Case=40)
+    manual_unit(client, "Other", Fracture_Case=3)
+    steam(make("case-1", "Recoil Case"), make("case-2", "Recoil Case"), make("p250", "P250 | Sand Dune (Field-Tested)"))
+    steam(make("p250", "P250 | Sand Dune (Field-Tested)"))                         # 2 cases went into storage
+    (change,) = pending()
+    assert (change["suggestion"], change["container_id"], change["sure"], change["unit_holds"]) == ("store", stash, False, 40)
+    client.post("/api/changes/apply-suggested", headers=HEADERS)                  # Stash now lists 42
+    # Three cases come back: still listed in Stash, so they'd be counted twice - suggested to take off.
+    steam(make("p250", "P250 | Sand Dune (Field-Tested)"), *[make(f"case-{i}", "Recoil Case") for i in (7, 8, 9)])
+    back = next(c for c in pending() if c["kind"] == "back")
+    assert (back["quantity"], back["suggestion"], back["container_id"]) == (3, "take_out", stash)
+
+
+def test_in_game_count_follows_moves_you_confirm(client, steam):
+    stash = manual_unit(client, "Stash", Recoil_Case=10)
+    r = client.put(f"/api/containers/{stash}/count", json={"count": 12}, headers=HEADERS)
+    assert r.status_code == 200
+    box = client.get("/api/containers").get_json()["containers"][0]
+    assert (box["game_count"], box["contents_count"]) == (12, 10)
+    # Moved in game after typing 12: confirming it adds to the count as well as to the list.
+    steam(make("case-1", "Recoil Case"), make("case-2", "Recoil Case"), make("case-3", "Recoil Case"))
+    steam(make("case-3", "Recoil Case"))
+    (change,) = pending()
+    client.post(f"/api/changes/{change['id']}", json={"action": "store"}, headers=HEADERS)
+    box = client.get("/api/containers").get_json()["containers"][0]
+    assert (box["game_count"], box["contents_count"]) == (14, 12)
+    # A move noticed before you typed the count is already in it.
+    steam(make("case-x", "AK-47 | Slate (Field-Tested)"))
+    (change,) = pending()
+    client.put(f"/api/containers/{stash}/count", json={"count": 15}, headers=HEADERS)
+    db.execute("UPDATE inventory_changes SET detected_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (change["id"],))
+    client.post(f"/api/changes/{change['id']}", json={"action": "store", "container_id": stash}, headers=HEADERS)
+    assert client.get("/api/containers").get_json()["containers"][0]["game_count"] == 15
+    assert client.put(f"/api/containers/{stash}/count", json={"count": 1001}, headers=HEADERS).status_code == 400
+    assert client.put(f"/api/containers/{stash}/count", json={"count": None}, headers=HEADERS).status_code == 200
+    assert client.get("/api/containers").get_json()["containers"][0]["game_count"] is None
+    assert client.get("/api/status").get_json()["started_at"]

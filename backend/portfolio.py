@@ -350,7 +350,7 @@ ITEM_FIELDS = (
     "quotes", "payout_unit", "payout_market", "payout_value", "stickers", "created_at", "updated_at",
     "market_unit_value", "market_total_value", "sell_market", "sell_quotes",
     "value_basis", "sales", "set_aside", "sticker_inside", "bulk_plan", "bulk_units", "bulk_limited",
-    "realised_unit", "tags", "steam_count",
+    "realised_unit", "tags", "steam_count", "game_count",
 )
 
 
@@ -360,8 +360,9 @@ def to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         item = {field: _py(rec.get(field)) for field in ITEM_FIELDS}
         if item["container_id"] is not None:
             item["container_id"] = int(item["container_id"])
-        if item["steam_count"] is not None:
-            item["steam_count"] = int(item["steam_count"])
+        for count in ("steam_count", "game_count"):
+            if item[count] is not None:
+                item[count] = int(item[count])
         item["category_label"] = CATEGORIES.get(item["category"], "Other")
         item["is_storage"] = bool(item["is_storage"])
         item["label"] = container_label(item["name"], item["name_tag"]) if item["is_container"] else item["name"]

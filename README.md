@@ -29,10 +29,11 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
   European Central Bank rates, so comparisons are fair.
 - **Containers and storage units**: Steam can't see inside Storage Units, so record what each one holds (up to
   1,000 items), with stacking, partial moves and removals, and a capacity bar.
-- **Storage moves noticed for you**: after a Steam sync, items that left your inventory or came back are
-  matched with each storage unit's item count from Steam: "15 Clutch Cases left and *Long Holds* went from 63
-  to 79: put them in it?" You confirm each one (or all at once); items that left while no unit grew are flagged
-  as sold or traded. Each unit's card shows whether its list matches Steam's count.
+- **Storage moves noticed for you**: after a Steam sync, items that left your inventory or came back are listed
+  on the Containers tab with a best guess of what happened: "15 Dreams & Nightmares Cases left: put them in
+  *Long Holds* (it already holds 40)?" You confirm each one (or all at once), or mark it sold or traded. Type the
+  item count CS2 shows for a storage unit and its card tells you how many items aren't listed yet (dismiss the
+  note until the app restarts); moves you confirm keep that count up to date.
 - **Quick entry from an event**: pick a tournament (Budapest 2025…), narrow it to stickers, slabs or capsules
   and Gold, Holo…, and type how many you have of each. They go onto the container's list by their exact
   names for you to check before adding, alongside anything you typed yourself.
@@ -236,9 +237,13 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
   and the pictures themselves load from Steam like synced items. Set `ITEM_IMAGES=false` to turn this off.
 - **Marketplaces that need your login** (such as BUFF163) are deliberately not automated. Add their prices
   as manual quotes.
-- **Storage Unit contents** aren't visible in public Steam inventories, so they're entered by hand (or
-  confirmed from what a sync noticed moving). Steam does show each unit's item count, which is how moves are
-  matched up: only the public inventory is read, never your account.
+- **Storage units** aren't listed in public Steam inventories at all (Steam counts them in the inventory's
+  total but doesn't show them, or what's in them), so their contents and item counts are entered by hand, or
+  confirmed from what a sync noticed leaving or coming back. Only the public inventory is read, never your account.
+- **Steam Market prices** come from a strictly rate-limited endpoint. When Steam answers "too many requests",
+  the app leaves it alone for a while (1 hour, then longer each time, up to a day) instead of asking again on
+  every refresh, and then fetches your most valuable items first. The banner at the top shows each market's
+  progress and how long is left.
 - **Estimates only**: fees change, sticker values are estimates, and none of this is financial advice.
 
 ## Privacy and security

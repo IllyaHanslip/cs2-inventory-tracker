@@ -2,7 +2,21 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.1.1
+### What's new in v1.1.2
+
+- **See what's running.** A price refresh the app starts by itself now shows at the top too, with each
+  market's progress ("Steam Market 40 of 385 · about 12 minutes left") - and pressing Refresh while one
+  is running shows it instead of just saying it's busy.
+- **Steam Market prices**: when Steam says "too many requests", it's left alone for an hour (longer each
+  time it happens, up to a day) rather than asked again on every refresh, and your most valuable items
+  are fetched first when it's tried again.
+- **Storage units**: Steam's public inventory doesn't list storage units at all, so it can't give their
+  item counts. Type the count CS2 shows for a unit instead: its card tells you how many items aren't
+  listed yet (the × hides that until the app restarts), and moves you confirm keep the count up to date.
+  Changes noticed by a sync are suggested for the unit already holding the same item.
+- The changes list and the biggest movers (now 10 each way) scroll inside their own boxes.
+
+### v1.1.1
 
 - The first Steam sync after updating saves each storage unit's item count from Steam. Until then the
   app can't tell a stored item from a sold one, so it asks where items went instead of guessing

@@ -10,7 +10,8 @@
 export const DEMO_SITE = document.documentElement.dataset.demoSite === '1';
 
 const files = new Map();
-const demo = { applied: new Set(), dismissed: new Set(), key: '', states: {} };
+const demo = { applied: new Set(), dismissed: new Set(), key: '', states: {}, counts: new Map() };
+const PAGE_LOADED = new Date().toISOString();   // the demo "restarts" when you reload the page
 
 function load(name) {
   if (!files.has(name)) {
@@ -62,6 +63,10 @@ function filterItems(data, params) {
   return { ...data, counts, items };
 }
 
+function withCount(container) {
+  return demo.counts.has(container.id) ? { ...container, game_count: demo.counts.get(container.id) } : container;
+}
+
 async function pendingChanges() {
   const data = await loadState('changes.json');
   return { ...data, changes: data.changes.filter((c) => !demo.applied.has(c.id) && !demo.dismissed.has(c.id)) };
@@ -73,6 +78,9 @@ async function resolveChange(id, action, unit) {
   const change = changes.find((c) => c.id === id);
   if (!change) throw new DemoError('That change has already been dealt with.');
   if (action === 'store' || action === 'take_out') {
+    if (!change.container_id) {
+      throw new DemoError("The demo only has the suggested choices worked out, and this one has no suggestion - try 'Sold or traded' here. In the app you'd pick any of your storage units.");
+    }
     if (unit && unit !== change.container_id) {
       throw new DemoError(`In the demo you can try the suggested storage unit (${change.container_label}); the app lets you pick any of yours.`);
     }
@@ -96,6 +104,13 @@ async function demoWrite(path, body = {}) {
     }
     return { applied, problems: [], pending: (await pendingChanges()).changes.length };
   }
+  const count = path.match(/^\/containers\/(\d+)\/count$/);
+  if (count) {
+    // The in-game count you type is kept in this page (until you reload).
+    const value = body.count === null || body.count === undefined || body.count === '' ? null : Number(body.count);
+    demo.counts.set(Number(count[1]), value);
+    return { container_id: Number(count[1]), game_count: value };
+  }
   const match = path.match(/^\/changes\/(\d+)$/);
   if (match) {
     await resolveChange(Number(match[1]), body.action, body.container_id ? Number(body.container_id) : null);
@@ -110,7 +125,7 @@ export async function demoApi(path, { method = 'GET', params = {}, body } = {}) 
   const range = params.range || '90d';
   if (path === '/status') {
     const status = await loadState('status.json');
-    return { ...status, pending_changes: (await pendingChanges()).changes.length };
+    return { ...status, started_at: PAGE_LOADED, pending_changes: (await pendingChanges()).changes.length };
   }
   if (path === '/jobs/current') return { job: null };
   if (path === '/names') return { names: [] };
@@ -126,8 +141,14 @@ export async function demoApi(path, { method = 'GET', params = {}, body } = {}) 
   if (path === '/history/portfolio') return loadState(`history-${scope}-${range}.json`);
   if (path === '/insights') return loadState(`insights-${scope}-${range}.json`);
   if (path === '/market-comparison') return loadState(`market-${scope}.json`);
-  if (path === '/containers') return loadState('containers.json');
-  if (path.startsWith('/containers/')) return loadState(`container-${Number(path.split('/')[2])}.json`);
+  if (path === '/containers') {
+    const data = await loadState('containers.json');
+    return { ...data, containers: data.containers.map(withCount) };
+  }
+  if (path.startsWith('/containers/')) {
+    const data = await loadState(`container-${Number(path.split('/')[2])}.json`);
+    return { ...data, container: withCount(data.container) };
+  }
   if (path === '/quotes') return loadState(`quotes-${Number(params.item)}.json`);
   if (path === '/history/item') {
     const index = await loadState('item-index.json');
@@ -153,8 +174,8 @@ export function demoExportPath(scope) {
 export function showDemoBanner() {
   const banner = document.createElement('div');
   banner.className = 'demo-banner';
-  banner.innerHTML = 'Live demo with a <strong>made-up inventory</strong> and synthetic prices - you can try confirming the '
-    + 'changes on the Containers tab, but nothing else changes. '
+  banner.innerHTML = 'Live demo with a <strong>made-up inventory</strong> and synthetic prices - on the Containers tab you can '
+    + 'try confirming the changes and typing in-game counts, but nothing else changes. '
     + '<a href="https://github.com/IllyaHanslip/cs2-inventory-tracker" rel="noopener">Get the app on GitHub</a> to track your own items.';
   document.body.prepend(banner);
 }

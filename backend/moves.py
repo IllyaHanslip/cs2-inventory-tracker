@@ -1,14 +1,15 @@
 """Items moved into or out of storage units, noticed by Steam syncs.
 
-Steam's public inventory can't see inside a storage unit, but it does show items leaving your
-inventory and coming back, and each unit's description says how many items it holds. After a
-sync, whatever left or came back is matched up with the units whose counts moved:
+Steam's public inventory hides storage units altogether (it counts them, but doesn't list them),
+so what's inside them is never visible. It does show items leaving your inventory and coming
+back, so after each sync those are listed for you to confirm on the Containers tab:
 
-    15 Clutch Cases and a P250 left your inventory, and "Long Holds" went from 63 to 79
-    -> put them in Long Holds?
+    15 Dreams & Nightmares Cases left your Steam inventory - put them in "Long Holds"
+    (it already holds 40 of them)?  /  sold or traded?
 
-Items that left while no unit grew were most likely sold or traded. Nothing changes until you
-confirm on the Containers tab, and only the public inventory is read: no login, ever.
+The suggestion is the storage unit that already holds the same item, marked as a best guess;
+nothing changes until you confirm, and only the public inventory is read: no login, ever.
+(If Steam ever includes each unit's item count, the units whose counts moved decide instead.)
 """
 from __future__ import annotations
 
@@ -83,7 +84,8 @@ def detect(conn, left: list[dict], arrived: list[dict], units: list[dict], now: 
         elif counts_known:
             found.append(("left", group, group["quantity"], "gone", None, exact))   # no unit grew for it
         else:
-            found.append(("left", group, group["quantity"], None, None, False))    # can't tell: you choose
+            home = _home_unit(conn, group)                                         # a best guess, or you choose
+            found.append(("left", group, group["quantity"], "store" if home else None, home, False))
 
     for kind, group, qty, suggestion, uid, sure in found:
         details = dict(group["details"])
@@ -206,11 +208,26 @@ def _exact_subset(quantities: list[int], target: int) -> tuple[list[int] | None,
     return sorted(chosen), ways[n][target] == 1
 
 
+def _listed(conn, name: str) -> dict[int, int]:
+    """How many of an item each storage unit lists."""
+    rows = conn.execute(
+        "SELECT i.container_id AS unit, SUM(i.quantity) AS n FROM items i JOIN items c ON c.id = i.container_id "
+        "WHERE i.market_hash_name = ? AND i.source = 'manual' AND c.is_storage = 1 GROUP BY i.container_id", (name,)
+    ).fetchall()
+    return {r["unit"]: r["n"] for r in rows}
+
+
+def _home_unit(conn, group: dict) -> int | None:
+    """The storage unit that already holds the most of this item: where it most likely went."""
+    listed = _listed(conn, group["market_hash_name"])
+    return max(listed, key=listed.get) if listed else None
+
+
 def _source_unit(conn, group: dict, deltas: dict[int, int], taken: dict[int, int], counts_known: bool,
                  anything_left: bool) -> tuple[int, int, bool] | None:
-    """The storage unit this probably came out of: one listing it whose count fell. Without counts
-    from Steam, only an exact match (same float) is suggested, so buying more cases isn't mistaken
-    for taking some out."""
+    """The storage unit this probably came out of: with counts from Steam, one listing it whose
+    count fell; without them, the unit listing the most of it (a best guess for you to check -
+    "bought" is one click away). Either way, nothing changes until you confirm."""
     rows = conn.execute(
         "SELECT i.container_id AS unit, i.quantity, i.float_value FROM items i JOIN items c ON c.id = i.container_id "
         "WHERE i.market_hash_name = ? AND i.source = 'manual' AND c.is_storage = 1", (group["market_hash_name"],)
@@ -229,8 +246,7 @@ def _source_unit(conn, group: dict, deltas: dict[int, int], taken: dict[int, int
                 return uid, min(group["quantity"], qty_listed, out), True
             if anything_left and best is None:
                 best = (uid, min(group["quantity"], qty_listed), False)   # in and out in one go: maybe
-        elif not counts_known and group["unique"] and any(
-                _same_float(r["float_value"], group["details"].get("float_value")) for r in rows if r["unit"] == uid):
+        elif not counts_known:
             return uid, min(group["quantity"], qty_listed), False
     return best
 
@@ -241,7 +257,7 @@ def _source_unit(conn, group: dict, deltas: dict[int, int], taken: dict[int, int
 def storage_units() -> list[dict[str, Any]]:
     """Every top-level storage unit, with how many items are listed in it and Steam's own count."""
     rows = db.query(
-        "SELECT u.id, u.market_hash_name, u.name_tag, u.source, u.steam_count, "
+        "SELECT u.id, u.market_hash_name, u.name_tag, u.source, u.steam_count, u.game_count, "
         "(SELECT COALESCE(SUM(c.quantity), 0) FROM items c WHERE c.container_id = u.id) AS listed "
         "FROM items u WHERE u.category = 'container' AND u.container_id IS NULL "
         "AND (u.is_storage = 1 OR EXISTS (SELECT 1 FROM items c WHERE c.container_id = u.id)) ORDER BY u.id"
@@ -260,6 +276,10 @@ def pending() -> dict[str, Any]:
     labels = {u["id"]: u["label"] for u in units}
     best = Valuator().best_net if rows else {}
     found = images.lookup({r["market_hash_name"] for r in rows})
+    held = {}
+    with db.connect() as conn:
+        for name in {r["market_hash_name"] for r in rows}:
+            held[name] = _listed(conn, name)
     changes = []
     for row in rows:
         details = json.loads(row["details"])
@@ -272,7 +292,9 @@ def pending() -> dict[str, Any]:
             "icon": images.icon_src(details.get("icon_url") or found.get(row["market_hash_name"])),
             "value": unit_price * row["quantity"] if unit_price is not None else None,
             "suggestion": row["suggestion"], "container_id": row["container_id"],
-            "container_label": labels.get(row["container_id"]), "unit_before": row["unit_before"],
+            "container_label": labels.get(row["container_id"]),
+            "unit_holds": held.get(row["market_hash_name"], {}).get(row["container_id"], 0),
+            "unit_before": row["unit_before"],
             "unit_after": row["unit_after"], "sure": bool(row["sure"]),
         })
     return {"changes": changes, "units": units}
@@ -301,8 +323,10 @@ def apply(change_id: int, action: str, container_id: int | None = None) -> dict[
             if not unit:
                 raise ValueError("Choose the storage unit they went into.")
             _store(conn, change, details, unit, now)
+            _follow_game_count(conn, unit, change, +change["quantity"])
         elif action == "take_out":
             _take_out(conn, change, details, unit)
+            _follow_game_count(conn, unit, change, -change["quantity"])
         done = action in ("store", "take_out")
         conn.execute(
             "UPDATE inventory_changes SET status = ?, resolution = ?, container_id = ?, resolved_at = ? WHERE id = ?",
@@ -324,6 +348,25 @@ def apply_suggested() -> dict[str, Any]:
         except ValueError as error:
             problems.append(str(error))
     return {"applied": applied, "problems": problems, "pending": pending_count()}
+
+
+def _follow_game_count(conn, unit: int, change, moved: int) -> None:
+    """The in-game count you typed for a unit includes moves made before you typed it, but not ones
+    made after: those are added (or taken off) as you confirm them."""
+    row = conn.execute("SELECT game_count, game_count_at FROM items WHERE id = ?", (unit,)).fetchone()
+    if row and row["game_count"] is not None and (row["game_count_at"] or "") <= change["detected_at"]:
+        count = max(0, min(storage.CAPACITY, row["game_count"] + moved))
+        conn.execute("UPDATE items SET game_count = ? WHERE id = ?", (count, unit))
+
+
+def set_game_count(unit: int, count: int | None) -> None:
+    """Record the item count CS2 shows for a storage unit (None forgets it)."""
+    with db.connect() as conn:
+        target = conn.execute("SELECT category, is_storage, container_id FROM items WHERE id = ?", (unit,)).fetchone()
+        if not target or target["category"] != "container" or target["container_id"] is not None:
+            raise ValueError("That isn't one of your storage units.")
+        conn.execute("UPDATE items SET game_count = ?, game_count_at = ? WHERE id = ?",
+                     (count, db.utcnow_iso() if count is not None else None, unit))
 
 
 def _store(conn, change, details: dict, unit: int, now: str) -> None:

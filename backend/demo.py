@@ -45,7 +45,8 @@ DEMO_ITEMS = [
     ("steam", "Recoil Case", 12, 0.29, 360, {}),
     ("steam", "Kilowatt Case", 5, 0.80, 240, {}),
     ("steam", "Paris 2023 Mirage Souvenir Package", 2, 3.10, 180, {}),
-    ("steam", "Storage Unit", 1, None, 400, {"name_tag": "Long Holds", "marketable": 0, "is_storage": True}),
+    # Storage units are recorded by hand: Steam's public inventory doesn't list them.
+    ("manual", "Storage Unit", 1, None, 400, {"name_tag": "Long Holds", "is_storage": True}),
     ("manual", "★ Butterfly Knife | Fade (Factory New)", 1, 2350.00, 120,
      {"float_value": 0.0093, "paint_seed": 551, "custom_price": 2600.0, "purchase_price": 2150.0,
       "notes": "Demo: custom price used for a high-fade pattern."}),
@@ -60,14 +61,16 @@ DEMO_CONTENTS = [
     ("Case Stash", "Sticker | FaZe Clan (Holo) | Paris 2023", 8, 1.30, 210),
 ]
 # What the last two Steam syncs noticed, for the Containers tab to show (see moves.py): five
-# Revolution Cases came back out of "Long Holds" yesterday (Steam's count for it went 68 -> 63);
-# today 15 Clutch Cases and a P250 went in (63 -> 79), and 3 stickers left while no unit grew.
-LONG_HOLDS_STEAM_COUNT = 79
-DEMO_BACK = [("Revolution Case", 5)]                     # Steam items again, still on the unit's list
-DEMO_LEFT = [  # (market_hash_name, quantity, USD price, extras)
-    ("Clutch Case", 15, 0.55, {}),
-    ("P250 | Asiimov (Field-Tested)", 1, 3.20, {"float_value": 0.2731, "paint_seed": 512}),
-    ("Sticker | Heroic (Holo) | Paris 2023", 3, 1.10, {}),
+# Revolution Cases came back into the Steam inventory yesterday, and today 15 Dreams & Nightmares
+# Cases, a P250 and 3 stickers left it. Each is suggested for the unit already holding the same
+# item (the P250: you choose). The count CS2 shows for "Long Holds", typed in after those moves,
+# is 78 - which is what it lists once the suggestions are confirmed (68 + 15 - 5).
+LONG_HOLDS_GAME_COUNT = 78
+DEMO_BACK = [("Revolution Case", 5, "Long Holds")]       # Steam items again, still on the unit's list
+DEMO_LEFT = [  # (market_hash_name, quantity, USD price for items not priced above, extras, suggested unit)
+    ("Dreams & Nightmares Case", 15, None, {}, "Long Holds"),
+    ("P250 | Asiimov (Field-Tested)", 1, 3.20, {"float_value": 0.2731, "paint_seed": 512}, None),
+    ("Sticker | FaZe Clan (Holo) | Paris 2023", 3, None, {}, "Case Stash"),
 ]
 BUFF_QUOTES = {"AK-47 | Redline (Field-Tested)": 0.83, "AWP | Asiimov (Battle-Scarred)": 0.81,
                "★ Karambit | Doppler (Factory New)": 0.85}
@@ -93,19 +96,18 @@ def _sticker_rate(price: float) -> float:
     return rmin + t * (rmax - rmin)
 
 
-def _seed_changes(conn, long_holds: int) -> None:
+def _seed_changes(conn, units: dict[str, int]) -> None:
     now = datetime.now(timezone.utc)
     stamp = lambda hours: (now - timedelta(hours=hours)).isoformat(timespec="seconds")  # noqa: E731
     rows = []
-    for name, qty in DEMO_BACK:
+    for name, qty, unit in DEMO_BACK:
         rows.append(("back", stamp(26), name, qty, {"name": name, "category": categorize(name)}, "take_out",
-                     long_holds, 68, 63, 1))
-    for name, qty, _price, extras in DEMO_LEFT:
+                     units[unit], None, None, 0))
+    for name, qty, _price, extras, unit in DEMO_LEFT:
         details = {"name": name, "category": categorize(name), "exterior": exterior_from_name(name), **extras,
                    "stickers": []}
-        stored = name != "Sticker | Heroic (Holo) | Paris 2023"
-        rows.append(("left", stamp(2), name, qty, details, "store" if stored else "gone",
-                     long_holds if stored else None, 63 if stored else None, 79 if stored else None, 1))
+        rows.append(("left", stamp(2), name, qty, details, "store" if unit else None,
+                     units[unit] if unit else None, None, None, 0))
     conn.executemany(
         "INSERT INTO inventory_changes (kind, detected_at, market_hash_name, quantity, details, suggestion, container_id, "
         "unit_before, unit_after, sure) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -149,7 +151,9 @@ def seed() -> None:
                      "marketcsgo": (0.76, 0.90, "USD"), "waxpeer": (0.79, 0.93, "USD")}
     mults = {name: {m: rng.uniform(lo, hi) for m, (lo, hi, _) in market_ranges.items()} for name in series}
     extra = random.Random(731)
-    for name, _qty, price, _extras in DEMO_LEFT:
+    for name, _qty, price, _extras, _unit in DEMO_LEFT:
+        if price is None:
+            continue                                           # already priced as a demo item
         series[name] = _walk(price, HISTORY_DAYS, extra, 0.02)
         mults[name] = {m: extra.uniform(lo, hi) for m, (lo, hi, _) in market_ranges.items()}
     val_mult = {name: sorted(m.values())[len(m) // 2] for name, m in mults.items()}
@@ -213,7 +217,7 @@ def seed() -> None:
             held.append(("manual", name, qty, HISTORY_DAYS - days_held, [], None))
 
         # Back in the Steam inventory (and still listed in Long Holds until you confirm).
-        for index, (name, qty) in enumerate(DEMO_BACK):
+        for index, (name, qty, _unit) in enumerate(DEMO_BACK):
             created = (today - timedelta(days=330)).isoformat() + "T12:00:00+00:00"
             for copy in range(qty):
                 conn.execute(
@@ -222,8 +226,9 @@ def seed() -> None:
                     (DEMO_OWNER, f"demo-back-{index}-{copy}", name, name, categorize(name), created, created),
                 )
             held.append(("steam", name, qty, HISTORY_DAYS - 330, [], None))
-        conn.execute("UPDATE items SET steam_count = ? WHERE id = ?", (LONG_HOLDS_STEAM_COUNT, containers["Long Holds"]))
-        _seed_changes(conn, containers["Long Holds"])
+        conn.execute("UPDATE items SET game_count = ?, game_count_at = ? WHERE id = ?",
+                     (LONG_HOLDS_GAME_COUNT, db.utcnow_iso(), containers["Long Holds"]))
+        _seed_changes(conn, containers)
 
     # Portfolio history built from the same synthetic series.
     portfolio_rows = []

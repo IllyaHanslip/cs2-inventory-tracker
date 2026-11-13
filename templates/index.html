@@ -32,7 +32,8 @@
 </header>
 
 <div id="job-banner" class="job-banner" role="status" aria-live="polite" hidden>
-  <div class="job-text"><strong id="job-label"></strong><span id="job-message"></span></div>
+  <div class="job-text"><strong id="job-label"></strong><span id="job-message"></span>
+    <ul class="job-steps" id="job-steps" hidden></ul></div>
   <div class="progress" aria-hidden="true"><div id="job-progress"></div></div>
   <button id="job-cancel" class="btn btn-small" type="button">Cancel</button>
 </div>
@@ -56,9 +57,9 @@
       <div>
         <h2 class="section-title">Storage &amp; containers</h2>
         <p class="muted section-intro">Steam's public inventory can't see inside Storage Units, so record what each one
-          holds here. When you move items in or out in the game, the next Steam sync notices and suggests the change for
-          you to confirm. Stored items count towards your Total Portfolio and are listed there too. Each container holds
-          up to 1,000 items.</p>
+          holds here. When you move items in or out in the game, the next Steam sync notices them leaving or coming back
+          and suggests the change for you to confirm. Stored items count towards your Total Portfolio and are listed there
+          too. Each container holds up to 1,000 items.</p>
       </div>
       <button type="button" class="btn btn-primary btn-lg" id="ct-new">+ New container</button>
     </div>
@@ -182,7 +183,7 @@
   </div>
 
   <div class="insight-grid">
-    <div class="card insight-card">
+    <div class="card insight-card movers-card">
       <div class="card-head">
         <h2 class="card-title">Biggest movers <span class="muted small">after fees</span></h2>
         <div class="segmented" data-ref="moverWindow" role="group" aria-label="Movers over">
