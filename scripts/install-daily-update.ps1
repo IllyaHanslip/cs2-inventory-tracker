@@ -31,13 +31,17 @@
 .PARAMETER Time
     First run of the day (24-hour clock, default 12:00). Keep it the same as DAILY_UPDATE_TIME in .env.
 
+.PARAMETER Exe
+    Use the one-file Windows app instead of the Python set-up: the full path to
+    CS2-Inventory-Intelligence.exe (from the project's GitHub Releases page).
+
 .PARAMETER Remove
     Delete the scheduled task again.
 
 .PARAMETER DryRun
     Show what would be registered without changing anything.
 #>
-param([string]$Time = '12:00', [switch]$Remove, [switch]$DryRun)
+param([string]$Time = '12:00', [string]$Exe = '', [switch]$Remove, [switch]$DryRun)
 
 $ErrorActionPreference = 'Stop'
 $taskName = 'CS2 Inventory Intelligence - daily update'
@@ -60,15 +64,28 @@ if ($Remove) {
     return
 }
 
-$pythonw = Join-Path $root '.venv\Scripts\pythonw.exe'
-if (-not (Test-Path $pythonw)) {
-    throw "Python environment not found. Run launch.bat once first (it sets everything up), then run this again."
+if ($Exe) {
+    # The Windows app: "--update" for the background run, and on its own (no arguments) to open the dashboard.
+    if (-not (Test-Path $Exe)) { throw "Can't find $Exe - give the full path to CS2-Inventory-Intelligence.exe." }
+    $Exe = (Resolve-Path $Exe).Path
+    $runner = $Exe
+    $runArgs = '--update'
+    $runIn = Split-Path -Parent $Exe
+    $openCommand = "`"$Exe`""
+} else {
+    $runner = Join-Path $root '.venv\Scripts\pythonw.exe'
+    if (-not (Test-Path $runner)) {
+        throw "Python environment not found. Run launch.bat once first (it sets everything up), then run this again."
+    }
+    $runArgs = "`"$(Join-Path $root 'app.py')`" --update"
+    $runIn = $root
+    $openCommand = "`"$env:WINDIR\System32\cmd.exe`" /c `"`"$(Join-Path $root 'launch.bat')`"`""
 }
 $at = [datetime]::ParseExact($Time, 'HH:mm', [Globalization.CultureInfo]::InvariantCulture)
 $untilMidnight = $at.Date.AddDays(1).AddMinutes(-1) - $at
 $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 
-$action = New-ScheduledTaskAction -Execute $pythonw -Argument "`"$(Join-Path $root 'app.py')`" --update" -WorkingDirectory $root
+$action = New-ScheduledTaskAction -Execute $runner -Argument $runArgs -WorkingDirectory $runIn
 # Every day from $Time, repeating hourly until midnight (the hourly retry).
 $hourly = New-ScheduledTaskTrigger -Daily -At $at
 $hourly.Repetition = (New-ScheduledTaskTrigger -Once -At $at -RepetitionInterval (New-TimeSpan -Hours 1) `
@@ -85,8 +102,8 @@ $description = 'Refreshes CS2 Inventory Intelligence prices and saves the daily 
 
 if ($DryRun) {
     Write-Host "Would register '$taskName' for $user"
-    Write-Host "  runs:  $pythonw $($action.Arguments)"
-    Write-Host "  in:    $root"
+    Write-Host "  runs:  $runner $($action.Arguments)"
+    Write-Host "  in:    $runIn"
     Write-Host "  when:  daily from $($at.ToString('HH:mm')), every hour for $untilMidnight; and 2 minutes after you sign in"
     Write-Host "  catches up after the PC was off: $($settings.StartWhenAvailable)"
     return
@@ -99,8 +116,7 @@ if (Test-Path $icon) { Set-ItemProperty -Path $appKey -Name IconUri -Value $icon
 New-Item -Path "$linkKey\shell\open\command" -Force | Out-Null
 Set-Item -Path $linkKey -Value 'URL:CS2 Inventory Intelligence'
 Set-ItemProperty -Path $linkKey -Name 'URL Protocol' -Value ''
-$launcher = Join-Path $root 'launch.bat'
-Set-Item -Path "$linkKey\shell\open\command" -Value "`"$env:WINDIR\System32\cmd.exe`" /c `"`"$launcher`"`""
+Set-Item -Path "$linkKey\shell\open\command" -Value $openCommand
 
 $register = @{ TaskName = $taskName; Action = $action; Settings = $settings; Principal = $principal;
                Description = $description; Force = $true }

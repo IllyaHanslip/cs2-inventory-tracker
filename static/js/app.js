@@ -1,6 +1,7 @@
 // Dashboard bootstrap: status, tabs, stat tiles, background jobs.
 
 import { api } from './api.js';
+import { DEMO_SITE, showDemoBanner } from './demo-site.js';
 import * as containers from './containers.js';
 import * as dialogs from './dialogs.js';
 import { InventoryView } from './inventory.js';
@@ -236,4 +237,7 @@ const app = {
   },
 };
 
-window.addEventListener('DOMContentLoaded', () => app.init());
+window.addEventListener('DOMContentLoaded', () => {
+  if (DEMO_SITE) showDemoBanner();
+  app.init();
+});

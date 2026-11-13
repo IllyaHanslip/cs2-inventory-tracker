@@ -21,7 +21,7 @@ import webbrowser
 
 from flask import Flask, jsonify, render_template, request
 
-from config import Config
+from config import BASE_DIR, Config
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -67,7 +67,8 @@ def create_app(*, demo: bool = False, reset_demo: bool = False) -> Flask:
     except Exception:  # noqa: BLE001 - never stop the app starting over this
         logging.getLogger(__name__).exception("Couldn't convert older portfolio history to after-fee values")
 
-    app = Flask(__name__)
+    # Templates and static files: next to app.py, or unpacked from the Windows app (PyInstaller).
+    app = Flask(__name__, root_path=getattr(sys, "_MEIPASS", None) or str(BASE_DIR))
     app.json.sort_keys = False
     app.register_blueprint(bp)
 
@@ -188,6 +189,8 @@ def main() -> None:
                         help="refresh prices and save today's snapshot without the dashboard, then exit "
                              "(used by the scheduled daily update)")
     args = parser.parse_args()
+    if Config.FROZEN and len(sys.argv) == 1:
+        args.open = True   # the Windows app, double-clicked: start and open the dashboard
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     logging.getLogger("werkzeug").setLevel(logging.WARNING)

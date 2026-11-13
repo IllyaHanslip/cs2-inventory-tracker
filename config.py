@@ -8,12 +8,17 @@ value saved there takes priority over the one in ``.env``.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
+# The one-file Windows app (PyInstaller) unpacks its code to a temporary folder each run, so your
+# data and .env live in a lasting folder instead: %LOCALAPPDATA%\CS2 Inventory Intelligence.
+FROZEN = bool(getattr(sys, "frozen", False))
+HOME_DIR = (Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "CS2 Inventory Intelligence") if FROZEN else BASE_DIR
+load_dotenv(HOME_DIR / ".env")
 
 
 def _env(name: str, default: str = "") -> str:
@@ -47,6 +52,9 @@ def _list(name: str, default: str) -> list[str]:
 
 
 class Config:
+    FROZEN = FROZEN        # running as the packaged Windows app
+    HOME_DIR = HOME_DIR    # where data/ and .env live
+
     # --- Server ---------------------------------------------------------------
     HOST = _env("HOST", "127.0.0.1")          # keep 127.0.0.1 unless you know why
     PORT = _int("PORT", 5000)
@@ -54,7 +62,7 @@ class Config:
     DEMO = False                               # set by `python app.py --demo`
 
     # --- Storage --------------------------------------------------------------
-    DATA_DIR = Path(_env("DATA_DIR", str(BASE_DIR / "data")))
+    DATA_DIR = Path(_env("DATA_DIR", str(HOME_DIR / "data")))
     DATABASE_PATH = Path(_env("DATABASE_PATH", str(DATA_DIR / "cs2_tracker.db")))
 
     # --- API keys (optional) --------------------------------------------------

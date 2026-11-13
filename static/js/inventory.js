@@ -1,6 +1,6 @@
 // Inventory tab (used for both "Public Inventory" and "Total Portfolio").
 
-import { api } from './api.js';
+import { api, exportUrl } from './api.js';
 import { MIX_COLORS, chartsAvailable, dataTableHtml, renderLineChart, renderStackedBars } from './charts.js';
 import * as containers from './containers.js';
 import * as dialogs from './dialogs.js';
@@ -62,7 +62,7 @@ export class InventoryView {
         this.load();
       });
     }
-    r.export.href = `/api/export.csv?scope=${this.scope}`;
+    r.export.href = exportUrl(this.scope);
 
     // Category chips (multi-select, combined with OR).
     const chips = CATEGORY_FILTERS.filter(([key]) => !(isPublic && key === 'in_container'));

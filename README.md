@@ -7,9 +7,12 @@ you'd actually walk away with after each site's fees.
 It runs entirely on your own computer, only ever **reads** public price data, and never asks for your Steam
 login.
 
-![Total portfolio view (demo data)](docs/screenshots/portfolio.png)
+**[Try the live demo](https://illyahanslip.github.io/cs2-inventory-tracker/)** (a made-up inventory, nothing to
+install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inventory-tracker/releases/latest)**
 
-> Screenshots use the built-in demo mode: a made-up inventory with synthetic prices.
+![A tour of the dashboard (demo data)](docs/screenshots/demo.gif)
+
+> The demo, the GIF and the screenshots all use the built-in demo mode: a made-up inventory with synthetic prices.
 
 ## Features
 
@@ -30,16 +33,36 @@ login.
 - **No silly prices**: rarely traded items often have one listing priced far above what they sell for (say a
   Sticker Slab listed at £1,500 that sells for 62p). Those listings are spotted and ignored automatically, using
   recent sales, the other markets and, for slabs, the sticker inside. The item view shows what was ignored and why.
+- **Selling many at once**: when you hold a stack (say 531 capsules), each market is counted for only about as
+  many as it sells in a month, so the value is what you could really get, not the price of one times 531.
+- **Sell planner**: choose an amount with a slider and it picks what to sell, how many and where: falling items
+  first, copies from big stacks before one-offs, your most valuable items last.
+- **Group by anything**: event (Paris 2023, Budapest 2025…), collection, type (knives, gloves, rifles…), weapon,
+  rarity, wear or container, with subtotals.
+- **Biggest movers and portfolio mix**: what rose and fell the most, and how your value splits across knives,
+  skins, stickers, slabs and cases, now and over time.
 - **History**: a daily snapshot builds 7-day to all-time charts of your portfolio and of each item on every
-  market, after fees.
+  market, after fees. It can update in the background on days you don't open it, with a Windows notification
+  saying what changed.
 - **Easy to explore**: sort any column, filter by category or market, see the 3 best markets to sell every
   item on, compare buying prices too, and export to CSV.
 
-| Market comparison | Containers | Item detail |
+| Item detail | Sell planner | Movers and mix |
 |---|---|---|
-| ![Market comparison](docs/screenshots/market-comparison.png) | ![Containers](docs/screenshots/containers.png) | ![Item detail](docs/screenshots/item-detail.png) |
+| ![Item detail](docs/screenshots/item-detail.png) | ![Sell planner](docs/screenshots/planner.png) | ![Movers and portfolio mix](docs/screenshots/insights.png) |
+| **Market comparison** | **Containers** | **Grouped by type** |
+| ![Market comparison](docs/screenshots/market-comparison.png) | ![Containers](docs/screenshots/containers.png) | ![Grouped by type](docs/screenshots/grouped.png) |
 
 ## Quick start (Windows)
+
+**The easy way:** download **`CS2-Inventory-Intelligence.exe`** from the
+[latest release](https://github.com/IllyaHanslip/cs2-inventory-tracker/releases/latest) and double-click it. No
+Python or setup needed: it opens the dashboard in your browser, and keeps your data in
+`%LOCALAPPDATA%\CS2 Inventory Intelligence` (put an optional `.env` there). Windows may warn that it's from an
+unknown publisher, as it isn't code-signed: click **More info → Run anyway**. It's built automatically from this
+code by GitHub Actions.
+
+**From the source code:**
 
 1. Install **Python 3.10 or newer** from [python.org](https://www.python.org/downloads/) and tick
    *"Add python.exe to PATH"* during setup.
@@ -80,6 +103,12 @@ Once today's update has happened, by the task or because you opened the dashboar
 tomorrow; those hourly checks only read your local database and use no internet. Each run is noted in
 `data\update.log`. Days the PC is off all day are skipped; charts carry the last value across.
 
+After each background update a **Windows notification** sums up what it found: your total and the change since
+yesterday, the biggest riser and faller, how many items moved 10 %+ (`ALERT_MOVE_PCT`), items that now sell best
+on a different market, and any unrealistic listings it ignored. Clicking it opens the dashboard. The script also
+registers the notifications' name and the link they open, under your account only; if you set it up before
+notifications existed, run it again. Turn them off with `NOTIFICATIONS=false`.
+
 An update downloads about 5–6 MB (mostly the Skinport, Market.CSGO and Waxpeer price lists, plus Skinport's
 sales history, which is fetched at most once a day). The one-per-item CSFloat and Steam requests are small and
 spaced seconds apart, so they never hog a slow connection.
@@ -90,6 +119,8 @@ powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1 -Remov
 ```
 
 To use another time, set `DAILY_UPDATE_TIME` in `.env` and pass the same time to the script with `-Time`.
+Using the Windows app instead of Python? Add `-Exe "C:\path\to\CS2-Inventory-Intelligence.exe"`; the task then
+runs the app with `--update`, and notifications open the app.
 
 On other systems, schedule `python app.py --update` with cron or similar.
 
@@ -111,6 +142,8 @@ Most of them can also be changed later in the app's **Settings** dialog.
 | `DAILY_UPDATE_TIME` | Earliest time of day for the automatic background update (default `12:00`). |
 | `BULK_SELL_DAYS` | For the "selling many at once" estimate: each market takes about what it sells in this many days (default `30`). |
 | `ITEM_IMAGES` | Find pictures for items you add by hand (default `true`). |
+| `NOTIFICATIONS` | Show a Windows notification after each background update (default `true`). |
+| `ALERT_MOVE_PCT` | An item moving at least this much (%) in a day is counted in that notification (default `10`). |
 
 ### API keys
 
@@ -205,7 +238,18 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
 pip install -r requirements-dev.txt
 python -m pytest                     # test suite (no network needed)
 python scripts/check_secrets.py      # privacy check of everything that would be committed
+python scripts/build_demo_site.py --out site   # the static live demo (what GitHub Pages serves)
 ```
+
+To build the one-file Windows app yourself:
+
+```bash
+pip install -r requirements-build.txt
+pyinstaller packaging/cs2-inventory.spec --noconfirm   # -> dist/CS2-Inventory-Intelligence.exe
+```
+
+Pushing a version tag (`v1.2.0`) builds it on GitHub Actions and publishes it as a release; every push to `main`
+rebuilds the live demo.
 
 | Path | Contents |
 |---|---|
@@ -213,12 +257,15 @@ python scripts/check_secrets.py      # privacy check of everything that would be
 | `backend/` | Flask API, SQLite storage, Steam sync, market sources, valuation, fees, history |
 | `static/`, `templates/` | The dashboard (vanilla JavaScript + Chart.js) |
 | `tests/` | pytest suite |
-| `scripts/` | Privacy check, desktop-shortcut helper and the daily-update scheduled task |
+| `scripts/` | Privacy check, desktop-shortcut helper, the daily-update scheduled task and the live-demo builder |
+| `packaging/` | PyInstaller recipe and release notes for the Windows app |
+| `.github/workflows/` | Tests, the live demo (GitHub Pages) and the Windows app release |
 
 ## Credits
 
 - **Price data:** Steam Community Market, [Skinport](https://skinport.com), [CSFloat](https://csfloat.com),
-  [Market.CSGO](https://market.csgo.com) and [Waxpeer](https://waxpeer.com).
+  [Market.CSGO](https://market.csgo.com) and [Waxpeer](https://waxpeer.com). Sales history comes from Skinport
+  and the Steam Market's median; CSFloat's reference price fills in when Steam can't be reached.
 - **Exchange rates:** [Frankfurter](https://frankfurter.dev) (European Central Bank), with
   [ExchangeRate-API](https://www.exchangerate-api.com) as a fallback.
 - **Item names and pictures:** CSFloat's public item schema and [ByMykel's CSGO-API](https://github.com/ByMykel/CSGO-API)

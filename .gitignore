@@ -36,3 +36,9 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Built files (live demo site, Windows app)
+site/
+build/
+dist/
+*.spec.bak

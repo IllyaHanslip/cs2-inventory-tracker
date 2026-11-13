@@ -1,4 +1,6 @@
-// Small JSON client for the Flask API.
+// Small JSON client for the Flask API (or, on the live demo site, its saved answers).
+
+import { DEMO_SITE, demoApi } from './demo-site.js';
 
 export class ApiError extends Error {
   constructor(message, status) {
@@ -7,7 +9,13 @@ export class ApiError extends Error {
   }
 }
 
+/** Where "Export CSV" downloads from. */
+export function exportUrl(scope) {
+  return DEMO_SITE ? `data/export-${scope}.csv` : `/api/export.csv?scope=${scope}`;
+}
+
 export async function api(path, { method = 'GET', body, params } = {}) {
+  if (DEMO_SITE) return demoApi(path, { method, params: params || {} });
   let url = `/api${path}`;
   if (params) {
     const query = new URLSearchParams();

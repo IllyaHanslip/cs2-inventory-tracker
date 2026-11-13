@@ -95,7 +95,8 @@ export class PlannerView {
     }
     this.el.limit.textContent = `Up to ${money(d.max, cur)} can be raised from what you could sell `
       + `(${this.el.wallet.checked ? 'Steam Wallet sales included' : 'cash markets only'}).`
-      + (d.target > d.max ? ' That target is more than everything you could sell.' : '');
+      + (d.target > d.max ? ' That target is more than everything you could sell.' : '')
+      + (d.demo_note ? ` ${d.demo_note}` : '');
 
     const units = d.steps.reduce((sum, s) => sum + s.units, 0);
     const tile = (label, value, foot) => `<div class="stat"><div class="stat-label">${esc(label)}</div>

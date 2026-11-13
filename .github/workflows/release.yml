@@ -1,0 +1,41 @@
+name: Windows app
+
+# Builds the one-file Windows app (packaging/cs2-inventory.spec). Pushing a version tag such as
+# v1.2.0 publishes it as a GitHub Release; running it by hand just builds and keeps the file.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dependencies
+        run: pip install -r requirements-build.txt
+      - name: Build the app
+        run: pyinstaller packaging/cs2-inventory.spec --noconfirm
+      - name: Check it starts
+        run: dist/CS2-Inventory-Intelligence.exe --help
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${{ github.ref_name }}" dist/CS2-Inventory-Intelligence.exe
+          --title "CS2 Inventory Intelligence ${{ github.ref_name }}" --notes-file packaging/RELEASE_NOTES.md
+      - name: Keep the file (manual runs)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v7
+        with:
+          name: CS2-Inventory-Intelligence
+          path: dist/CS2-Inventory-Intelligence.exe
