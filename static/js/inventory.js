@@ -7,7 +7,7 @@ import * as dialogs from './dialogs.js';
 import { MarketFilter, availableMarkets, bestToSell, bulkNote, noCashLabel, sellHtml } from './market-filter.js';
 import { applySort, applySortWithin } from './sortable.js';
 import {
-  CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, money, number, state, store, thumbHtml, toast,
+  CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, isStorage, money, number, state, store, thumbHtml, toast,
 } from './util.js';
 
 export class InventoryView {
@@ -204,7 +204,7 @@ export class InventoryView {
     const out = [];
     const groups = new Map();
     for (const item of this.items) {
-      const stackable = !item.is_container && !item.stickers.length && !item.name_tag
+      const stackable = !isStorage(item) && !item.stickers.length && !item.name_tag
         && item.float_value === null && item.price_source !== 'custom' && !item.notes;
       if (!stackable) { out.push(item); continue; }
       const key = `${item.source}|${item.market_hash_name}|${item.container_id ?? ''}`;
@@ -231,7 +231,7 @@ export class InventoryView {
   groupOf(item) {
     const by = this.state.groupBy;
     if (by === 'exterior') return item.exterior || 'No wear';
-    if (by === 'container') return item.container_name || (item.is_container ? 'Containers' : 'Not in a container');
+    if (by === 'container') return item.container_name || (isStorage(item) ? 'Containers' : 'Not in a container');
     const value = item.tags?.[by];
     return value || { event: 'No event', collection: 'No collection', weapon: 'Not a weapon', rarity: 'Unknown rarity' }[by] || 'Other';
   }
@@ -348,7 +348,7 @@ export class InventoryView {
       value += bulkNote(item);
     }
     const actions = [];
-    if (item.is_container && item.container_id === null) {
+    if (isStorage(item) && item.container_id === null) {
       actions.push('<button type="button" class="btn btn-small" data-action="open">Open</button>');
     }
     if (item.source === 'manual' && !stacked) {

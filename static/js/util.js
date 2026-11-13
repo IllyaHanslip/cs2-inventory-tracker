@@ -161,6 +161,12 @@ export function thumbHtml(item, size = '') {
   return `<div class="thumb ${size}"${style}>${inner}</div>`;
 }
 
+/** A storage unit, or anything holding items. Cases, capsules and souvenir packages share the
+ *  "container" category but can't be opened, so this, not is_container, decides "Open". */
+export function isStorage(item) {
+  return Boolean(item.is_storage || item.contents_count > 0);
+}
+
 export const CATEGORY_FILTERS = [
   ['weapon_skin', 'Weapon Skins'],
   ['sticker', 'Stickers'],

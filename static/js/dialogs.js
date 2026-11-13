@@ -8,8 +8,8 @@ import { initDialogs, markClean, protectForm } from './guard.js';
 import { MarketFilter, bulkText, noCashLabel } from './market-filter.js';
 import { applySortWithin } from './sortable.js';
 import {
-  CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, longDate, money, number, relTime, safeUrl, state,
-  thumbHtml, toast,
+  CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, isStorage, longDate, money, number, relTime, safeUrl,
+  state, thumbHtml, toast,
 } from './util.js';
 
 let app;
@@ -432,7 +432,7 @@ function renderItemActions(item) {
     ${inspect ? `<a class="btn" href="${esc(inspect)}">Inspect in game</a>` : ''}
     <a class="btn" href="${esc(market)}" target="_blank" rel="noopener noreferrer">Steam Market ↗</a>
     <button type="button" class="btn" data-act="quote">+ Quote</button>
-    ${item.is_container && item.container_id === null ? '<button type="button" class="btn" data-act="open">Open container</button>' : ''}
+    ${isStorage(item) && item.container_id === null ? '<button type="button" class="btn" data-act="open">Open container</button>' : ''}
     <button type="button" class="btn btn-primary" data-act="edit">Edit</button>`;
   actions.onclick = async (event) => {
     const act = event.target.closest('[data-act]')?.dataset.act;
