@@ -2,7 +2,12 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.2.0
+### What's new in v1.2.1
+
+- Item names inside containers and in the Sell Planner look like the rest of the app instead of like
+  links; click anywhere on the row (or press Enter on it) to see the item's details.
+
+### v1.2.0
 
 - **Profit & Loss tab.** Everything you've bought and sold, with prices only where you gave them. Switch
   between actual profit (sales where you gave both what you paid and what you got), money gained

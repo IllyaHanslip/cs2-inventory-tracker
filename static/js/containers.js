@@ -553,7 +553,7 @@ function renderContents(contents, currency, animate = false) {
         const top = bestToSell(item.sell_quotes, manager.filter);
         return `<tr class="row" tabindex="0" title="Show details" data-i="${i}" data-id="${item.id}" data-name="${esc(item.name.toLowerCase())}" style="--i:${Math.min(i, 20)}">
         <td>${thumbHtml(item)}</td>
-        <td data-v="${esc(item.name)}"><button type="button" class="link-btn" data-act="view" data-id="${item.id}">${esc(item.name)}</button>
+        <td data-v="${esc(item.name)}"><div class="item-name">${esc(item.name)}</div>
           ${item.stickers.length || item.float_value !== null ? `<div class="item-meta">${[
             item.float_value !== null ? `Float ${Number(item.float_value).toFixed(4)}` : '',
             item.stickers.length ? `${item.stickers.length} sticker${item.stickers.length > 1 ? 's' : ''}` : '',
@@ -611,8 +611,7 @@ function setupManagerEvents() {
         await api(`/items/${id}/move`, { method: 'POST', body: { container_id: manager.id } });
         toast('Moved into the container', 'ok');
         await afterChange();
-      } else if (act === 'view' && item) openItem(item);
-      else if (act === 'edit' && item) editItem(item);
+      } else if (act === 'edit' && item) editItem(item);
       else if (act === 'move' && item) await moveItem(item);
       else if (act === 'remove' && item) await removeItem(item);
       else if (act === 'delete-container') {

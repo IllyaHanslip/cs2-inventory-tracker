@@ -47,6 +47,9 @@ export class PlannerView {
       const view = event.target.closest('[data-view]');
       if (view) this.view(view.dataset.view);
     });
+    this.el.table.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && event.target.matches('tr[data-view]')) this.view(event.target.dataset.view);
+    });
     this.el.kept.addEventListener('click', (event) => {
       if (!event.target.closest('[data-unkeep]')) return;
       this.keep.clear();
@@ -108,9 +111,9 @@ export class PlannerView {
     ].join('') : '';
 
     const body = this.el.table.querySelector('tbody');
-    body.innerHTML = d.steps.map((s, i) => `<tr data-i="${i}">
+    body.innerHTML = d.steps.map((s, i) => `<tr class="row" data-i="${i}" data-view="${esc(s.name)}" tabindex="0" title="Show details">
         <td>${thumbHtml({ icon: s.icon, category: 'other' })}</td>
-        <td data-v="${esc(s.name)}"><button type="button" class="link-btn" data-view="${esc(s.name)}">${esc(s.name)}</button></td>
+        <td data-v="${esc(s.name)}"><div class="item-name">${esc(s.name)}</div></td>
         <td class="num strong" data-v="${s.units}">${number(s.units)}<div class="sub">of ${number(s.held)}</div></td>
         <td data-v="${esc(s.markets.map((m) => m.label).join(', '))}">${s.markets.map((m) => `${number(m.units)} on ${esc(m.label)}
           <span class="muted small">at ${money(m.net, cur)}${m.market === 'steam' ? ` · ${esc(noCashLabel('steam', true))}` : ''}</span>`).join('<br>')}</td>
