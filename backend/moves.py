@@ -7,8 +7,10 @@ back, so after each sync those are listed for you to confirm on the Containers t
     15 Dreams & Nightmares Cases left your Steam inventory - put them in "Long Holds"
     (it already holds 40 of them)?  /  sold or traded?
 
-The suggestion is the storage unit that already holds the same item, marked as a best guess;
-nothing changes until you confirm, and only the public inventory is read: no login, ever.
+The suggestion is the storage unit that already holds the same item, marked as a best guess, or
+you say it was sold (and for how much, if you like: that goes on the Profit & loss tab). New items
+ask what you paid for them. Nothing changes until you confirm, a change you don't want to deal
+with can be dismissed for good, and only the public inventory is read: no login, ever.
 (If Steam ever includes each unit's item count, the units whose counts moved decide instead.)
 """
 from __future__ import annotations
@@ -16,7 +18,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from . import db, images, storage
+from . import db, images, ledger, storage
 from .classify import categorize
 
 # What you've recorded about an item yourself: carried over wherever it goes.
@@ -24,7 +26,8 @@ USER_FIELDS = ("purchase_price", "purchase_currency", "custom_price", "custom_pr
 KEPT_FIELDS = ("name", "category", "item_type", "weapon", "rarity", "rarity_color", "exterior", "float_value",
                "paint_seed", "name_tag", "icon_url", *USER_FIELDS)
 MAX_EXACT = 60          # more separate items than this: skip the "which ones add up exactly" search
-ACTIONS = {"left": ("store", "gone"), "back": ("take_out", "keep")}
+# What you can say about each kind of change ("dismiss": the × - forget it, for good).
+ACTIONS = {"left": ("store", "gone", "dismiss"), "back": ("take_out", "keep", "dismiss"), "new": ("bought", "dismiss")}
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +56,10 @@ def detect(conn, left: list[dict], arrived: list[dict], units: list[dict], now: 
             uid, qty, sure = source
             taken[uid] = taken.get(uid, 0) + qty
             found.append(("back", group, qty, "take_out", uid, sure))
+            if qty < group["quantity"]:
+                found.append(("new", group, group["quantity"] - qty, None, None, False))
+        else:
+            found.append(("new", group, group["quantity"], None, None, False))    # what did you pay?
 
     # Went into a storage unit, or was sold / traded. The units that grew say which: look for the
     # items whose numbers add up exactly to each unit's growth.
@@ -89,7 +96,7 @@ def detect(conn, left: list[dict], arrived: list[dict], units: list[dict], now: 
 
     for kind, group, qty, suggestion, uid, sure in found:
         details = dict(group["details"])
-        if kind == "back":
+        if kind in ("back", "new"):
             details["steam_item_ids"] = [r["id"] for r in group["rows"]]
         unit = info.get(uid) or {}
         conn.execute(
@@ -257,7 +264,7 @@ def _source_unit(conn, group: dict, deltas: dict[int, int], taken: dict[int, int
 def storage_units() -> list[dict[str, Any]]:
     """Every top-level storage unit, with how many items are listed in it and Steam's own count."""
     rows = db.query(
-        "SELECT u.id, u.market_hash_name, u.name_tag, u.source, u.steam_count, u.game_count, "
+        "SELECT u.id, u.market_hash_name, u.name_tag, u.source, u.steam_count, "
         "(SELECT COALESCE(SUM(c.quantity), 0) FROM items c WHERE c.container_id = u.id) AS listed "
         "FROM items u WHERE u.category = 'container' AND u.container_id IS NULL "
         "AND (u.is_storage = 1 OR EXISTS (SELECT 1 FROM items c WHERE c.container_id = u.id)) ORDER BY u.id"
@@ -271,7 +278,8 @@ def pending() -> dict[str, Any]:
     """Changes waiting for you, and the storage units they could go into."""
     from .valuation import Valuator
 
-    rows = db.query("SELECT * FROM inventory_changes WHERE status = 'pending' ORDER BY kind DESC, detected_at DESC, id")
+    rows = db.query("SELECT * FROM inventory_changes WHERE status = 'pending' ORDER BY "
+                    "CASE kind WHEN 'new' THEN 0 WHEN 'left' THEN 1 ELSE 2 END, detected_at DESC, id")
     units = storage_units()
     labels = {u["id"]: u["label"] for u in units}
     best = Valuator().best_net if rows else {}
@@ -296,8 +304,9 @@ def pending() -> dict[str, Any]:
             "unit_holds": held.get(row["market_hash_name"], {}).get(row["container_id"], 0),
             "unit_before": row["unit_before"],
             "unit_after": row["unit_after"], "sure": bool(row["sure"]),
+            "purchase_price": details.get("purchase_price"), "purchase_currency": details.get("purchase_currency"),
         })
-    return {"changes": changes, "units": units}
+    return {"changes": changes, "units": units, "currency": ledger.base_currency()}
 
 
 def pending_count() -> int:
@@ -305,9 +314,10 @@ def pending_count() -> int:
     return int(row["n"]) if row else 0
 
 
-def apply(change_id: int, action: str, container_id: int | None = None) -> dict[str, Any]:
-    """Confirm one change: put it in a storage unit / it was sold or traded (items that left),
-    or take it off a unit's list / keep it listed (items that came back)."""
+def apply(change_id: int, action: str, container_id: int | None = None, price: float | None = None) -> dict[str, Any]:
+    """Confirm one change: put it in a storage unit / it was sold or traded, for ``price`` each if
+    given (items that left); take it off a unit's list / it was bought (items that came back);
+    what it cost (new items); or dismiss it for good."""
     now = db.utcnow_iso()
     with db.connect() as conn:
         change = conn.execute("SELECT * FROM inventory_changes WHERE id = ?", (change_id,)).fetchone()
@@ -323,11 +333,25 @@ def apply(change_id: int, action: str, container_id: int | None = None) -> dict[
             if not unit:
                 raise ValueError("Choose the storage unit they went into.")
             _store(conn, change, details, unit, now)
-            _follow_game_count(conn, unit, change, +change["quantity"])
         elif action == "take_out":
             _take_out(conn, change, details, unit)
-            _follow_game_count(conn, unit, change, -change["quantity"])
-        done = action in ("store", "take_out")
+        elif action == "gone":
+            # Sold (or traded): on the Profit & loss tab, priced if you said what for.
+            ledger.record(conn, "out", change["market_hash_name"], change["quantity"], price, ledger.base_currency(),
+                          cost=details.get("purchase_price"), cost_currency=details.get("purchase_currency"),
+                          source="steam", happened_at=change["detected_at"], display_name=details.get("name"),
+                          details={"change": change_id})
+        elif action in ("bought", "keep"):
+            # New to you: on the Profit & loss tab, and its purchase price on the items themselves.
+            currency = ledger.base_currency()
+            ids = details.get("steam_item_ids") or []
+            ledger.record(conn, "in", change["market_hash_name"], change["quantity"], price, currency, source="steam",
+                          happened_at=change["detected_at"], display_name=details.get("name"),
+                          details={"change": change_id, "items": ids})
+            if price is not None and ids:
+                conn.execute(f"UPDATE items SET purchase_price = ?, purchase_currency = ? WHERE source = 'steam' "
+                             f"AND id IN ({','.join('?' * len(ids))})", (price, currency, *ids))
+        done = action in ("store", "take_out", "gone", "bought", "keep")
         conn.execute(
             "UPDATE inventory_changes SET status = ?, resolution = ?, container_id = ?, resolved_at = ? WHERE id = ?",
             ("applied" if done else "dismissed", action, unit if done else change["container_id"], now, change_id),
@@ -348,25 +372,6 @@ def apply_suggested() -> dict[str, Any]:
         except ValueError as error:
             problems.append(str(error))
     return {"applied": applied, "problems": problems, "pending": pending_count()}
-
-
-def _follow_game_count(conn, unit: int, change, moved: int) -> None:
-    """The in-game count you typed for a unit includes moves made before you typed it, but not ones
-    made after: those are added (or taken off) as you confirm them."""
-    row = conn.execute("SELECT game_count, game_count_at FROM items WHERE id = ?", (unit,)).fetchone()
-    if row and row["game_count"] is not None and (row["game_count_at"] or "") <= change["detected_at"]:
-        count = max(0, min(storage.CAPACITY, row["game_count"] + moved))
-        conn.execute("UPDATE items SET game_count = ? WHERE id = ?", (count, unit))
-
-
-def set_game_count(unit: int, count: int | None) -> None:
-    """Record the item count CS2 shows for a storage unit (None forgets it)."""
-    with db.connect() as conn:
-        target = conn.execute("SELECT category, is_storage, container_id FROM items WHERE id = ?", (unit,)).fetchone()
-        if not target or target["category"] != "container" or target["container_id"] is not None:
-            raise ValueError("That isn't one of your storage units.")
-        conn.execute("UPDATE items SET game_count = ?, game_count_at = ? WHERE id = ?",
-                     (count, db.utcnow_iso() if count is not None else None, unit))
 
 
 def _store(conn, change, details: dict, unit: int, now: str) -> None:

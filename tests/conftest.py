@@ -85,3 +85,17 @@ def add_quote(name: str, market: str, price: float, currency: str = "USD", manua
         "VALUES (?, ?, ?, ?, ?, '2026-01-01T00:00:00+00:00')",
         (name, market, price, currency, int(manual)),
     )
+
+
+@pytest.fixture
+def steam(monkeypatch):
+    """Sync a made-up Steam inventory: steam(item, item, ...)."""
+    from backend import steam_inventory
+
+    inventory = {"items": []}
+    monkeypatch.setattr(steam_inventory, "fetch_inventory", lambda steam_id, job=None: inventory["items"])
+
+    def sync(*items):
+        inventory["items"] = list(items)
+        return steam_inventory.sync_inventory(FAKE_STEAM_ID)
+    return sync

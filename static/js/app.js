@@ -8,6 +8,7 @@ import { InventoryView } from './inventory.js';
 import { initLayout, updateStickyOffsets } from './layout.js';
 import { MarketsView } from './markets.js';
 import { PlannerView } from './planner.js';
+import { PnlView } from './pnl.js';
 import { deltaHtml, esc, money, number, relTime, state, store, toast } from './util.js';
 
 const app = {
@@ -31,6 +32,7 @@ const app = {
     this.views.containers = new containers.ContainersView(document.getElementById('panel-containers'));
     this.views.markets = new MarketsView(document.getElementById('panel-markets'), this);
     this.views.planner = new PlannerView(document.getElementById('panel-planner'));
+    this.views.pnl = new PnlView(document.getElementById('panel-pnl'), this);
     this.bindTopbar();
     this.bindTabs();
     initLayout();
@@ -110,6 +112,7 @@ const app = {
       }
       if (name === 'markets' && !this.views.markets.loaded) this.views.markets.reload();
       if (name === 'planner' && !this.views.planner.loaded) this.views.planner.reload();
+      if (name === 'pnl' && !this.views.pnl.loaded) this.views.pnl.reload();
       // Charts drawn while hidden have no size - redraw on show.
       const view = this.views[name];
       if (view && view.chart) view.chart.resize();
@@ -178,6 +181,7 @@ const app = {
     const work = [this.views.public.reload(), this.views.total.reload(), this.views.containers.reload()];
     if (this.views.markets.loaded) work.push(this.views.markets.reload());
     if (this.views.planner.loaded) work.push(this.views.planner.reload());
+    if (this.views.pnl.loaded) work.push(this.views.pnl.reload());
     await Promise.all(work);
   },
 

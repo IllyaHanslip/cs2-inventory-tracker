@@ -2,7 +2,18 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.1.2
+### What's new in v1.2.0
+
+- **Profit & Loss tab.** Everything you've bought and sold, with prices only where you gave them. Switch
+  between actual profit (sales where you gave both what you paid and what you got), money gained
+  (everything you've sold for) and money spent (every purchase with a price), with a chart, a breakdown by kind of item, best and worst sales, and the full list to edit or add to.
+- **Changes from Steam syncs**: say an item that left was sold (and for how much, if you like), give what a
+  new item cost, or dismiss a change with × for good - it won't come back after a restart.
+- Removing an item you added by hand can record it as sold, with its price.
+- The in-game storage count is gone: compare with CS2 yourself whenever you like.
+- Biggest movers lists up to 30 items each way, filling its box (scroll inside it for more).
+
+### v1.1.2
 
 - **See what's running.** A price refresh the app starts by itself now shows at the top too, with each
   market's progress ("Steam Market 40 of 385 · about 12 minutes left") - and pressing Refresh while one

@@ -7,10 +7,12 @@
 // Every combination of them was worked out when the demo was built (data/states/), so the page
 // shows exactly what the app would. Reloading the page starts the demo afresh.
 
+import { toast } from './util.js';
+
 export const DEMO_SITE = document.documentElement.dataset.demoSite === '1';
 
 const files = new Map();
-const demo = { applied: new Set(), dismissed: new Set(), key: '', states: {}, counts: new Map() };
+const demo = { applied: new Set(), dismissed: new Set(), key: '', states: {} };
 const PAGE_LOADED = new Date().toISOString();   // the demo "restarts" when you reload the page
 
 function load(name) {
@@ -63,10 +65,6 @@ function filterItems(data, params) {
   return { ...data, counts, items };
 }
 
-function withCount(container) {
-  return demo.counts.has(container.id) ? { ...container, game_count: demo.counts.get(container.id) } : container;
-}
-
 async function pendingChanges() {
   const data = await loadState('changes.json');
   return { ...data, changes: data.changes.filter((c) => !demo.applied.has(c.id) && !demo.dismissed.has(c.id)) };
@@ -91,6 +89,9 @@ async function resolveChange(id, action, unit) {
     demo.states = (await load('states.json')).states;
   } else {
     demo.dismissed.add(id);
+    if (['gone', 'bought', 'keep'].includes(action)) {
+      toast('In the demo, purchases and sales aren\'t saved - in the app this goes on the Profit & Loss tab.', 'info', 7000);
+    }
   }
 }
 
@@ -103,13 +104,6 @@ async function demoWrite(path, body = {}) {
       applied += 1;
     }
     return { applied, problems: [], pending: (await pendingChanges()).changes.length };
-  }
-  const count = path.match(/^\/containers\/(\d+)\/count$/);
-  if (count) {
-    // The in-game count you type is kept in this page (until you reload).
-    const value = body.count === null || body.count === undefined || body.count === '' ? null : Number(body.count);
-    demo.counts.set(Number(count[1]), value);
-    return { container_id: Number(count[1]), game_count: value };
   }
   const match = path.match(/^\/changes\/(\d+)$/);
   if (match) {
@@ -130,6 +124,7 @@ export async function demoApi(path, { method = 'GET', params = {}, body } = {}) 
   if (path === '/jobs/current') return { job: null };
   if (path === '/names') return { names: [] };
   if (path === '/changes') return pendingChanges();
+  if (path === '/ledger') return loadState('ledger.json');
   if (path === '/sets') return load('sets.json');
   if (path === '/sets/items') {
     const { sets } = await load('sets.json');
@@ -141,14 +136,8 @@ export async function demoApi(path, { method = 'GET', params = {}, body } = {}) 
   if (path === '/history/portfolio') return loadState(`history-${scope}-${range}.json`);
   if (path === '/insights') return loadState(`insights-${scope}-${range}.json`);
   if (path === '/market-comparison') return loadState(`market-${scope}.json`);
-  if (path === '/containers') {
-    const data = await loadState('containers.json');
-    return { ...data, containers: data.containers.map(withCount) };
-  }
-  if (path.startsWith('/containers/')) {
-    const data = await loadState(`container-${Number(path.split('/')[2])}.json`);
-    return { ...data, container: withCount(data.container) };
-  }
+  if (path === '/containers') return loadState('containers.json');
+  if (path.startsWith('/containers/')) return loadState(`container-${Number(path.split('/')[2])}.json`);
   if (path === '/quotes') return loadState(`quotes-${Number(params.item)}.json`);
   if (path === '/history/item') {
     const index = await loadState('item-index.json');
@@ -175,7 +164,7 @@ export function showDemoBanner() {
   const banner = document.createElement('div');
   banner.className = 'demo-banner';
   banner.innerHTML = 'Live demo with a <strong>made-up inventory</strong> and synthetic prices - on the Containers tab you can '
-    + 'try confirming the changes and typing in-game counts, but nothing else changes. '
+    + 'try confirming the changes, but nothing else changes. '
     + '<a href="https://github.com/IllyaHanslip/cs2-inventory-tracker" rel="noopener">Get the app on GitHub</a> to track your own items.';
   document.body.prepend(banner);
 }

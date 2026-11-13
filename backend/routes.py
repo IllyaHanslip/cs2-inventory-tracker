@@ -9,8 +9,8 @@ from flask import Blueprint, Response, jsonify, request
 
 from config import Config
 
-from . import (catalogue, comparables, db, evidence, events, fees, history, images, insights, moves, planner, portfolio,
-               settings, storage)
+from . import (catalogue, comparables, db, evidence, events, fees, history, images, insights, ledger, moves, planner,
+               portfolio, settings, storage)
 from .classify import APPLIED_KINDS, CATEGORIES, EXTERIORS, applied_hash_name, categorize, exterior_from_float, exterior_from_name
 from .currency import FxConverter, last_source
 from .http_client import ApiError, RateLimitError
@@ -350,6 +350,10 @@ def create_item():
             storage.check_capacity(conn, container_id, values["quantity"])
             storage.mark_storage(conn, container_id)
         item_id, stacked = storage.add_item(conn, values, stickers or [])
+        if values.get("purchase_price") is not None and not values.get("is_storage"):
+            ledger.record(conn, "in", values["market_hash_name"], values["quantity"], values["purchase_price"],
+                          values.get("purchase_currency") or ledger.base_currency(), source="manual",
+                          details={"items": [item_id]})
     images.ensure([values["market_hash_name"]])
     price_from_saved_lists([values["market_hash_name"], *(applied_hash_name(s["kind"], s["name"]) for s in stickers or [])])
     return jsonify(item=_get_item(item_id), stacked=stacked), 201
@@ -383,9 +387,14 @@ def delete_item(item_id: int):
     """Remove an entry, or only ``?quantity=N`` of a stack. Containers: ``?contents=keep|delete``."""
     item = _get_item(item_id)
     quantity = _number(request.args.get("quantity"), "Quantity", 1, integer=True)
+    sold_price = _number(request.args.get("sold_price"), "Sold for", 0)
     contents = "delete" if request.args.get("contents") == "delete" else "keep"
     with db.connect() as conn:
         remaining = storage.remove(conn, item, quantity, contents)
+        if sold_price is not None:
+            ledger.record(conn, "out", item["market_hash_name"], quantity or item["quantity"], sold_price,
+                          ledger.base_currency(), cost=item["purchase_price"], cost_currency=item["purchase_currency"],
+                          source="manual", display_name=item["name"])
     return jsonify(deleted=remaining == 0, remaining=remaining)
 
 
@@ -477,14 +486,6 @@ def add_to_container(container_id: int):
     return jsonify(added=len(rows) - stacked, stacked=stacked, contents_count=used, capacity=storage.CAPACITY), 201
 
 
-@bp.put("/containers/<int:container_id>/count")
-def set_container_count(container_id: int):
-    """The item count CS2 shows for a storage unit (Steam's public inventory hides storage units)."""
-    count = _number(_body().get("count"), "In-game count", 0, storage.CAPACITY, integer=True)
-    moves.set_game_count(container_id, count)
-    return jsonify(container_id=container_id, game_count=count)
-
-
 # ---------------------------------------------------------------------------
 # Changes noticed by Steam syncs (items moved into / out of storage units)
 # ---------------------------------------------------------------------------
@@ -498,7 +499,8 @@ def resolve_change(change_id: int):
     data = _body()
     action = str(data.get("action") or "")
     container_id = _number(data.get("container_id"), "Storage unit", 1, None, integer=True)
-    result = moves.apply(change_id, action, container_id)
+    price = _number(data.get("price"), "Price", 0)
+    result = moves.apply(change_id, action, container_id, price)
     if action in ("store", "take_out"):
         price_from_saved_lists([db.query_one("SELECT market_hash_name FROM inventory_changes WHERE id = ?",
                                              (change_id,))["market_hash_name"]])
@@ -508,6 +510,59 @@ def resolve_change(change_id: int):
 @bp.post("/changes/apply-suggested")
 def resolve_suggested_changes():
     return jsonify(moves.apply_suggested())
+
+
+# ---------------------------------------------------------------------------
+# Profit & loss: items bought and sold, priced where you gave a price
+# ---------------------------------------------------------------------------
+@bp.get("/ledger")
+def ledger_summary():
+    valuator = Valuator()
+    frame = portfolio.build_frame(valuator, "total", with_changes=False)
+    held = portfolio.summarize(frame, valuator, "total")
+    holding = None
+    if held.get("purchase_value"):
+        holding = {"cost": held["purchase_value"], "profit": held["profit"],
+                   "value": held["purchase_value"] + (held["profit"] or 0.0)}
+    return jsonify(ledger.summary(holding))
+
+
+def _ledger_fields(data: dict[str, Any], creating: bool) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for key, label in (("price", "Price"), ("cost", "What you paid")):
+        if key in data or creating:
+            fields[key] = _number(data.get(key), label, 0)
+    if "quantity" in data or creating:
+        fields["quantity"] = _number(data.get("quantity", 1), "Quantity", 1, 100000, integer=True) or 1
+    when = data.get("date")
+    if when:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(when)):
+            raise ValueError("Date must look like 2026-11-13.")
+        fields["happened_at"] = f"{when}T12:00:00+00:00"
+    return fields
+
+
+@bp.post("/ledger")
+def ledger_add():
+    data = _body()
+    name = catalogue.canonical(_text(data.get("name"), "Item name", 200, required=True))
+    fields = _ledger_fields(data, creating=True)
+    entry_id = ledger.add(str(data.get("kind") or ""), name, fields["quantity"], fields["price"],
+                          fields.get("happened_at"), fields.get("cost"))
+    images.ensure([name])
+    return jsonify(id=entry_id), 201
+
+
+@bp.put("/ledger/<int:entry_id>")
+def ledger_edit(entry_id: int):
+    ledger.update(entry_id, _ledger_fields(_body(), creating=False))
+    return jsonify(id=entry_id)
+
+
+@bp.delete("/ledger/<int:entry_id>")
+def ledger_remove(entry_id: int):
+    ledger.delete(entry_id)
+    return jsonify(deleted=True)
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,6 @@
 """Items moved into / out of storage units, noticed by Steam syncs (moves.py)."""
 from __future__ import annotations
 
-import pytest
-
 from backend import db, moves, steam_inventory
 from tests.conftest import FAKE_STEAM_ID, HEADERS
 
@@ -16,17 +14,6 @@ def make(asset_id, name, **extra):
         "name_tag": "Long Holds" if unit else None, "quantity": 1, "icon_url": None, "inspect_link": None,
         "tradable": 1, "marketable": 0 if unit else 1, "stickers": [], "storage_count": None, **extra,
     }
-
-
-@pytest.fixture
-def steam(monkeypatch):
-    inventory = {"items": []}
-    monkeypatch.setattr(steam_inventory, "fetch_inventory", lambda steam_id, job=None: inventory["items"])
-
-    def sync(*items):
-        inventory["items"] = list(items)
-        return steam_inventory.sync_inventory(FAKE_STEAM_ID)
-    return sync
 
 
 def pending():
@@ -197,29 +184,3 @@ def test_without_storage_units_in_steam_the_unit_holding_the_item_is_suggested(c
     steam(make("p250", "P250 | Sand Dune (Field-Tested)"), *[make(f"case-{i}", "Recoil Case") for i in (7, 8, 9)])
     back = next(c for c in pending() if c["kind"] == "back")
     assert (back["quantity"], back["suggestion"], back["container_id"]) == (3, "take_out", stash)
-
-
-def test_in_game_count_follows_moves_you_confirm(client, steam):
-    stash = manual_unit(client, "Stash", Recoil_Case=10)
-    r = client.put(f"/api/containers/{stash}/count", json={"count": 12}, headers=HEADERS)
-    assert r.status_code == 200
-    box = client.get("/api/containers").get_json()["containers"][0]
-    assert (box["game_count"], box["contents_count"]) == (12, 10)
-    # Moved in game after typing 12: confirming it adds to the count as well as to the list.
-    steam(make("case-1", "Recoil Case"), make("case-2", "Recoil Case"), make("case-3", "Recoil Case"))
-    steam(make("case-3", "Recoil Case"))
-    (change,) = pending()
-    client.post(f"/api/changes/{change['id']}", json={"action": "store"}, headers=HEADERS)
-    box = client.get("/api/containers").get_json()["containers"][0]
-    assert (box["game_count"], box["contents_count"]) == (14, 12)
-    # A move noticed before you typed the count is already in it.
-    steam(make("case-x", "AK-47 | Slate (Field-Tested)"))
-    (change,) = pending()
-    client.put(f"/api/containers/{stash}/count", json={"count": 15}, headers=HEADERS)
-    db.execute("UPDATE inventory_changes SET detected_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (change["id"],))
-    client.post(f"/api/changes/{change['id']}", json={"action": "store", "container_id": stash}, headers=HEADERS)
-    assert client.get("/api/containers").get_json()["containers"][0]["game_count"] == 15
-    assert client.put(f"/api/containers/{stash}/count", json={"count": 1001}, headers=HEADERS).status_code == 400
-    assert client.put(f"/api/containers/{stash}/count", json={"count": None}, headers=HEADERS).status_code == 200
-    assert client.get("/api/containers").get_json()["containers"][0]["game_count"] is None
-    assert client.get("/api/status").get_json()["started_at"]

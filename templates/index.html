@@ -48,6 +48,7 @@
     <button role="tab" id="tab-containers" aria-controls="panel-containers" data-tab="containers">Containers <span class="tab-count" id="tab-containers-count"></span><span class="tab-alert" id="tab-containers-alert" hidden></span></button>
     <button role="tab" id="tab-markets" aria-controls="panel-markets" data-tab="markets">Market Comparison &amp; Best Deals</button>
     <button role="tab" id="tab-planner" aria-controls="panel-planner" data-tab="planner">Sell Planner</button>
+    <button role="tab" id="tab-pnl" aria-controls="panel-pnl" data-tab="pnl">Profit &amp; Loss</button>
   </nav>
 
   <section class="tab-panel" id="panel-public" role="tabpanel" aria-labelledby="tab-public" hidden></section>
@@ -68,6 +69,61 @@
     <div class="sort-bar" id="ct-sort" role="group" aria-label="Sort containers"></div>
     <div class="container-grid" id="ct-grid"></div>
   </section>
+  <section class="tab-panel" id="panel-pnl" role="tabpanel" aria-labelledby="tab-pnl" hidden>
+    <div class="section-head">
+      <div>
+        <h2 class="section-title">Profit &amp; loss</h2>
+        <p class="muted section-intro">What you've spent and made on items you bought and sold. Prices are up to you: each figure
+          uses the items that have the prices it needs. Entries come from the Containers tab (items a Steam sync noticed leaving
+          or arriving), from items you add with a purchase price, from items you remove and say you sold, and from anything you
+          record here.</p>
+      </div>
+      <div class="btn-row">
+        <button type="button" class="btn" id="pnl-add-in">+ Record a purchase</button>
+        <button type="button" class="btn btn-primary" id="pnl-add-out">+ Record a sale</button>
+      </div>
+    </div>
+    <div class="card pnl-hero">
+      <div class="card-head">
+        <div class="segmented" id="pnl-mode" role="group" aria-label="What to show">
+          <button type="button" data-mode="profit" title="Items sold where you gave both what you paid and what you got">Actual profit</button>
+          <button type="button" data-mode="gained" title="Everything you've sold for (items sold with a price), whatever you paid">Money gained</button>
+          <button type="button" data-mode="spent" title="Every item bought with a price">Money spent</button>
+        </div>
+      </div>
+      <div class="pnl-figure" id="pnl-figure"></div>
+      <p class="muted pnl-explain" id="pnl-explain"></p>
+      <div class="chart-wrap small">
+        <canvas id="pnl-chart" role="img" aria-label="The chosen figure added up over time"></canvas>
+        <div class="chart-empty" id="pnl-chart-empty" hidden></div>
+      </div>
+      <details class="data-details" id="pnl-chart-details">
+        <summary>Show data table</summary>
+        <div class="data-table-wrap" id="pnl-chart-table"></div>
+      </details>
+    </div>
+    <div class="stats" id="pnl-stats"></div>
+    <div class="insight-grid pnl-grid">
+      <div class="card"><div class="card-head"><h2 class="card-title">By kind of item</h2></div><div id="pnl-groups"></div></div>
+      <div class="card"><div class="card-head"><h2 class="card-title">Best and worst sales <span class="muted small">actual profit</span></h2></div>
+        <div class="movers" id="pnl-best"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <h2 class="card-title">Everything bought and sold</h2>
+        <div class="pnl-filters">
+          <div class="chips" id="pnl-kinds" role="group" aria-label="Show">
+            <button type="button" class="chip" data-kind="" aria-pressed="true">All</button>
+            <button type="button" class="chip" data-kind="in" aria-pressed="false">Bought</button>
+            <button type="button" class="chip" data-kind="out" aria-pressed="false">Sold</button>
+          </div>
+          <input type="search" class="input" id="pnl-search" placeholder="Search items…" aria-label="Search entries">
+        </div>
+      </div>
+      <div id="pnl-table"></div>
+    </div>
+  </section>
+
   <section class="tab-panel" id="panel-planner" role="tabpanel" aria-labelledby="tab-planner" hidden>
     <div class="card planner-card">
       <div class="card-head"><h2 class="card-title">How much do you want to raise?</h2>
@@ -429,6 +485,31 @@
     </div>
   </form>
 </dialog>
+<dialog id="pnl-dialog" class="dialog dialog-small" aria-labelledby="pnl-title">
+  <form id="pnl-form" novalidate>
+    <div class="dialog-head"><h2 id="pnl-title">Record a sale</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+    <div class="dialog-body">
+      <div class="form-grid single">
+        <label>Item name <input class="input" name="name" list="name-suggestions" maxlength="200" autocomplete="off" required
+          placeholder="e.g. Recoil Case"></label>
+        <label>Quantity <input class="input" name="quantity" type="number" min="1" step="1" value="1"></label>
+        <label><span id="pnl-price-label">Sold for (each)</span> <span class="muted">(optional)</span>
+          <input class="input" name="price" type="number" min="0" step="any"></label>
+        <label id="pnl-cost-field">What you paid (each) <span class="muted">(optional - leave empty if you don't know)</span>
+          <input class="input" name="cost" type="number" min="0" step="any"></label>
+        <label>Date <input class="input" name="date" type="date"></label>
+      </div>
+      <p class="hint">Prices are in your currency. Leave a price empty if you'd rather not say: the figures only use the
+        prices they need.</p>
+      <p class="form-error" id="pnl-error" role="alert" hidden></p>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn" data-close>Cancel</button>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="set-dialog" class="dialog dialog-wide" aria-labelledby="set-title">
   <div class="dialog-head"><h2 id="set-title">Add from an event</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
   <div class="dialog-body" id="set-body"></div>

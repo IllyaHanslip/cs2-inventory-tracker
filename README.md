@@ -29,11 +29,16 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
   European Central Bank rates, so comparisons are fair.
 - **Containers and storage units**: Steam can't see inside Storage Units, so record what each one holds (up to
   1,000 items), with stacking, partial moves and removals, and a capacity bar.
-- **Storage moves noticed for you**: after a Steam sync, items that left your inventory or came back are listed
-  on the Containers tab with a best guess of what happened: "15 Dreams & Nightmares Cases left: put them in
-  *Long Holds* (it already holds 40)?" You confirm each one (or all at once), or mark it sold or traded. Type the
-  item count CS2 shows for a storage unit and its card tells you how many items aren't listed yet (dismiss the
-  note until the app restarts); moves you confirm keep that count up to date.
+- **Storage moves noticed for you**: after a Steam sync, items that left your inventory, came back or are new are
+  listed on the Containers tab with a best guess of what happened: "15 Dreams & Nightmares Cases left: put them
+  in *Long Holds* (it already holds 40)?" Confirm each one (or all at once), say it was sold and for how much, or
+  give what a new item cost - or dismiss it with × for good.
+- **Profit & Loss**: everything you've bought and sold, with prices only where you gave them (nobody remembers
+  what they paid years ago). Switch between **actual profit** (sales where you gave both what you paid and what
+  you got), **money gained** (everything you've sold for) and **money spent** (every purchase with a price),
+  with a chart over time, a breakdown by kind of item, your best and worst sales,
+  and the full list to edit. Sales come from the Containers tab, from removing an item you sold, or from
+  recording one by hand.
 - **Quick entry from an event**: pick a tournament (Budapest 2025…), narrow it to stickers, slabs or capsules
   and Gold, Holo…, and type how many you have of each. They go onto the container's list by their exact
   names for you to check before adding, alongside anything you typed yourself.
@@ -63,8 +68,8 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
 | Item detail | Sell planner | Movers and mix |
 |---|---|---|
 | ![Item detail](docs/screenshots/item-detail.png) | ![Sell planner](docs/screenshots/planner.png) | ![Movers and portfolio mix](docs/screenshots/insights.png) |
-| **Market comparison** | **Containers** | **Grouped by type** |
-| ![Market comparison](docs/screenshots/market-comparison.png) | ![Containers](docs/screenshots/containers.png) | ![Grouped by type](docs/screenshots/grouped.png) |
+| **Market comparison** | **Containers** | **Profit & Loss** |
+| ![Market comparison](docs/screenshots/market-comparison.png) | ![Containers](docs/screenshots/containers.png) | ![Profit and loss](docs/screenshots/pnl.png) |
 
 ## Quick start (Windows)
 

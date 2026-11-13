@@ -100,17 +100,6 @@ export class ContainersView {
       else if (card && act === 'add') openContainer(card.id, { focusAdd: true });
       else if (card && act === 'delete') deleteContainer(card);
       else if (card && act === 'view-item') viewStoredItem(card.id, button.dataset.item);
-      else if (card && act === 'set-count') {
-        button.closest('.game-count').outerHTML = countFormHtml(card);
-        this.root.querySelector(`.count-form[data-id="${card.id}"] input`)?.focus();
-      } else if (act === 'cancel-count') this.render();
-      else if (card && act === 'hide-count') { hideNote(card); this.render(); }
-    });
-    root.querySelector('#ct-grid').addEventListener('submit', (event) => {
-      const form = event.target.closest('.count-form');
-      if (!form) return;
-      event.preventDefault();
-      saveCount(form.dataset.id, form.elements.count.value).catch((error) => toast(error.message, 'error'));
     });
     root.querySelector('#ct-changes').addEventListener('click', (event) => {
       const button = event.target.closest('[data-act]');
@@ -120,7 +109,24 @@ export class ContainersView {
         work.catch((error) => { toast(error.message, 'error'); button.disabled = false; });
       };
       if (button.dataset.act === 'change-apply') run(this.applyChange(button.closest('[data-change]')));
+      else if (button.dataset.act === 'change-dismiss') run(this.dismissChange(button.closest('[data-change]')));
       else if (button.dataset.act === 'changes-all') run(this.applyAllChanges());
+    });
+    // "Sold or traded" / "Bought": show the box for its price.
+    root.querySelector('#ct-changes').addEventListener('change', (event) => {
+      const row = event.target.closest('[data-change]');
+      if (!row || !event.target.matches('select')) return;
+      const priced = ['gone', 'keep'].includes(event.target.value);
+      const box = row.querySelector('.change-price');
+      box.hidden = !priced;
+      box.querySelector('input').placeholder = `${event.target.value === 'keep' ? 'Paid' : 'Sold for'} each (${this.changes.currency || state.currency})`;
+      if (priced) box.querySelector('input').focus();
+    });
+    root.querySelector('#ct-changes').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && event.target.matches('.change-price input')) {
+        event.preventDefault();
+        event.target.closest('[data-change]').querySelector('[data-act="change-apply"]').click();
+      }
     });
   }
 
@@ -157,30 +163,43 @@ export class ContainersView {
         <div>
           <h3 id="changes-title">Changes from your Steam syncs <span class="badge badge-warn">${number(changes.length)} to review</span></h3>
           <p class="muted small">Steam doesn't show what's in your storage units, but it does show items leaving your
-            inventory and coming back. After each Steam sync they're listed here with a best guess of what happened (the
-            storage unit that already holds the same item). Nothing changes until you confirm.</p>
+            inventory and arriving. After each Steam sync they're listed here: say where something went (a best guess is
+            picked: the storage unit already holding the same item) or what it sold for, and what new items cost. Prices
+            are optional and go on the Profit &amp; Loss tab. Nothing changes until you confirm, and × dismisses one for good.</p>
         </div>
         ${suggested ? `<button type="button" class="btn btn-primary" data-act="changes-all">Confirm ${all}suggestion${suggested === 1 ? '' : 's'}</button>` : ''}
       </div>
-      <ul class="change-list">${changes.map((c) => changeRowHtml(c, units)).join('')}</ul>
+      <ul class="change-list">${changes.map((c) => changeRowHtml(c, units, this.changes.currency || state.currency)).join('')}</ul>
     </section>`;
   }
 
   async applyChange(row) {
-    const choice = row.querySelector('select').value;
+    const choice = (row.querySelector('select') || row.querySelector('input[type="hidden"]')).value;
     if (!choice) throw new Error('Choose what happened first.');
     const [action, unit] = choice.split(':');
+    const box = row.querySelector('.change-price');
+    const raw = box.hidden ? '' : box.querySelector('input').value.trim();
+    const price = raw === '' ? null : Number(raw);
+    if (price !== null && !(price >= 0)) throw new Error('Prices must be a number (or leave it empty).');
     const change = this.changes.changes.find((c) => String(c.id) === row.dataset.change);
-    await api(`/changes/${row.dataset.change}`, { method: 'POST', body: { action, container_id: unit ? Number(unit) : null } });
+    await api(`/changes/${row.dataset.change}`, { method: 'POST', body: { action, container_id: unit ? Number(unit) : null, price } });
     const label = this.changes.units.find((u) => String(u.id) === unit)?.label;
     const what = `${number(change.quantity)} × ${change.name}`;
+    const cur = this.changes.currency || state.currency;
+    const each = price !== null ? ` for ${money(price, cur)} each` : '';
     const messages = {
       store: `Added ${what} to ${label}.`,
       take_out: `Took ${what} off the list for ${label}.`,
-      gone: `${what}: marked as sold or traded.`,
-      keep: `${what}: left as it is.`,
+      gone: `${what}: sold or traded${each}${price !== null ? ' - added to Profit & Loss' : ''}.`,
+      keep: `${what}: bought or received${each}.`,
+      bought: price !== null ? `${what}: bought${each} - added to Profit & Loss.` : `${what}: saved without a price.`,
     };
     toast(messages[action], 'ok');
+    await afterChange();
+  }
+
+  async dismissChange(row) {
+    await api(`/changes/${row.dataset.change}`, { method: 'POST', body: { action: 'dismiss' } });
     await afterChange();
   }
 
@@ -237,7 +256,6 @@ export class ContainersView {
             <span class="badge">${esc(c.name)}</span></div></div>
       </header>
       ${capacityHtml(c.contents_count, c.capacity)}
-      ${countHtml(c)}
       <div class="card-value"><span class="value">${money(c.contents_value, currency)}</span><span class="muted small">stored value</span></div>
       ${preview}
       <footer>
@@ -249,53 +267,7 @@ export class ContainersView {
   }
 }
 
-// Hidden "items missing" notes: kept until the app restarts, then shown again.
-const HIDDEN_KEY = 'count-notes-hidden';
-const noteKey = (c, count) => `${c.id}:${count}:${c.contents_count}`;
-
-function hiddenNotes() {
-  const saved = store.get(HIDDEN_KEY, null);
-  return saved && saved.run === state.status?.started_at && Array.isArray(saved.keys) ? saved.keys : [];
-}
-
-function hideNote(c) {
-  const count = c.game_count ?? c.steam_count;
-  store.set(HIDDEN_KEY, { run: state.status?.started_at, keys: [...hiddenNotes(), noteKey(c, count)] });
-}
-
-/** The item count CS2 shows for a storage unit (typed in by you), next to what's listed here. */
-function countHtml(c) {
-  const count = c.game_count ?? c.steam_count;
-  const edit = `<button type="button" class="link-btn small" data-act="set-count" data-id="${c.id}">${count === null || count === undefined ? 'Add the item count CS2 shows' : 'edit'}</button>`;
-  if (count === null || count === undefined) {
-    return `<p class="game-count unset">${edit} <span class="muted small">to spot items you haven't listed</span></p>`;
-  }
-  const diff = count - c.contents_count;
-  if (!diff) return `<p class="game-count ok">✓ Matches the count in game (${number(count)} items) · ${edit}</p>`;
-  if (hiddenNotes().includes(noteKey(c, count))) return '';
-  const gap = diff > 0 ? `${number(diff)} not listed yet` : `${number(-diff)} more listed than in game`;
-  return `<p class="game-count off"><span>In game: ${number(count)} items · ${number(c.contents_count)} listed here (${gap}) · ${edit}</span>
-    <button type="button" class="note-close" data-act="hide-count" data-id="${c.id}" aria-label="Hide this note until the app restarts"
-      title="Hide until the app restarts">×</button></p>`;
-}
-
-function countFormHtml(c) {
-  const count = c.game_count ?? c.steam_count ?? '';
-  return `<form class="count-form" data-id="${c.id}">
-    <label>Items CS2 shows for this unit <input class="input" type="number" min="0" max="1000" step="1" name="count" value="${count}"></label>
-    <button type="submit" class="btn btn-small btn-primary">Save</button>
-    <button type="button" class="btn btn-small" data-act="cancel-count">Cancel</button>
-  </form>`;
-}
-
-async function saveCount(id, value) {
-  const count = String(value).trim() === '' ? null : Number(value);
-  await api(`/containers/${id}/count`, { method: 'PUT', body: { count } });
-  toast(count === null ? 'In-game count removed.' : `In-game count saved: ${number(count)} items.`, 'ok');
-  await afterChange();
-}
-
-function changeRowHtml(c, units) {
+function changeRowHtml(c, units, currency) {
   const meta = [
     c.exterior ? esc(c.exterior) : '',
     c.float_value !== null ? `Float ${esc(floatText(c.float_value))}` : '',
@@ -306,9 +278,11 @@ function changeRowHtml(c, units) {
   const moved = c.unit_after - c.unit_before;
   const counted = c.unit_before !== null && c.unit_after !== null
     ? ` went from ${number(c.unit_before)} to ${number(c.unit_after)} items in Steam (${moved >= 0 ? '+' : '−'}${number(Math.abs(moved))})` : '';
-  let what;
-  let options;
   const holds = c.unit_holds ? ` already holds ${number(c.unit_holds)} of these` : '';
+  let what;
+  let choice;
+  let priceShown = false;
+  let priceLabel = 'Sold for';
   if (c.kind === 'left') {
     if (c.suggestion === 'store') what = `Left your Steam inventory · ${unit}${counted || holds}`;
     else if (c.suggestion === 'gone') what = 'Left your Steam inventory · no storage unit grew to match, so probably sold or traded';
@@ -316,27 +290,42 @@ function changeRowHtml(c, units) {
     let current = '';
     if (c.suggestion === 'store') current = `store:${c.container_id}`;
     else if (c.suggestion === 'gone') current = 'gone';
-    options = `${current ? '' : '<option value="">Where did it go?</option>'}
+    priceShown = current === 'gone';
+    choice = `<select class="input" aria-label="What happened to ${esc(c.name)}">
+      ${current ? '' : '<option value="">Where did it go?</option>'}
       ${units.map((u) => `<option value="store:${u.id}"${current === `store:${u.id}` ? ' selected' : ''}>Put in ${esc(u.label)}</option>`).join('')}
-      <option value="gone"${current === 'gone' ? ' selected' : ''}>Sold or traded (stop tracking it)</option>`;
-  } else {
+      <option value="gone"${current === 'gone' ? ' selected' : ''}>Sold or traded</option></select>`;
+  } else if (c.kind === 'back') {
     what = counted
       ? `Back in your Steam inventory · ${unit}${counted}. It's still on that unit's list, so it's counted twice until you confirm`
       : `Back in your Steam inventory · ${unit} lists ${number(c.unit_holds)} of these, so they may have come out of it (counted twice until you choose)`;
-    options = `<option value="take_out:${c.container_id}" selected>Came out of ${unit}: take it off that list</option>
-      <option value="keep">Bought or received: keep the list as it is</option>`;
+    priceLabel = 'Paid';
+    choice = `<select class="input" aria-label="Where ${esc(c.name)} came from">
+      <option value="take_out:${c.container_id}" selected>Came out of ${unit}: take it off that list</option>
+      <option value="keep">Bought or received: keep the list as it is</option></select>`;
+  } else {
+    what = 'New in your Steam inventory · what did you pay? Optional: it goes on the Profit &amp; Loss tab';
+    priceLabel = 'Paid';
+    priceShown = true;
+    choice = '<input type="hidden" value="bought"><span class="change-ask muted small">What you paid for each:</span>';
   }
   const guess = c.suggestion && !c.sure
-    ? ' <span class="badge" title="More than one answer fits the counts from Steam, so check this one">best guess</span>' : '';
-  return `<li class="change-row" data-change="${c.id}">
+    ? ' <span class="badge" title="A best guess from what your storage units hold - check it">best guess</span>' : '';
+  const paid = c.kind === 'left' && c.purchase_price !== null && c.purchase_price !== undefined
+    ? ` · you paid ${money(c.purchase_price, c.purchase_currency || currency)} each` : '';
+  return `<li class="change-row" data-change="${c.id}" data-kind="${c.kind}">
     ${thumbHtml({ icon: c.icon, category: 'other' })}
     <div class="change-main">
       <div><strong>${number(c.quantity)} × ${esc(c.name)}</strong>${guess}${meta ? ` <span class="muted small">${meta}</span>` : ''}</div>
-      <div class="muted small">${what} · noticed ${esc(relTime(c.detected_at))}</div>
+      <div class="muted small">${what}${paid} · noticed ${esc(relTime(c.detected_at))}</div>
     </div>
-    <div class="change-value num">${c.value !== null ? money(c.value) : ''}</div>
-    <select class="input" aria-label="What happened to ${esc(c.name)}">${options}</select>
-    <button type="button" class="btn btn-small btn-primary" data-act="change-apply">Confirm</button>
+    <div class="change-value num" title="What it's worth now, after fees">${c.value !== null ? money(c.value) : ''}</div>
+    ${choice}
+    <label class="change-price"${priceShown ? '' : ' hidden'}><span class="sr-only">${priceLabel} (each, ${esc(currency)})</span>
+      <input class="input" type="number" min="0" step="any" inputmode="decimal" placeholder="${priceLabel} each (${esc(currency)})"></label>
+    <button type="button" class="btn btn-small btn-primary" data-act="change-apply">${c.kind === 'new' ? 'Save' : 'Confirm'}</button>
+    <button type="button" class="note-close" data-act="change-dismiss" aria-label="Dismiss: don't ask about ${esc(c.name)} again"
+      title="Dismiss - don't ask about this again">×</button>
   </li>`;
 }
 
@@ -407,21 +396,6 @@ function saveDraft() {
   const rows = collectRows().filter((r) => r.name.trim());
   if (rows.length) store.set(draftKey(manager.id), rows);
   else store.remove(draftKey(manager.id));
-}
-
-/** In a container's window: the count CS2 shows for the unit, to compare with what's listed. */
-function managerCountHtml(c) {
-  const count = c.game_count ?? c.steam_count;
-  const diff = count === null || count === undefined ? null : count - c.contents_count;
-  let note = '<span class="muted small">Type the item count CS2 shows for this storage unit to spot anything not listed yet.</span>';
-  if (diff === 0) note = '<span class="ok-text small">✓ Matches what\'s listed</span>';
-  else if (diff > 0) note = `<span class="warn-text small">${number(diff)} not listed yet</span>`;
-  else if (diff < 0) note = `<span class="warn-text small">${number(-diff)} more listed than in game</span>`;
-  return `<div class="manager-count">
-    <label for="manager-count">In game</label>
-    <input class="input" id="manager-count" type="number" min="0" max="1000" step="1" value="${count ?? ''}" placeholder="items">
-    <button type="button" class="btn btn-small" data-act="save-count">Save</button> ${note}
-  </div>`;
 }
 
 /** Rows picked in "From an event": added to this list (filling empty rows) for you to check. */
@@ -510,7 +484,6 @@ function renderManager({ container: c, contents, currency, capacity }, candidate
     <div class="crate-stage manager-top">${crateSvg()}
       <div class="capacity-wrap">
         ${capacityHtml(used, capacity)}
-        ${managerCountHtml(c)}
         <div class="crate-summary" style="margin-top:12px">
           <div class="stat"><div class="stat-label">Stored value</div><div class="stat-value">${money(c.contents_value, currency)}</div></div>
           <div class="stat"><div class="stat-label">Container itself</div><div class="stat-value">${money(c.total_value, currency)}</div></div>
@@ -632,7 +605,6 @@ function setupManagerEvents() {
       } else if (act === 'add-submit') await submitAdd();
       else if (act === 'add-detailed') editItem(null, { container_id: manager.id });
       else if (act === 'add-event') openEventPicker(appendRows);
-      else if (act === 'save-count') await saveCount(manager.id, $('#manager-count').value);
       else if (act === 'move-in') {
         const id = $('#move-candidate').value;
         if (!id) return;
@@ -716,13 +688,16 @@ export async function removeItem(item) {
       ? `You have ${number(item.quantity)} × ${item.name}${where}. How many do you want to remove? This can't be undone.`
       : `Remove ${item.name}${where}? This can't be undone.`,
     quantity: many ? { max: item.quantity, value: item.quantity, label: 'Remove' } : null,
+    price: { label: `Sold ${many ? 'them' : 'it'}? What for, each (${state.currency})`, placeholder: 'optional - goes on Profit & Loss' },
     buttons: [{ label: 'Cancel', value: null }, { label: 'Remove', value: true, kind: 'danger' }],
   });
-  const confirmed = many ? answer && answer.value : answer;
-  if (!confirmed) return false;
+  if (!answer || !answer.value) return false;
   const quantity = many ? answer.quantity : item.quantity;
-  await api(`/items/${item.id}`, { method: 'DELETE', params: quantity < item.quantity ? { quantity } : {} });
-  toast(quantity < item.quantity ? `Removed ${number(quantity)} × ${item.name}` : `Removed ${item.name}`, 'ok');
+  const params = quantity < item.quantity ? { quantity } : {};
+  if (answer.price !== null) params.sold_price = answer.price;
+  await api(`/items/${item.id}`, { method: 'DELETE', params });
+  const sold = answer.price !== null ? ` - sold for ${money(answer.price)} each, added to Profit & Loss` : '';
+  toast(`${quantity < item.quantity ? `Removed ${number(quantity)} × ${item.name}` : `Removed ${item.name}`}${sold}`, 'ok');
   await afterChange();
   return true;
 }

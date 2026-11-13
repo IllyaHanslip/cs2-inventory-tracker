@@ -87,7 +87,7 @@ export const suggestNames = debounce(async (input, listId, kind) => {
  * With `quantity` ({max, value, label}) and/or `select` ({label, options, value}) fields,
  * resolves with {value, quantity, selected} instead.
  */
-export function confirmDialog({ title, message, buttons, quantity = null, select = null }) {
+export function confirmDialog({ title, message, buttons, quantity = null, select = null, price = null }) {
   const dialog = $('#confirm-dialog');
   $('#confirm-title').textContent = title;
   $('#confirm-message').textContent = message;
@@ -100,15 +100,17 @@ export function confirmDialog({ title, message, buttons, quantity = null, select
       <input class="input" id="confirm-qty" type="number" min="1" max="${quantity.max}" step="1" value="${quantity.value ?? quantity.max}">
       <span class="muted">of ${number(quantity.max)}</span>
       <button type="button" class="btn btn-small" id="confirm-all">All</button></span></label>` : '',
+    price ? `<label>${esc(price.label)}<input class="input" id="confirm-price" type="number" min="0" step="any"
+      inputmode="decimal" placeholder="${esc(price.placeholder || 'optional')}"></label>` : '',
   ].join('');
-  fields.hidden = !select && !quantity;
+  fields.hidden = !select && !quantity && !price;
   $('#confirm-all')?.addEventListener('click', () => { $('#confirm-qty').value = quantity.max; });
   const actions = $('#confirm-actions');
   actions.innerHTML = buttons.map((b, i) => {
     const cls = b.kind === 'danger' ? 'btn-danger' : b.kind === 'primary' ? 'btn-primary' : '';
     return `<button type="button" class="btn ${cls}" data-i="${i}">${esc(b.label)}</button>`;
   }).join('');
-  const withFields = Boolean(select || quantity);
+  const withFields = Boolean(select || quantity || price);
   return new Promise((resolve) => {
     let result = null;
     const onClick = (event) => {
@@ -125,7 +127,16 @@ export function confirmDialog({ title, message, buttons, quantity = null, select
             return;
           }
         }
-        result = { value, quantity: qty, selected: select ? $('#confirm-select').value : null };
+        let paid = null;
+        if (price && value !== null) {
+          const raw = $('#confirm-price').value.trim();
+          paid = raw === '' ? null : Number(raw);
+          if (paid !== null && !(paid >= 0)) {
+            showError(error, 'Enter a price, or leave it empty.');
+            return;
+          }
+        }
+        result = { value, quantity: qty, selected: select ? $('#confirm-select').value : null, price: paid };
       } else {
         result = value;
       }

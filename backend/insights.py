@@ -30,7 +30,7 @@ def _change_in_value(value: float, pct: float) -> float:
     return value - value / (1 + pct / 100) if pct > -100 else value
 
 
-def movers(frame: pd.DataFrame, window: str = "change_24h", limit: int = 10) -> dict[str, list[dict[str, Any]]]:
+def movers(frame: pd.DataFrame, window: str = "change_24h", limit: int = 30) -> dict[str, list[dict[str, Any]]]:
     """Items whose after-fee value rose or fell the most (in money) over ``window``.
     Copies across entries are added together."""
     empty = {"gainers": [], "losers": []}

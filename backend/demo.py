@@ -63,14 +63,63 @@ DEMO_CONTENTS = [
 # What the last two Steam syncs noticed, for the Containers tab to show (see moves.py): five
 # Revolution Cases came back into the Steam inventory yesterday, and today 15 Dreams & Nightmares
 # Cases, a P250 and 3 stickers left it. Each is suggested for the unit already holding the same
-# item (the P250: you choose). The count CS2 shows for "Long Holds", typed in after those moves,
-# is 78 - which is what it lists once the suggestions are confirmed (68 + 15 - 5).
-LONG_HOLDS_GAME_COUNT = 78
+# item (the P250: you choose, or say it was sold).
 DEMO_BACK = [("Revolution Case", 5, "Long Holds")]       # Steam items again, still on the unit's list
 DEMO_LEFT = [  # (market_hash_name, quantity, USD price for items not priced above, extras, suggested unit)
     ("Dreams & Nightmares Case", 15, None, {}, "Long Holds"),
     ("P250 | Asiimov (Field-Tested)", 1, 3.20, {"float_value": 0.2731, "paint_seed": 512}, None),
     ("Sticker | FaZe Clan (Holo) | Paris 2023", 3, None, {}, "Case Stash"),
+]
+# More everyday items (cases, capsules, stickers, cheaper skins), so the lists have plenty in them.
+# (source, market_hash_name, quantity, USD price, days held) - priced with their own random numbers.
+DEMO_MORE = [
+    ("steam", "Sticker | Natus Vincere (Holo) | Paris 2023", 2, 3.10, 1),
+    ("steam", "Sticker | G2 Esports | Paris 2023", 4, 0.18, 260),
+    ("steam", "Paris 2023 Legends Sticker Capsule", 25, 0.21, 300),
+    ("steam", "Paris 2023 Challengers Sticker Capsule", 18, 0.12, 300),
+    ("steam", "Copenhagen 2024 Legends Sticker Capsule", 12, 0.35, 200),
+    ("steam", "Snakebite Case", 10, 0.31, 340),
+    ("steam", "Gallery Case", 6, 0.95, 160),
+    ("steam", "Prisma 2 Case", 8, 0.62, 380),
+    ("steam", "Danger Zone Case", 4, 0.88, 390),
+    ("steam", "MP9 | Starlight Protector (Field-Tested)", 1, 5.40, 240),
+    ("steam", "Galil AR | Chromatic Aberration (Field-Tested)", 1, 2.10, 280),
+    ("steam", "FAMAS | Commemoration (Minimal Wear)", 1, 1.25, 310),
+    ("steam", "UMP-45 | Wild Child (Field-Tested)", 1, 0.95, 330),
+    ("steam", "P90 | Asiimov (Field-Tested)", 1, 6.80, 140),
+    ("steam", "Five-SeveN | Angry Mob (Minimal Wear)", 1, 1.90, 230),
+    ("steam", "MAC-10 | Neon Rider (Field-Tested)", 1, 3.10, 270),
+    ("steam", "Nova | Wild Six (Factory New)", 1, 0.65, 350),
+    ("steam", "Tec-9 | Fuel Injector (Field-Tested)", 1, 1.60, 290),
+    ("steam", "Revolver Case", 6, 0.45, 310),
+    ("steam", "Chroma 3 Case", 5, 0.95, 360),
+    ("steam", "Horizon Case", 7, 0.85, 330),
+    ("steam", "Sticker | FURIA | Paris 2023", 3, 0.15, 250),
+    ("steam", "Sticker | Monte | Paris 2023", 3, 0.12, 250),
+    ("steam", "Glock-18 | Bullet Queen (Field-Tested)", 1, 4.50, 200),
+    ("steam", "AWP | Chromatic Aberration (Field-Tested)", 1, 6.20, 180),
+    ("steam", "M4A1-S | Decimator (Field-Tested)", 1, 3.90, 220),
+    ("steam", "SSG 08 | Fever Dream (Field-Tested)", 1, 0.85, 300),
+    ("steam", "XM1014 | Entombed (Minimal Wear)", 1, 0.70, 320),
+]
+# Profit & Loss: what was bought and sold lately - some with prices, some without, as in real life.
+# (days ago, "in"/"out", market_hash_name, quantity, USD price each or None, USD paid each (sales) or None)
+DEMO_LEDGER = [
+    (95, "in", "Paris 2023 Legends Sticker Capsule", 25, 0.18, None),
+    (84, "out", "AWP | Atheris (Field-Tested)", 1, 4.10, 3.20),
+    (76, "in", "MP9 | Starlight Protector (Field-Tested)", 1, 4.90, None),
+    (68, "out", "Recoil Case", 5, 0.31, None),
+    (60, "in", "AK-47 | Redline (Field-Tested)", 1, None, None),
+    (52, "out", "Glock-18 | Vogue (Field-Tested)", 1, 2.40, 2.90),
+    (45, "in", "Snakebite Case", 10, 0.27, None),
+    (38, "out", "Paris 2023 Challengers Sticker Capsule", 12, None, 0.10),
+    (30, "in", "P90 | Asiimov (Field-Tested)", 1, 7.20, None),
+    (24, "out", "M4A4 | Desolate Space (Field-Tested)", 1, 8.70, 6.50),
+    (18, "in", "Sticker | Heroic (Holo) | Paris 2023", 3, 0.95, None),
+    (14, "out", "Sticker | Heroic (Holo) | Paris 2023", 3, 1.20, 0.95),
+    (12, "in", "P250 | Asiimov (Field-Tested)", 1, 3.00, None),
+    (6, "out", "Sticker | Liquid (Holo) | Paris 2023", 2, 1.45, 1.10),
+    (3, "out", "MAG-7 | Justice (Field-Tested)", 1, 1.85, None),
 ]
 BUFF_QUOTES = {"AK-47 | Redline (Field-Tested)": 0.83, "AWP | Asiimov (Battle-Scarred)": 0.81,
                "★ Karambit | Doppler (Factory New)": 0.85}
@@ -96,7 +145,16 @@ def _sticker_rate(price: float) -> float:
     return rmin + t * (rmax - rmin)
 
 
-def _seed_changes(conn, units: dict[str, int]) -> None:
+def _seed_ledger(conn, today: date) -> None:
+    from . import ledger
+
+    for days_ago, kind, name, qty, price, cost in DEMO_LEDGER:
+        when = (today - timedelta(days=days_ago)).isoformat() + "T15:00:00+00:00"
+        ledger.record(conn, kind, name, qty, price, "USD", cost=cost, cost_currency="USD", source="steam",
+                      happened_at=when)
+
+
+def _seed_changes(conn, units: dict[str, int], new_ids: list[int]) -> None:
     now = datetime.now(timezone.utc)
     stamp = lambda hours: (now - timedelta(hours=hours)).isoformat(timespec="seconds")  # noqa: E731
     rows = []
@@ -108,6 +166,9 @@ def _seed_changes(conn, units: dict[str, int]) -> None:
                    "stickers": []}
         rows.append(("left", stamp(2), name, qty, details, "store" if unit else None,
                      units[unit] if unit else None, None, None, 0))
+    for name, qty, _price, _days in [(n, q, p, d) for _s, n, q, p, d in DEMO_MORE if d <= 1]:
+        details = {"name": name, "category": categorize(name), "stickers": [], "steam_item_ids": new_ids}
+        rows.append(("new", stamp(2), name, qty, details, None, None, None, None, 0))
     conn.executemany(
         "INSERT INTO inventory_changes (kind, detected_at, market_hash_name, quantity, details, suggestion, container_id, "
         "unit_before, unit_after, sure) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -156,6 +217,10 @@ def seed() -> None:
             continue                                           # already priced as a demo item
         series[name] = _walk(price, HISTORY_DAYS, extra, 0.02)
         mults[name] = {m: extra.uniform(lo, hi) for m, (lo, hi, _) in market_ranges.items()}
+    more = random.Random(732)
+    for _source, name, _qty, price, _days in DEMO_MORE:
+        series[name] = _walk(price, HISTORY_DAYS, more, 0.012 if price > 50 else 0.02)
+        mults[name] = {m: more.uniform(lo, hi) for m, (lo, hi, _) in market_ranges.items()}
     val_mult = {name: sorted(m.values())[len(m) // 2] for name, m in mults.items()}
     low_mult = {name: min(m.values()) for name, m in mults.items()}  # stickers use the cheapest listing
 
@@ -226,9 +291,23 @@ def seed() -> None:
                     (DEMO_OWNER, f"demo-back-{index}-{copy}", name, name, categorize(name), created, created),
                 )
             held.append(("steam", name, qty, HISTORY_DAYS - 330, [], None))
-        conn.execute("UPDATE items SET game_count = ?, game_count_at = ? WHERE id = ?",
-                     (LONG_HOLDS_GAME_COUNT, db.utcnow_iso(), containers["Long Holds"]))
-        _seed_changes(conn, containers)
+
+        new_ids = []
+        for index, (source, name, qty, _price, days_held) in enumerate(DEMO_MORE):
+            created = (today - timedelta(days=days_held)).isoformat() + "T12:00:00+00:00"
+            for copy in range(qty):           # one Steam item per copy, as Steam lists them
+                item_id = conn.execute(
+                    "INSERT INTO items (source, steam_id, asset_id, market_hash_name, name, category, exterior, quantity, "
+                    "created_at, updated_at) VALUES ('steam', ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                    (DEMO_OWNER, f"demo-more-{index}-{copy}", name, name, categorize(name), exterior_from_name(name),
+                     created, created),
+                ).lastrowid
+                if days_held <= 1:
+                    new_ids.append(item_id)
+            # (Counted from long ago in the history, so the default chart compares like with like.)
+            held.append((source, name, qty, HISTORY_DAYS - max(days_held, 120), [], None))
+        _seed_changes(conn, containers, new_ids)
+        _seed_ledger(conn, today)
 
     # Portfolio history built from the same synthetic series.
     portfolio_rows = []

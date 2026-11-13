@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS item_images (
 -- or sold / traded) and items that came back out of a storage unit, waiting for you to confirm.
 CREATE TABLE IF NOT EXISTS inventory_changes (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind             TEXT NOT NULL CHECK (kind IN ('left', 'back')),
+    kind             TEXT NOT NULL,             -- left / back / new
     detected_at      TEXT NOT NULL,
     market_hash_name TEXT NOT NULL,
     quantity         INTEGER NOT NULL CHECK (quantity > 0),
@@ -178,6 +178,25 @@ CREATE TABLE IF NOT EXISTS inventory_changes (
     resolved_at      TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_changes_status ON inventory_changes (status);
+
+-- Profit & loss: items coming in (bought) and going out (sold), each with a price only if you
+-- gave one. Costs of sold items come from what you'd recorded paying for them.
+CREATE TABLE IF NOT EXISTS ledger (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind             TEXT NOT NULL CHECK (kind IN ('in', 'out')),
+    happened_at      TEXT NOT NULL,
+    market_hash_name TEXT NOT NULL,
+    name             TEXT NOT NULL,
+    quantity         INTEGER NOT NULL CHECK (quantity > 0),
+    price            REAL,               -- per item: what you paid (in) or got (out); NULL = not given
+    currency         TEXT,
+    cost             REAL,               -- out only: what you'd paid per item; NULL = not known
+    cost_currency    TEXT,
+    source           TEXT NOT NULL,      -- steam (a sync noticed it) / manual
+    details          TEXT,               -- JSON: the Steam items it became, the change it came from...
+    created_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_ledger_when ON ledger (happened_at);
 """
 
 
@@ -227,11 +246,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "steam_count" not in columns:
         # How many items Steam says a storage unit holds (if a public inventory ever includes it).
         conn.execute("ALTER TABLE items ADD COLUMN steam_count INTEGER")
-    if "game_count" not in columns:
-        # The item count CS2 shows for a storage unit, typed in by you (public inventories hide
-        # storage units), and when: moves confirmed after that keep it up to date.
-        conn.execute("ALTER TABLE items ADD COLUMN game_count INTEGER")
-        conn.execute("ALTER TABLE items ADD COLUMN game_count_at TEXT")
+    changes = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inventory_changes'").fetchone()
+    if changes and "IN ('left', 'back')" in changes[0]:
+        # The first version only allowed two kinds of change: rebuild it, keeping what's there.
+        cols = ("id, kind, detected_at, market_hash_name, quantity, details, suggestion, container_id, unit_before, "
+                "unit_after, sure, status, resolution, resolved_at")
+        conn.execute("ALTER TABLE inventory_changes RENAME TO inventory_changes_old")
+        conn.execute("DROP INDEX IF EXISTS ix_changes_status")
+        conn.executescript(SCHEMA)
+        conn.execute(f"INSERT INTO inventory_changes ({cols}) SELECT {cols} FROM inventory_changes_old")
+        conn.execute("DROP TABLE inventory_changes_old")
     snapshot_columns = {row[1] for row in conn.execute("PRAGMA table_info(portfolio_snapshots)")}
     if "basis" not in snapshot_columns:
         conn.execute("ALTER TABLE portfolio_snapshots ADD COLUMN market_value REAL")
