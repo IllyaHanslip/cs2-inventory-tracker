@@ -178,7 +178,8 @@ class Valuator:
                     "period": row["period"], "fetched_at": row["fetched_at"]}
             self.sales_by_source.setdefault(row["market_hash_name"], {})[row["source"]] = info
             current = out.get(row["market_hash_name"])
-            if current is None or (row["volume"] or 0) > (current["volume"] or 0):
+            # Real sales beat an estimate (CSFloat's reference price has no volume); more sales win.
+            if current is None or (row["volume"] or -1) > (current["volume"] or -1):
                 out[row["market_hash_name"]] = info
         return out
 
@@ -244,7 +245,7 @@ class Valuator:
         sold = self.trusted_sales.get(market_hash_name)
         if sold:
             info = self.sales.get(market_hash_name, {})
-            market = info.get("source") or "skinport"
+            market = (info.get("source") or "skinport").removesuffix("_ref")   # csfloat_ref -> sold on CSFloat
             return [{"market": market, "price": sold, "url": None, "basis": "sales",
                      "net": self.net(market, sold), "cash_out": self.cash_out(market)}]
         inner = sanity.sticker_inside(market_hash_name)

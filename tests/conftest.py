@@ -39,6 +39,8 @@ def app(tmp_path, monkeypatch):
         "BULK_CACHE_MINUTES": 30,
         "CSFLOAT_API_KEY": "",
         "ITEM_IMAGES": False,
+        "NOTIFICATIONS": False,
+        "ALERT_MOVE_PCT": 10.0,
     }
     for key, value in overrides.items():
         monkeypatch.setattr(Config, key, value)
@@ -51,6 +53,13 @@ def app(tmp_path, monkeypatch):
         raise AssertionError("tests must not touch the network")
 
     monkeypatch.setattr(SOURCES["skinport"].sales_client, "get", offline)
+
+    def csfloat_offline(*args, **kwargs):
+        from backend.http_client import ApiError
+
+        raise ApiError("CSFloat is offline in tests")
+
+    monkeypatch.setattr(SOURCES["csfloat"].client, "get", csfloat_offline)
 
     application = create_app()
     db.executemany(

@@ -15,6 +15,7 @@ class Quote:
     volume: int | None = None
     url: str | None = None
     sold_price: float | None = None   # median recent sale price, when the market reports one
+    reference_price: float | None = None   # the market's own estimate of what it sells for (CSFloat)
 
 
 class MarketSource:

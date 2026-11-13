@@ -50,10 +50,14 @@ class CSFloat(MarketSource):
         cents = listings[0].get("price")
         if cents is None:
             return None
+        # CSFloat's reference price: its estimate of what the item sells for, from recent sales across
+        # marketplaces. Used like recent sales (the price check, and a stand-in while Steam is quiet).
+        reference = (listings[0].get("reference") or {}).get("base_price")
         return Quote(
             market_hash_name,
             float(cents) / 100.0,
             "USD",
             None,
             f"https://csfloat.com/search?market_hash_name={quote(market_hash_name, safe='')}",
+            reference_price=float(reference) / 100.0 if isinstance(reference, (int, float)) and reference > 0 else None,
         )

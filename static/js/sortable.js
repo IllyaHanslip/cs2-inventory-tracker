@@ -89,14 +89,16 @@ export function applySort(table) {
       th.removeAttribute('aria-sort');
     }
   });
-  const body = table.tBodies[0];
-  const rows = [...body.rows];
-  rows.sort((a, b) => {
-    const base = Number(a.dataset.i ?? 0) - Number(b.dataset.i ?? 0);
-    if (index < 0) return base;
-    return compareValues(cellValue(a, index), cellValue(b, index), type, state.dir) || base;
-  });
-  rows.forEach((row) => body.appendChild(row));
+  // Each <tbody> sorts on its own (grouped tables use one per group), keeping its group header on top.
+  for (const body of table.tBodies) {
+    const rows = [...body.rows].filter((row) => !row.classList.contains('group-row'));
+    rows.sort((a, b) => {
+      const base = Number(a.dataset.i ?? 0) - Number(b.dataset.i ?? 0);
+      if (index < 0) return base;
+      return compareValues(cellValue(a, index), cellValue(b, index), type, state.dir) || base;
+    });
+    rows.forEach((row) => body.appendChild(row));
+  }
 }
 
 function activate(th) {

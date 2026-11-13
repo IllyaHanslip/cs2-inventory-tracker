@@ -180,3 +180,82 @@ export function dataTableHtml(labels, series, currency, sortId = 'chart-data') {
   return `<table class="data" data-sort-id="${esc(sortId)}"><thead><tr><th data-sort="text" data-key="date">Date</th>${head}</tr></thead>
     <tbody>${rows.join('')}</tbody></table>`;
 }
+
+// Portfolio-mix groups: fixed order, so each keeps its colour whatever else is shown. The same
+// validated dark-surface steps as the markets (checked with the dataviz validator: CVD dE >= 8.4
+// between neighbours, contrast >= 3:1). "Other" uses the violet slot, not grey: grey next to the
+// pink failed the colour-blindness check.
+export const MIX_COLORS = {
+  knives: PALETTE[0], skins: PALETTE[1], stickers: PALETTE[2], slabs: PALETTE[3], containers: PALETTE[4], other: PALETTE[5],
+};
+
+/** Stacked bars of how a total splits into groups over time. series: [{key, label, values}] */
+export function renderStackedBars(existing, canvas, { labels, series, currency }) {
+  if (existing) existing.destroy();
+  if (!chartsAvailable()) return null;
+  const surface = cssVar('--surface-1');
+  const totals = labels.map((_, i) => series.reduce((sum, s) => sum + (s.values[i] || 0), 0));
+  const tickFormat = axisFormatter(currency, Math.max(0, ...totals));
+  const datasets = series.map((s, index) => ({
+    label: s.label,
+    data: s.values,
+    backgroundColor: MIX_COLORS[s.key] || FOLD_COLOR,
+    borderColor: surface,                       // 2px surface gap between stacked segments
+    borderWidth: { top: 2 },
+    borderSkipped: 'bottom',
+    // Only the top of each stack is rounded; inner joins stay square.
+    borderRadius: index === series.length - 1 ? { topLeft: 4, topRight: 4 } : 0,
+    maxBarThickness: 28,
+    categoryPercentage: 0.9,
+    barPercentage: 1,
+  }));
+  return new window.Chart(canvas, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: 'index', intersect: false },
+      layout: { padding: { top: 4, right: 4 } },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          align: 'start',
+          labels: { color: cssVar('--text-secondary'), boxWidth: 12, boxHeight: 12, padding: 12, font: { size: 12 } },
+        },
+        tooltip: {
+          backgroundColor: cssVar('--surface-3'),
+          borderColor: 'rgba(255,255,255,0.12)',
+          borderWidth: 1,
+          titleColor: cssVar('--text-primary'),
+          bodyColor: cssVar('--text-secondary'),
+          footerColor: cssVar('--text-primary'),
+          padding: 10,
+          boxPadding: 4,
+          callbacks: {
+            title: (items) => longDate(items[0].label),
+            label: (ctx) => ` ${ctx.dataset.label}: ${money(ctx.parsed.y, currency)}`,
+            footer: (items) => `Total: ${money(totals[items[0].dataIndex], currency)}`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid: { display: false },
+          border: { color: cssVar('--axis') },
+          ticks: { color: cssVar('--text-muted'), maxRotation: 0, autoSkip: true, maxTicksLimit: 7,
+            callback: (value, index) => shortDate(labels[index]) },
+        },
+        y: {
+          stacked: true,
+          grid: { color: cssVar('--grid'), drawTicks: false },
+          border: { display: false },
+          ticks: { color: cssVar('--text-muted'), maxTicksLimit: 5, padding: 8, callback: (value) => tickFormat(value) },
+        },
+      },
+    },
+  });
+}

@@ -6,6 +6,7 @@ import * as dialogs from './dialogs.js';
 import { InventoryView } from './inventory.js';
 import { initLayout, updateStickyOffsets } from './layout.js';
 import { MarketsView } from './markets.js';
+import { PlannerView } from './planner.js';
 import { deltaHtml, esc, money, number, relTime, state, store, toast } from './util.js';
 
 const app = {
@@ -28,6 +29,7 @@ const app = {
     this.views.total = new InventoryView(document.getElementById('panel-total'), 'total', this);
     this.views.containers = new containers.ContainersView(document.getElementById('panel-containers'));
     this.views.markets = new MarketsView(document.getElementById('panel-markets'), this);
+    this.views.planner = new PlannerView(document.getElementById('panel-planner'));
     this.bindTopbar();
     this.bindTabs();
     initLayout();
@@ -92,6 +94,7 @@ const app = {
         if (selected && focus) tab.focus();
       }
       if (name === 'markets' && !this.views.markets.loaded) this.views.markets.reload();
+      if (name === 'planner' && !this.views.planner.loaded) this.views.planner.reload();
       // Charts drawn while hidden have no size - redraw on show.
       const view = this.views[name];
       if (view && view.chart) view.chart.resize();
@@ -159,6 +162,7 @@ const app = {
     dialogs.populateCurrencies();
     const work = [this.views.public.reload(), this.views.total.reload(), this.views.containers.reload()];
     if (this.views.markets.loaded) work.push(this.views.markets.reload());
+    if (this.views.planner.loaded) work.push(this.views.planner.reload());
     await Promise.all(work);
   },
 

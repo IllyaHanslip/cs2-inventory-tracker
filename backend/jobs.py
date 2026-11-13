@@ -261,9 +261,31 @@ def background_update() -> dict[str, Any]:
         images.backfill()
         job = Job("daily", "Daily update")
         result = daily_job(job)
+        _notify_update(result["complete"])
         return {"ran": "daily update", "complete": result["complete"], "result": result, "warnings": job.warnings}
     finally:
         marker.unlink(missing_ok=True)
+
+
+def _notify_update(complete: bool) -> None:
+    """A Windows notification saying what the background update found (or that it'll try again)."""
+    from . import insights, notify, portfolio
+    from .valuation import Valuator
+
+    try:
+        if complete:
+            valuator = Valuator()
+            frame = portfolio.build_frame(valuator, "total")
+            summary = portfolio.summarize(frame, valuator, "total")
+            title, lines = insights.notification_text(insights.update_summary(frame, summary, valuator.base))
+        else:
+            following = _now() + timedelta(hours=1)
+            when = f"at {following:%H}:00" if following.date() == _now().date() else "tomorrow"
+            title = "Couldn't update your CS2 inventory"
+            lines = [f"The markets couldn't be reached (is the internet down?). Trying again {when}."]
+        notify.toast(title, lines)
+    except Exception:  # noqa: BLE001 - a notification must never break the update
+        log.exception("Couldn't prepare the update notification")
 
 
 def find_pictures_now(timeout: float) -> None:
@@ -274,6 +296,9 @@ def find_pictures_now(timeout: float) -> None:
     def run() -> None:
         try:
             images.backfill()
+            from . import catalogue
+
+            catalogue.item_meta(allow_fetch=True)   # item details for grouping, if missing (weekly)
         except Exception:  # noqa: BLE001
             log.exception("Finding item pictures failed")
 

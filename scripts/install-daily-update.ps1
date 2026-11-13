@@ -17,6 +17,9 @@
       * while the dashboard is open it does nothing: the dashboard keeps itself up to date.
     If the PC is off all day, that day is skipped and charts carry the last value across.
     Every run is noted in data\update.log. One update downloads about 5-6 MB.
+    After each update a Windows notification says what it found (your total and today's change, the
+    biggest movers, items that now sell best elsewhere); clicking it opens the dashboard. It also sets
+    up the name/icon for those notifications and the link they open, under your account only.
 
         powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1
         powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1 -DryRun
@@ -39,6 +42,10 @@ param([string]$Time = '12:00', [switch]$Remove, [switch]$DryRun)
 $ErrorActionPreference = 'Stop'
 $taskName = 'CS2 Inventory Intelligence - daily update'
 $root = Split-Path -Parent $PSScriptRoot
+# Notifications: a name and icon for them, and a "cs2-inventory:" link that opens the dashboard when
+# you click one. Both are stored under your own account (HKEY_CURRENT_USER) only.
+$appKey = 'HKCU:\Software\Classes\AppUserModelId\CS2InventoryIntelligence'
+$linkKey = 'HKCU:\Software\Classes\cs2-inventory'
 
 if ($Remove) {
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
@@ -46,6 +53,9 @@ if ($Remove) {
         Write-Host "Removed the scheduled task '$taskName'."
     } else {
         Write-Host "There is no scheduled task called '$taskName'."
+    }
+    foreach ($key in $appKey, $linkKey) {
+        if (Test-Path $key) { Remove-Item -Path $key -Recurse -Force }
     }
     return
 }
@@ -82,6 +92,16 @@ if ($DryRun) {
     return
 }
 
+New-Item -Path $appKey -Force | Out-Null
+Set-ItemProperty -Path $appKey -Name DisplayName -Value 'CS2 Inventory Intelligence'
+$icon = Join-Path $root 'static\icon.ico'
+if (Test-Path $icon) { Set-ItemProperty -Path $appKey -Name IconUri -Value $icon }
+New-Item -Path "$linkKey\shell\open\command" -Force | Out-Null
+Set-Item -Path $linkKey -Value 'URL:CS2 Inventory Intelligence'
+Set-ItemProperty -Path $linkKey -Name 'URL Protocol' -Value ''
+$launcher = Join-Path $root 'launch.bat'
+Set-Item -Path "$linkKey\shell\open\command" -Value "`"$env:WINDIR\System32\cmd.exe`" /c `"`"$launcher`"`""
+
 $register = @{ TaskName = $taskName; Action = $action; Settings = $settings; Principal = $principal;
                Description = $description; Force = $true }
 try {
@@ -97,4 +117,6 @@ try {
 Write-Host "Done. The daily update now runs once a day $when."
 Write-Host "If it can't reach the markets, it tries again every hour until midnight."
 Write-Host "Opening the dashboard updates straight away at any time, and then counts as that day's update."
+Write-Host "After each background update a notification says what it found; click it to open the dashboard."
+Write-Host "(Turn notifications off with NOTIFICATIONS=false in .env.)"
 Write-Host "Each run is noted in $(Join-Path $root 'data\update.log'). To undo: add -Remove to the same command."

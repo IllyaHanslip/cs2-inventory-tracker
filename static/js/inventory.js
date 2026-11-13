@@ -1,7 +1,7 @@
 // Inventory tab (used for both "Public Inventory" and "Total Portfolio").
 
 import { api } from './api.js';
-import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
+import { MIX_COLORS, chartsAvailable, dataTableHtml, renderLineChart, renderStackedBars } from './charts.js';
 import * as containers from './containers.js';
 import * as dialogs from './dialogs.js';
 import { MarketFilter, availableMarkets, bestToSell, bulkNote, noCashLabel, sellHtml } from './market-filter.js';
@@ -22,16 +22,19 @@ export class InventoryView {
     this.refs = {};
     root.querySelectorAll('[data-ref]').forEach((el) => { this.refs[el.dataset.ref] = el; });
     this.state = {
-      categories: [], q: '', stack: true, range: '90d', showContents: true,
+      categories: [], q: '', stack: true, range: '90d', showContents: true, groupBy: '', groupOnly: '',
+      moverWindow: 'change_24h',
       ...store.get(`view:${scope}`, {}),
     };
+    this.collapsed = new Set();
+    this.mixChart = null;
     this.state.q = '';
     this.setup();
   }
 
   persist() {
-    const { categories, stack, range, showContents } = this.state;
-    store.set(`view:${this.scope}`, { categories, stack, range, showContents });
+    const { categories, stack, range, showContents, groupBy, groupOnly, moverWindow } = this.state;
+    store.set(`view:${this.scope}`, { categories, stack, range, showContents, groupBy, groupOnly, moverWindow });
   }
 
   /** Stored items are listed alongside everything else (Total tab, toggle on). */
@@ -91,11 +94,48 @@ export class InventoryView {
       this.state.range = button.dataset.range;
       this.persist();
       this.loadChart();
+      this.loadInsights();
     });
+
+    // Group by anything: event, collection, type, weapon, rarity, wear or container.
+    r.groupBy.value = this.state.groupBy;
+    r.groupBy.addEventListener('change', () => {
+      this.state.groupBy = r.groupBy.value;
+      this.state.groupOnly = '';
+      this.collapsed.clear();
+      this.persist();
+      this.renderTable();
+    });
+    r.groupOnly.addEventListener('change', () => {
+      this.state.groupOnly = r.groupOnly.value;
+      this.persist();
+      this.renderTable();
+    });
+    r.moverWindow.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-window]');
+      if (!button) return;
+      this.state.moverWindow = button.dataset.window;
+      this.persist();
+      this.renderInsights();
+    });
+    r.movers.addEventListener('click', (event) => {
+      const row = event.target.closest('[data-name]');
+      const item = row && this.items.find((i) => i.market_hash_name === row.dataset.name);
+      if (item) dialogs.openItem(item);
+    });
+    r.mixDetails.addEventListener('toggle', () => this.renderMixTable());
 
     r.tableDetails.addEventListener('toggle', () => this.renderChartTable());
 
-    r.tbody.addEventListener('click', (event) => {
+    r.table.addEventListener('click', (event) => {
+      const toggle = event.target.closest('.group-toggle');
+      if (toggle) {
+        const key = toggle.dataset.group;
+        if (this.collapsed.has(key)) this.collapsed.delete(key); else this.collapsed.add(key);
+        toggle.closest('tbody').classList.toggle('collapsed', this.collapsed.has(key));
+        toggle.setAttribute('aria-expanded', String(!this.collapsed.has(key)));
+        return;
+      }
       const row = event.target.closest('tr.row');
       if (!row) return;
       const item = this.rowItems.get(row.dataset.key);
@@ -107,7 +147,7 @@ export class InventoryView {
       else if (action === 'remove') run(containers.removeItem(item));
       else if (!event.target.closest('a')) dialogs.openItem(item);
     });
-    r.tbody.addEventListener('keydown', (event) => {
+    r.table.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' || !event.target.matches('tr.row')) return;
       const item = this.rowItems.get(event.target.dataset.key);
       if (item) dialogs.openItem(item);
@@ -125,7 +165,7 @@ export class InventoryView {
   }
 
   async reload() {
-    await Promise.all([this.load(), this.loadChart()]);
+    await Promise.all([this.load(), this.loadChart(), this.loadInsights()]);
   }
 
   async load() {
@@ -187,15 +227,72 @@ export class InventoryView {
     return out;
   }
 
+  /** The group an item falls in, for the "Group by" choice. */
+  groupOf(item) {
+    const by = this.state.groupBy;
+    if (by === 'exterior') return item.exterior || 'No wear';
+    if (by === 'container') return item.container_name || (item.is_container ? 'Containers' : 'Not in a container');
+    const value = item.tags?.[by];
+    return value || { event: 'No event', collection: 'No collection', weapon: 'Not a weapon', rarity: 'Unknown rarity' }[by] || 'Other';
+  }
+
+  /** Value as shown in the Value column (a container's own value when its contents are listed too). */
+  shownValue(item) {
+    return item.is_container && item.contents_count && this.listingContents ? item.total_value : item.display_value;
+  }
+
   renderTable() {
     const r = this.refs;
-    const rows = this.rows();
+    let rows = this.rows();
     this.rowItems = new Map();
-    r.tbody.innerHTML = rows.map((item, i) => {
-      const key = `${item.id}-${i}`;
-      this.rowItems.set(key, item);
-      return this.rowHtml(item, key, i);
-    }).join('');
+    r.table.querySelectorAll('tbody.group-body').forEach((body) => body.remove());
+    const by = this.state.groupBy;
+    r.groupOnly.hidden = !by;
+    if (!by) {
+      r.tbody.hidden = false;
+      r.tbody.innerHTML = rows.map((item, i) => {
+        const key = `${item.id}-${i}`;
+        this.rowItems.set(key, item);
+        return this.rowHtml(item, key, i);
+      }).join('');
+    } else {
+      // One <tbody> per group (most valuable first), each with a collapsible header and subtotal.
+      const groups = new Map();
+      rows.forEach((item) => {
+        const name = this.groupOf(item);
+        if (!groups.has(name)) groups.set(name, { name, items: [], value: 0, count: 0 });
+        const group = groups.get(name);
+        group.items.push(item);
+        group.value += this.shownValue(item) || 0;
+        group.count += item.quantity;
+      });
+      const ordered = [...groups.values()].sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
+      const only = ordered.some((g) => g.name === this.state.groupOnly) ? this.state.groupOnly : '';
+      r.groupOnly.innerHTML = `<option value="">All groups (${number(ordered.length)})</option>${ordered.map((g) => `<option value="${esc(g.name)}"${g.name === only ? ' selected' : ''}>${esc(g.name)}</option>`).join('')}`;
+      r.tbody.hidden = true;
+      r.tbody.innerHTML = '';
+      const columns = r.table.querySelectorAll('thead th').length;
+      let index = 0;
+      rows = [];
+      for (const group of ordered) {
+        if (only && group.name !== only) continue;
+        const body = document.createElement('tbody');
+        body.className = `group-body${this.collapsed.has(group.name) ? ' collapsed' : ''}`;
+        body.innerHTML = `<tr class="group-row"><th colspan="${columns}" scope="rowgroup">
+            <button type="button" class="group-toggle" data-group="${esc(group.name)}" aria-expanded="${!this.collapsed.has(group.name)}">
+              <span class="caret" aria-hidden="true">▾</span> ${esc(group.name)}</button>
+            <span class="group-meta">${number(group.count)} item${group.count === 1 ? '' : 's'} · <strong>${money(group.value)}</strong></span>
+          </th></tr>${group.items.map((item) => {
+            const key = `${item.id}-${index}`;
+            this.rowItems.set(key, item);
+            const html = this.rowHtml(item, key, index);
+            index += 1;
+            return html;
+          }).join('')}`;
+        r.table.appendChild(body);
+        rows.push(...group.items);
+      }
+    }
     applySort(r.table);
 
     if (rows.length) {
@@ -283,6 +380,62 @@ export class InventoryView {
       <td class="num" data-v="${v(item.change_7w)}">${deltaHtml(item.change_7w)}</td>
       <td><div class="row-actions-cell">${actions.join('')}</div></td>
     </tr>`;
+  }
+
+  async loadInsights() {
+    try {
+      this.insights = await api('/insights', { params: { scope: this.scope, range: this.state.range } });
+      this.renderInsights();
+    } catch (error) {
+      this.refs.movers.innerHTML = `<p class="muted small">${esc(error.message)}</p>`;
+    }
+  }
+
+  renderInsights() {
+    const r = this.refs;
+    const data = this.insights;
+    if (!data) return;
+    const cur = data.currency;
+    r.moverWindow.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.window === this.state.moverWindow));
+
+    // Biggest movers: ranked lists, the money change carries an arrow and sign (never colour alone).
+    const moved = data.movers?.[this.state.moverWindow] || { gainers: [], losers: [] };
+    const list = (rows, title) => `<div class="mover-list"><h3>${title}</h3>${rows.length ? `<ol>${rows.map((m) => `
+        <li><button type="button" class="mover" data-name="${esc(m.name)}" title="Show details">
+          ${thumbHtml({ icon: m.icon, category: 'other' })}
+          <span class="mover-name">${esc(m.name)}${m.quantity > 1 ? ` <span class="muted small">×${number(m.quantity)}</span>` : ''}</span>
+          <span class="mover-change">${deltaHtml(m.pct)}<span class="sub">${m.change > 0 ? '+' : '−'}${money(Math.abs(m.change), cur)}</span></span>
+        </button></li>`).join('')}</ol>` : '<p class="muted small">Nothing yet - changes appear once the app has a few days of prices.</p>'}</div>`;
+    r.movers.innerHTML = list(moved.gainers, 'Up the most') + list(moved.losers, 'Down the most');
+
+    // Portfolio mix now: a thin segmented bar above a list that carries the names and figures.
+    const groups = data.mix?.groups || [];
+    const total = groups.reduce((sum, g) => sum + g.value, 0);
+    r.mixNow.innerHTML = total > 0 ? `
+      <div class="mix-bar" role="img" aria-label="${esc(groups.map((g) => `${g.label} ${Math.round((g.value / total) * 100)}%`).join(', '))}">
+        ${groups.map((g) => `<span style="flex-grow:${g.value};background:${MIX_COLORS[g.key]}" title="${esc(g.label)}: ${esc(money(g.value, cur))}"></span>`).join('')}
+      </div>
+      <ul class="mix-list">${groups.map((g) => `<li><span class="swatch" style="background:${MIX_COLORS[g.key]}"></span>
+        <span class="mix-label">${esc(g.label)}</span><span class="num">${money(g.value, cur)}</span>
+        <span class="num muted">${((g.value / total) * 100).toFixed(1)}%</span></li>`).join('')}</ul>`
+      : '<p class="muted small">No priced items yet.</p>';
+
+    // The split over time: stacked bars, with a table view.
+    const hist = data.mix?.history || { labels: [], series: [] };
+    const has = hist.labels.length > 0;
+    r.mixEmpty.hidden = has && chartsAvailable();
+    r.mixEmpty.textContent = chartsAvailable() ? 'History builds up as daily prices are saved.' : 'Charts could not load.';
+    r.mixNote.hidden = !has;
+    this.mixChart = renderStackedBars(this.mixChart, r.mixChart, { labels: hist.labels, series: hist.series, currency: cur });
+    this.renderMixTable();
+  }
+
+  renderMixTable() {
+    const r = this.refs;
+    const hist = this.insights?.mix?.history;
+    if (!r.mixDetails.open || !hist) return;
+    r.mixTable.innerHTML = dataTableHtml(hist.labels, hist.series, this.insights.currency, `mix-${this.scope}`);
+    applySortWithin(r.mixTable);
   }
 
   renderHeadline() {

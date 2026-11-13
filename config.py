@@ -107,6 +107,9 @@ class Config:
     AUTO_SYNC_STEAM = _bool("AUTO_SYNC_STEAM", True)
     # The daily update (Steam re-sync, prices, snapshot) never runs before this time of day (24-hour, local).
     DAILY_UPDATE_TIME = _env("DAILY_UPDATE_TIME", "12:00")
+    # A Windows notification after each background update, saying what it found.
+    NOTIFICATIONS = _bool("NOTIFICATIONS", True)
+    ALERT_MOVE_PCT = max(1.0, _float("ALERT_MOVE_PCT", 10))   # an item moving this much (%) is worth a mention
 
     # --- Misc -----------------------------------------------------------------
     STEAM_IMAGE_CDN = _env("STEAM_IMAGE_CDN", "https://community.steamstatic.com/economy/image/")

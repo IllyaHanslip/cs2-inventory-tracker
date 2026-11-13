@@ -9,7 +9,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from config import Config
 
-from . import catalogue, comparables, db, evidence, fees, history, images, portfolio, settings, storage
+from . import catalogue, comparables, db, evidence, fees, history, images, insights, planner, portfolio, settings, storage
 from .classify import APPLIED_KINDS, CATEGORIES, EXTERIORS, applied_hash_name, categorize, exterior_from_float, exterior_from_name
 from .currency import FxConverter, last_source
 from .http_client import ApiError, RateLimitError
@@ -592,6 +592,31 @@ def _range() -> str:
 def portfolio_history():
     prefs = settings.get_all()
     return jsonify(history.portfolio_history(_scope(), _range(), FxConverter.load(), prefs["base_currency"]))
+
+
+@bp.get("/sell-plan")
+def sell_plan():
+    """Which items to sell, how many and where, to raise ``target`` (after fees). ``wallet=1`` also
+    counts Steam Wallet sales; ``keep`` is a comma-separated list of item ids never to sell."""
+    target = _number(request.args.get("target"), "Target", 0, 10_000_000) or 0.0
+    keep = {int(x) for x in (request.args.get("keep") or "").split(",") if x.strip().isdigit()}
+    return jsonify(planner.plan(target, Valuator(), include_wallet=request.args.get("wallet") == "1", keep=keep))
+
+
+@bp.get("/insights")
+def portfolio_insights():
+    """Biggest movers (24 hours and 7 weeks) and the portfolio mix, now and over time."""
+    valuator = Valuator()
+    frame = portfolio.build_frame(valuator, _scope())
+    if frame.empty:
+        return jsonify(currency=valuator.base, movers={}, mix={"groups": [], "history": {"labels": [], "series": []}})
+
+    def with_icons(group):
+        return [{**{k: v for k, v in m.items() if k != "icon_url"}, "icon": images.icon_src(m["icon_url"])} for m in group]
+
+    movers = {window: {side: with_icons(rows) for side, rows in insights.movers(frame, window).items()}
+              for window in ("change_24h", "change_7w")}
+    return jsonify(currency=valuator.base, movers=movers, mix=insights.mix(frame, valuator, _range()))
 
 
 @bp.get("/history/item")

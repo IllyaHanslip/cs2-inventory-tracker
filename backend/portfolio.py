@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from . import db, evidence, history, images, sanity
+from . import catalogue, db, evidence, history, images, sanity, tags
 from .classify import CATEGORIES
 from .currency import last_source
 from .markets import MANUAL_PREFIX, SOURCES, market_label
@@ -175,7 +175,8 @@ def build_frame(valuator, scope: str = "total", with_changes: bool = True) -> pd
         info = valuator.sales.get(name)
         if not info:
             return None
-        return {**info, "label": market_label(info["source"]), "trusted": name in valuator.trusted_sales}
+        label = "CSFloat reference price" if info["source"] == "csfloat_ref" else market_label(info["source"])
+        return {**info, "label": label, "trusted": name in valuator.trusted_sales}
 
     def inside_info(name: str) -> dict | None:
         inner = sanity.sticker_inside(name)
@@ -193,6 +194,10 @@ def build_frame(valuator, scope: str = "total", with_changes: bool = True) -> pd
     items["set_aside"] = items["market_hash_name"].map(
         lambda n: [{**a, "label": market_label(a["market"])} for a in valuator.set_aside.get(n, [])])
     items["sticker_inside"] = items["market_hash_name"].map(inside_info)
+    # Event, collection, type, weapon and rarity, for grouping (no download here: see catalogue.item_meta).
+    meta = catalogue.item_meta(allow_fetch=False)
+    items["tags"] = [tags.item_tags(name, category, rarity, meta)
+                     for name, category, rarity in zip(items["market_hash_name"], items["category"], items["rarity"])]
 
     # Selling everything at once: a market only buys so many of one item. Each takes about what it
     # sells in BULK_SELL_DAYS (Valuator.bulk_plan), so 531 capsules aren't all counted at the price
@@ -345,7 +350,7 @@ ITEM_FIELDS = (
     "quotes", "payout_unit", "payout_market", "payout_value", "stickers", "created_at", "updated_at",
     "market_unit_value", "market_total_value", "sell_market", "sell_quotes",
     "value_basis", "sales", "set_aside", "sticker_inside", "bulk_plan", "bulk_units", "bulk_limited",
-    "realised_unit",
+    "realised_unit", "tags",
 )
 
 
@@ -364,6 +369,7 @@ def to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         item["sell_quotes"] = rec.get("sell_quotes") or []
         item["set_aside"] = rec.get("set_aside") or []
         item["bulk_plan"] = rec.get("bulk_plan") or []
+        item["tags"] = rec.get("tags") or {}
         item["bulk_limited"] = bool(rec.get("bulk_limited"))
         icon = rec.get("icon_url")
         item["icon"] = images.icon_src(icon)

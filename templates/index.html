@@ -46,6 +46,7 @@
     <button role="tab" id="tab-total" aria-controls="panel-total" data-tab="total">Total Portfolio</button>
     <button role="tab" id="tab-containers" aria-controls="panel-containers" data-tab="containers">Containers <span class="tab-count" id="tab-containers-count"></span></button>
     <button role="tab" id="tab-markets" aria-controls="panel-markets" data-tab="markets">Market Comparison &amp; Best Deals</button>
+    <button role="tab" id="tab-planner" aria-controls="panel-planner" data-tab="planner">Sell Planner</button>
   </nav>
 
   <section class="tab-panel" id="panel-public" role="tabpanel" aria-labelledby="tab-public" hidden></section>
@@ -64,6 +65,39 @@
     <div class="sort-bar" id="ct-sort" role="group" aria-label="Sort containers"></div>
     <div class="container-grid" id="ct-grid"></div>
   </section>
+  <section class="tab-panel" id="panel-planner" role="tabpanel" aria-labelledby="tab-planner" hidden>
+    <div class="card planner-card">
+      <div class="card-head"><h2 class="card-title">How much do you want to raise?</h2>
+        <span class="muted small">cash in hand, after selling and withdrawal fees</span></div>
+      <div class="planner-controls">
+        <input type="range" id="plan-slider" min="0" max="100" step="1" value="0" aria-label="Amount to raise">
+        <label class="plan-amount"><span id="plan-currency"></span>
+          <input type="number" class="input" id="plan-target" min="0" step="1" value="0" aria-label="Amount to raise, typed"></label>
+        <label class="check"><input type="checkbox" id="plan-wallet"> Count Steam Wallet sales</label>
+      </div>
+      <p class="hint" id="plan-limit"></p>
+    </div>
+    <div class="stats" id="plan-stats"></div>
+    <div class="card table-card">
+      <div class="table-scroll"><table class="data" id="plan-table" data-sort-id="sell-plan">
+        <thead><tr><th class="col-icon"><span class="sr-only">Image</span></th>
+          <th data-sort="text" data-key="name">Item</th><th class="num" data-sort="num" data-key="units">Sell</th>
+          <th data-sort="text" data-key="where">Where</th><th class="num" data-sort="num" data-key="proceeds">You get</th>
+          <th data-sort="text" data-key="why">Why this one</th><th><span class="sr-only">Keep</span></th></tr></thead>
+        <tbody></tbody></table></div>
+      <div class="empty" id="plan-empty">Move the slider or type an amount to see what to sell.</div>
+    </div>
+    <div class="card" id="plan-markets-card" hidden>
+      <div class="card-head"><h2 class="card-title">Listing guide by market</h2></div>
+      <div id="plan-markets"></div>
+    </div>
+    <p class="hint" id="plan-kept"></p>
+    <p class="hint">How it chooses: items whose after-fee price has been falling go first and rising ones are kept;
+      copies from big stacks go before one-offs; expensive single items are kept longest. Each market is used best price
+      first, but only for about as many as it sells in 30 days, so later copies may go elsewhere for less. Cheap
+      copies cover the last few pounds rather than selling something expensive that overshoots.</p>
+  </section>
+
   <section class="tab-panel" id="panel-markets" role="tabpanel" aria-labelledby="tab-markets" hidden>
     <div class="markets-top">
       <div class="card">
@@ -145,10 +179,49 @@
     </details>
   </div>
 
+  <div class="insight-grid">
+    <div class="card insight-card">
+      <div class="card-head">
+        <h2 class="card-title">Biggest movers <span class="muted small">after fees</span></h2>
+        <div class="segmented" data-ref="moverWindow" role="group" aria-label="Movers over">
+          <button type="button" data-window="change_24h">24 hours</button>
+          <button type="button" data-window="change_7w">7 weeks</button>
+        </div>
+      </div>
+      <div class="movers" data-ref="movers"><p class="muted small">Loading…</p></div>
+    </div>
+    <div class="card insight-card">
+      <div class="card-head"><h2 class="card-title">Portfolio mix <span class="muted small">after fees</span></h2></div>
+      <div data-ref="mixNow"></div>
+      <div class="chart-wrap small">
+        <canvas data-ref="mixChart" role="img" aria-label="How the portfolio's value splits into groups over time"></canvas>
+        <div class="chart-empty" data-ref="mixEmpty" hidden></div>
+      </div>
+      <p class="hint" data-ref="mixNote" hidden>Estimated from each day's prices for what you hold now.</p>
+      <details class="data-details" data-ref="mixDetails">
+        <summary>Show data table</summary>
+        <div class="data-table-wrap" data-ref="mixTable"></div>
+      </details>
+    </div>
+  </div>
+
   <div class="toolbar">
     <input type="search" class="input search" data-ref="search" placeholder="Search items, stickers, name tags…" aria-label="Search">
     <div class="chips" data-ref="chips" role="group" aria-label="Filter by category"></div>
     <div class="toolbar-right">
+      <label class="group-by">Group by
+        <select class="input select-small" data-ref="groupBy">
+          <option value="">Nothing</option>
+          <option value="event">Event</option>
+          <option value="collection">Collection</option>
+          <option value="type">Type</option>
+          <option value="weapon">Weapon</option>
+          <option value="rarity">Rarity</option>
+          <option value="exterior">Wear</option>
+          <option value="container">Container</option>
+        </select>
+      </label>
+      <select class="input select-small" data-ref="groupOnly" aria-label="Show one group" hidden></select>
       <label class="check"><input type="checkbox" data-ref="stack"> Stack duplicates</label>
       <label class="check" data-ref="contentsLabel"><input type="checkbox" data-ref="contents"> Show stored items</label>
       <a class="btn" data-ref="export" download>Export CSV</a>

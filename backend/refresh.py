@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 from config import Config
 
-from . import cache, comparables, currency, db, history, images, settings
+from . import cache, catalogue, comparables, currency, db, history, images, settings
 from .classify import applied_hash_name
 from .sanity import sticker_inside
 from .http_client import ApiError, AuthError, CancelledError, RateLimitError
@@ -54,6 +54,11 @@ def save_quotes(market: str, quotes: Iterable[Quote], *, manual: bool = False) -
     sold = [q for q in quotes if q.sold_price]
     if sold:
         save_sales(market, [(q.market_hash_name, q.sold_price, q.currency, q.volume, "recent") for q in sold])
+    # A market's own price estimate is kept apart from real sales (it says nothing about selling speed).
+    estimated = [q for q in quotes if q.reference_price]
+    if estimated:
+        save_sales(f"{market}_ref", [(q.market_hash_name, q.reference_price, q.currency, None, "reference")
+                                     for q in estimated])
 
 
 def price_from_saved_lists(names) -> int:
@@ -293,6 +298,7 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
 
     job.update(message="Finding pictures for items added by hand…")
     images.backfill()
+    catalogue.item_meta(allow_fetch=True)   # item details for grouping (weekly, ~250 KB)
 
     # Older snapshots that counted an unrealistic listing are corrected now that sales are known.
     history.remove_outlier_inflation()

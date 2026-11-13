@@ -31,6 +31,7 @@ SCHEMA_CACHE_SECONDS = 7 * 24 * 3600
 RETRY_AFTER_FAILURE = 600     # seconds before trying the download again after it failed
 NAMES_KEY = "item_catalogue"
 STICKERS_KEY = "csfloat_sticker_names"
+META_KEY = "item_meta"   # weapon types, each skin's rarity and collections, agent names (for tags.py)
 PRICE_LISTS = ("skinport", "marketcsgo", "waxpeer")
 
 WEARS = (("Factory New", 0.0, 0.07), ("Minimal Wear", 0.07, 0.15), ("Field-Tested", 0.15, 0.38),
@@ -41,6 +42,7 @@ _PHASE_RE = re.compile(r"^((?:Gamma )?Doppler) \([^)]*\)$")
 _fetch_lock = threading.Lock()
 _retry_at = 0.0
 _memo: tuple[Any, list[tuple[str, str]]] | None = None
+_meta_memo: tuple[Any, dict] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +78,23 @@ def build_names(schema: dict) -> list[str]:
     return sorted(names)
 
 
+def meta_from(schema: dict) -> dict[str, Any]:
+    """The item details used for grouping: weapon -> type, "weapon|finish" -> [rarity, collections],
+    and agent names."""
+    collections = {c["key"]: c["name"] for c in schema.get("collections", []) if c.get("key")}
+    rarities = {r["value"]: r["name"] for r in schema.get("rarities", []) if "value" in r}
+    weapons: dict[str, str] = {}
+    paints: dict[str, list] = {}
+    for weapon in schema.get("weapons", {}).values():
+        weapons[weapon["name"]] = weapon.get("type")
+        for paint in weapon.get("paints", {}).values():
+            finish = _PHASE_RE.sub(r"\1", paint["name"])
+            paints.setdefault(f"{weapon['name']}|{finish}", [
+                rarities.get(paint.get("rarity")), [collections.get(k, k) for k in paint.get("collections", [])]])
+    agents = sorted(v["market_hash_name"] for v in schema.get("agents", {}).values() if v.get("market_hash_name"))
+    return {"weapons": weapons, "paints": paints, "agents": agents}
+
+
 def sticker_names_from(schema: dict) -> dict[str, str]:
     """CSFloat sticker/patch ID (as text) -> market name."""
     return {str(k): v["market_hash_name"] for k, v in schema["stickers"].items() if v.get("market_hash_name")}
@@ -90,13 +109,15 @@ def refresh_schema() -> dict[str, Any]:
         schema = resp.json()
         stickers = sticker_names_from(schema)
         names = build_names(schema)
+        meta = meta_from(schema)
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
         raise ApiError(f"CSFloat's item list had an unexpected format ({exc})") from None
     if not names or not stickers:
         raise ApiError("CSFloat's item list was empty")
     cache.set_cached(STICKERS_KEY, stickers)
     cache.set_cached(NAMES_KEY, names)
-    return {"stickers": stickers, "names": names}
+    cache.set_cached(META_KEY, meta)
+    return {"stickers": stickers, "names": names, "meta": meta}
 
 
 def catalogue_names(allow_fetch: bool = True) -> list[str]:
@@ -115,6 +136,30 @@ def catalogue_names(allow_fetch: bool = True) -> list[str]:
             _retry_at = time.monotonic() + RETRY_AFTER_FAILURE
             log.warning("Couldn't download the item list for autocomplete (%s)", exc)
             return cache.get_stale(NAMES_KEY) or []
+
+
+def item_meta(allow_fetch: bool = True) -> dict[str, Any]:
+    """The item details for grouping (see meta_from): cached for a week, downloaded with the item list."""
+    global _retry_at, _meta_memo
+    mark = db.query_one("SELECT fetched_at FROM api_cache WHERE cache_key = ?", (META_KEY,))
+    version = (str(Config.DATABASE_PATH), mark["fetched_at"] if mark else None)
+    fresh = mark is not None and time.time() - mark["fetched_at"] <= SCHEMA_CACHE_SECONDS
+    if not fresh and allow_fetch and time.monotonic() >= _retry_at:
+        with _fetch_lock:
+            if cache.get_cached(META_KEY, SCHEMA_CACHE_SECONDS) is None:
+                try:
+                    refresh_schema()
+                except ApiError as exc:
+                    _retry_at = time.monotonic() + RETRY_AFTER_FAILURE
+                    log.warning("Couldn't download the item list for grouping (%s)", exc)
+        mark = db.query_one("SELECT fetched_at FROM api_cache WHERE cache_key = ?", (META_KEY,))
+        version = (str(Config.DATABASE_PATH), mark["fetched_at"] if mark else None)
+    if _meta_memo is not None and _meta_memo[0] == version:
+        return _meta_memo[1]
+    meta = cache.get_stale(META_KEY) or {"weapons": {}, "paints": {}, "agents": []}
+    meta["agents"] = set(meta.get("agents") or [])
+    _meta_memo = (version, meta)
+    return meta
 
 
 # ---------------------------------------------------------------------------

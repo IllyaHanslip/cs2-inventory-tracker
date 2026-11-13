@@ -193,3 +193,18 @@ def test_new_items_priced_at_once_from_saved_lists(client):
                 headers=HEADERS)
     slab = item(client, SLAB)
     assert slab["value_basis"] == "sales" and slab["sticker_inside"]["value"] is not None
+
+
+def test_csfloat_reference_price_fills_in(client):
+    """CSFloat's reference price is stored apart from real sales and sells on CSFloat itself."""
+    refresh.save_quotes("csfloat", [Quote(SLAB, 900.0, "USD", None, None, reference_price=0.6)])
+    row = db.query_one("SELECT * FROM sale_prices WHERE market_hash_name = ?", (SLAB,))
+    assert row["source"] == "csfloat_ref" and row["period"] == "reference"
+    client.post("/api/items", json={"market_hash_name": SLAB}, headers=HEADERS)
+    found = item(client, SLAB)
+    assert found["set_aside"][0]["market"] == "csfloat"              # $900 against a 60c reference
+    assert found["value_basis"] == "sales" and found["sell_market"] == "csfloat"
+    assert found["unit_value"] == pytest.approx(0.6 * 0.98 * 0.975)
+    assert found["sales"]["label"] == "CSFloat reference price"
+    from backend.valuation import Valuator
+    assert Valuator().sell_capacity(SLAB, "csfloat") is None          # says nothing about selling speed

@@ -276,7 +276,9 @@ function sellingSteps(item, wholeItem) {
     item.quantity > 1 ? kv(item.bulk_limited ? `Selling all ${number(item.quantity)} (estimate)` : `You receive (× ${number(item.quantity)})`,
       money(item.total_value), 'total') : '',
     item.bulk_limited ? kv('Sold on', `<span class="muted small">${esc(bulkText(item.bulk_plan))} (see Prices across markets)</span>`) : '',
-    item.sales ? kv('Recent sales', `${money(item.sales.price)} <span class="muted small">${esc(item.sales.label)} · median of
+    item.sales && item.sales.period === 'reference'
+      ? kv('Typical sale price', `${money(item.sales.price)} <span class="muted small">${esc(item.sales.label)} (its estimate from recent sales across markets)</span>`)
+      : item.sales ? kv('Recent sales', `${money(item.sales.price)} <span class="muted small">${esc(item.sales.label)} · median of
       ${number(item.sales.volume || 0)} sale${item.sales.volume === 1 ? '' : 's'} (${esc(item.sales.period || 'recent')})</span>`) : '',
     item.set_aside.length ? kv('Ignored', `<span class="warn-text small">${number(item.set_aside.length)} unrealistic
       listing${item.set_aside.length === 1 ? '' : 's'} - see Prices across markets</span>`) : '',
