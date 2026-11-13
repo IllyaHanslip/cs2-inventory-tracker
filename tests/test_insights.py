@@ -131,3 +131,15 @@ def test_planner_uses_cheap_copies_to_finish(client):
     add(client, "Recoil Case", 30, 0.40)
     plan = planner.plan(3.0, Valuator())
     assert [s["name"] for s in plan["steps"]] == ["Recoil Case"] and plan["steps"][0]["units"] < 30
+
+
+def test_planner_reasons_share_one_shape():
+    """Each reason: what it is, then any figures in brackets."""
+    step = {"held": 40, "units": 5, "markets": [{"capacity": 34, "units": 5, "label": "Skinport"}]}
+    reasons = lambda weekly: planner._reasons({**step, "weekly": weekly})  # noqa: E731
+    assert reasons(-5.2) == ["falling (about 5% a week)", "you have 40 (selling 5)", "sells steadily on Skinport"]
+    assert reasons(0.4)[0] == "steady (under 1% a week)"
+    assert reasons(1.6)[0] == "rising slowly (about 2% a week)"
+    assert reasons(4.0)[:2] == ["rising (about 4% a week)", "sold only to reach the target"]
+    assert reasons(None)[0] == "trend unknown (not enough price history)"
+    assert planner._reasons({"weekly": None, "held": 60, "units": 60, "markets": []})[1] == "you have 60"

@@ -2,7 +2,13 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.0.1
+### What's new in v1.0.2
+
+- The Sell Planner's "why this one" reasons all share one shape - what it is, then any figures in
+  brackets: "falling (about 5% a week)", "steady (under 1% a week)", "you have 40 (selling 5)".
+  Every item now says how its price is trending, including steady ones.
+
+### v1.0.1
 
 - The value above each chart and the chart's last point are now always the same number, even
   just after you add or remove items.

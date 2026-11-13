@@ -150,19 +150,23 @@ def plan(target: float, valuator, *, include_wallet: bool = False, keep: set[int
 
 
 def _reasons(step: dict[str, Any]) -> list[str]:
+    """Short reasons, one per line, all shaped the same way: what it is, then any figures in brackets."""
     reasons = []
     weekly = step["weekly"]
-    if weekly is not None and weekly <= -1:
-        reasons.append(f"falling about {abs(weekly):.0f}% a week")
-    elif weekly is not None and weekly >= 3:
-        reasons.append(f"rising about {weekly:.0f}% a week, sold only to reach the target")
-    elif weekly is not None and weekly >= 1:
+    if weekly is None:
+        reasons.append("trend unknown (not enough price history)")
+    elif weekly <= -1:
+        reasons.append(f"falling (about {abs(weekly):.0f}% a week)")
+    elif weekly < 1:
+        reasons.append("steady (under 1% a week)")
+    elif weekly < 3:
         reasons.append(f"rising slowly (about {weekly:.0f}% a week)")
+    else:
+        reasons.append(f"rising (about {weekly:.0f}% a week)")
+        reasons.append("sold only to reach the target")
     if step["held"] >= 5:
-        reasons.append(f"you have {step['held']:,}" + (f", selling {step['units']:,}" if step["units"] < step["held"] else ""))
+        reasons.append(f"you have {step['held']:,}" + (f" (selling {step['units']:,})" if step["units"] < step["held"] else ""))
     quick = [m for m in step["markets"] if m["capacity"] and m["capacity"] >= m["units"]]
     if quick:
         reasons.append(f"sells steadily on {quick[0]['label']}")
-    if not reasons:
-        reasons.append("lowest keep score among what's left")
     return reasons
