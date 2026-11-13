@@ -2,7 +2,18 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.0.2
+### What's new in v1.1.0
+
+- **Storage moves noticed for you.** After a Steam sync, items that left your inventory or came back
+  are matched with each storage unit's item count from Steam ("15 Clutch Cases left and Long Holds
+  went from 63 to 79: put them in it?"). Review them on the Containers tab and confirm one by one or
+  all at once; items that left while no unit grew are flagged as sold or traded. Each storage unit's
+  card shows whether its list matches Steam's count. Your notes and prices on an item travel with it.
+- **"+ From an event…"** in a container: pick a tournament, narrow it to stickers, slabs or capsules
+  and Gold, Holo…, and type how many you have of each. They go onto the container's list by their
+  exact names for you to check before adding.
+
+### v1.0.2
 
 - The Sell Planner's "why this one" reasons all share one shape - what it is, then any figures in
   brackets: "falling (about 5% a week)", "steady (under 1% a week)", "you have 40 (selling 5)".

@@ -6,7 +6,8 @@ import { confirmDialog, editItem, openItem, suggestNames } from './dialogs.js';
 import { markClean, protect, protectForm } from './guard.js';
 import { MarketFilter, availableMarkets, bestToSell, bulkNote, sellHtml } from './market-filter.js';
 import { applySortWithin, cycleSort, getSort, sortItems } from './sortable.js';
-import { esc, money, number, state, store, thumbHtml, toast } from './util.js';
+import { openEventPicker } from './event-picker.js';
+import { esc, floatText, money, number, relTime, state, store, thumbHtml, toast } from './util.js';
 
 let app;
 const manager = { id: null, data: null, pendingRows: null, filter: null };
@@ -100,20 +101,84 @@ export class ContainersView {
       else if (card && act === 'delete') deleteContainer(card);
       else if (card && act === 'view-item') viewStoredItem(card.id, button.dataset.item);
     });
+    root.querySelector('#ct-changes').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-act]');
+      if (!button || button.disabled) return;
+      const run = (work) => {
+        button.disabled = true;
+        work.catch((error) => { toast(error.message, 'error'); button.disabled = false; });
+      };
+      if (button.dataset.act === 'change-apply') run(this.applyChange(button.closest('[data-change]')));
+      else if (button.dataset.act === 'changes-all') run(this.applyAllChanges());
+    });
   }
 
   async reload() {
     const grid = this.root.querySelector('#ct-grid');
     grid.classList.add('is-loading');
     try {
-      this.data = await api('/containers');
+      [this.data, this.changes] = await Promise.all([api('/containers'), api('/changes')]);
       this.loaded = true;
       this.render();
+      this.renderChanges();
     } catch (error) {
       toast(error.message, 'error');
     } finally {
       grid.classList.remove('is-loading');
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Changes noticed by Steam syncs: items that went into or came out of a storage unit
+  // -------------------------------------------------------------------------
+  renderChanges() {
+    const box = this.root.querySelector('#ct-changes');
+    const { changes = [], units = [] } = this.changes || {};
+    const alert = document.getElementById('tab-containers-alert');
+    alert.hidden = !changes.length;
+    alert.textContent = changes.length ? String(changes.length) : '';
+    alert.title = changes.length ? `${changes.length} change${changes.length === 1 ? '' : 's'} from Steam to review` : '';
+    if (!changes.length) { box.innerHTML = ''; return; }
+    const suggested = changes.filter((c) => c.suggestion).length;
+    const all = suggested === changes.length ? 'all ' : `${number(suggested)} `;
+    box.innerHTML = `<section class="card changes-card" aria-labelledby="changes-title">
+      <div class="card-head">
+        <div>
+          <h3 id="changes-title">Changes from your Steam syncs <span class="badge badge-warn">${number(changes.length)} to review</span></h3>
+          <p class="muted small">Moving items into or out of a storage unit happens in the game, where this app can't look.
+            After each Steam sync it compares what left your inventory or came back with each storage unit's item count
+            from Steam, and suggests what happened. Nothing changes until you confirm.</p>
+        </div>
+        ${suggested ? `<button type="button" class="btn btn-primary" data-act="changes-all">Confirm ${all}suggestion${suggested === 1 ? '' : 's'}</button>` : ''}
+      </div>
+      <ul class="change-list">${changes.map((c) => changeRowHtml(c, units)).join('')}</ul>
+    </section>`;
+  }
+
+  async applyChange(row) {
+    const choice = row.querySelector('select').value;
+    if (!choice) throw new Error('Choose what happened first.');
+    const [action, unit] = choice.split(':');
+    const change = this.changes.changes.find((c) => String(c.id) === row.dataset.change);
+    await api(`/changes/${row.dataset.change}`, { method: 'POST', body: { action, container_id: unit ? Number(unit) : null } });
+    const label = this.changes.units.find((u) => String(u.id) === unit)?.label;
+    const what = `${number(change.quantity)} × ${change.name}`;
+    const messages = {
+      store: `Added ${what} to ${label}.`,
+      take_out: `Took ${what} off the list for ${label}.`,
+      gone: `${what}: marked as sold or traded.`,
+      keep: `${what}: left as it is.`,
+    };
+    toast(messages[action], 'ok');
+    await afterChange();
+  }
+
+  async applyAllChanges() {
+    const result = await api('/changes/apply-suggested', { method: 'POST' });
+    const left = result.pending ? ` ${number(result.pending)} still need you to choose.` : '';
+    toast(`Confirmed ${number(result.applied)} change${result.applied === 1 ? '' : 's'}.${left}`, 'ok');
+    for (const problem of result.problems || []) toast(problem, 'warn', 9000);
+    await afterChange();
   }
 
   render() {
@@ -161,6 +226,7 @@ export class ContainersView {
             <span class="badge">${esc(c.name)}</span></div></div>
       </header>
       ${capacityHtml(c.contents_count, c.capacity)}
+      ${steamCountHtml(c)}
       <div class="card-value"><span class="value">${money(c.contents_value, currency)}</span><span class="muted small">stored value</span></div>
       ${preview}
       <footer>
@@ -170,6 +236,59 @@ export class ContainersView {
       </footer>
     </article>`;
   }
+}
+
+/** Steam's own count of what's in a storage unit, next to what's listed here. */
+function steamCountHtml(c) {
+  if (c.steam_count === null || c.steam_count === undefined) return '';
+  const diff = c.steam_count - c.contents_count;
+  if (!diff) {
+    return `<p class="steam-count ok" title="Steam's item count for this storage unit matches the items listed here">✓ Matches Steam (${number(c.steam_count)} items)</p>`;
+  }
+  const gap = diff > 0 ? `${number(diff)} not listed yet` : `${number(-diff)} more listed than Steam has`;
+  return `<p class="steam-count off" title="Steam's own count for this storage unit">Steam says ${number(c.steam_count)} items · ${number(c.contents_count)} listed here (${gap})</p>`;
+}
+
+function changeRowHtml(c, units) {
+  const meta = [
+    c.exterior ? esc(c.exterior) : '',
+    c.float_value !== null ? `Float ${esc(floatText(c.float_value))}` : '',
+    c.name_tag ? `“${esc(c.name_tag)}”` : '',
+    c.stickers.length ? `${c.stickers.length} sticker${c.stickers.length > 1 ? 's' : ''}` : '',
+  ].filter(Boolean).join(' · ');
+  const unit = c.container_label ? esc(c.container_label) : '';
+  const moved = c.unit_after - c.unit_before;
+  const counted = c.unit_before !== null && c.unit_after !== null
+    ? ` went from ${number(c.unit_before)} to ${number(c.unit_after)} items in Steam (${moved >= 0 ? '+' : '−'}${number(Math.abs(moved))})` : '';
+  let what;
+  let options;
+  if (c.kind === 'left') {
+    if (c.suggestion === 'store') what = `Left your Steam inventory · ${unit}${counted}`;
+    else if (c.suggestion === 'gone') what = 'Left your Steam inventory · no storage unit grew to match, so probably sold or traded';
+    else what = "Left your Steam inventory · Steam didn't say how many items your storage units hold, so choose where it went";
+    let current = '';
+    if (c.suggestion === 'store') current = `store:${c.container_id}`;
+    else if (c.suggestion === 'gone') current = 'gone';
+    options = `${current ? '' : '<option value="">Where did it go?</option>'}
+      ${units.map((u) => `<option value="store:${u.id}"${current === `store:${u.id}` ? ' selected' : ''}>Put in ${esc(u.label)}</option>`).join('')}
+      <option value="gone"${current === 'gone' ? ' selected' : ''}>Sold or traded (stop tracking it)</option>`;
+  } else {
+    what = `Back in your Steam inventory · ${unit}${counted}. It's still on that unit's list, so it's counted twice until you confirm`;
+    options = `<option value="take_out:${c.container_id}" selected>Came out of ${unit}: take it off that list</option>
+      <option value="keep">Bought or received: keep the list as it is</option>`;
+  }
+  const guess = c.suggestion && !c.sure
+    ? ' <span class="badge" title="More than one answer fits the counts from Steam, so check this one">best guess</span>' : '';
+  return `<li class="change-row" data-change="${c.id}">
+    ${thumbHtml({ icon: c.icon, category: 'other' })}
+    <div class="change-main">
+      <div><strong>${number(c.quantity)} × ${esc(c.name)}</strong>${guess}${meta ? ` <span class="muted small">${meta}</span>` : ''}</div>
+      <div class="muted small">${what} · noticed ${esc(relTime(c.detected_at))}</div>
+    </div>
+    <div class="change-value num">${c.value !== null ? money(c.value) : ''}</div>
+    <select class="input" aria-label="What happened to ${esc(c.name)}">${options}</select>
+    <button type="button" class="btn btn-small btn-primary" data-act="change-apply">Confirm</button>
+  </li>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +358,33 @@ function saveDraft() {
   const rows = collectRows().filter((r) => r.name.trim());
   if (rows.length) store.set(draftKey(manager.id), rows);
   else store.remove(draftKey(manager.id));
+}
+
+/** Rows picked in "From an event": added to this list (filling empty rows) for you to check. */
+function appendRows(picked) {
+  const wrap = $('#add-rows');
+  if (!wrap || !picked.length) return;
+  const rowFor = (name) => [...wrap.querySelectorAll('.add-row')]
+    .find((r) => r.querySelector('[data-f="name"]').value.trim() === name);
+  let merged = 0;
+  for (const row of picked) {
+    const existing = rowFor(row.name);
+    if (existing) {
+      // Already on the list: add to its quantity rather than listing it twice.
+      const qty = existing.querySelector('[data-f="qty"]');
+      qty.value = String((Number(qty.value) || 0) + row.qty);
+      merged += 1;
+    } else {
+      wrap.querySelectorAll('.add-row').forEach((r) => { if (!r.querySelector('[data-f="name"]').value.trim()) r.remove(); });
+      wrap.insertAdjacentHTML('beforeend', addRowHtml({ name: row.name, qty: row.qty }));
+    }
+  }
+  if (!wrap.querySelector('.add-row')) wrap.insertAdjacentHTML('beforeend', addRowHtml());
+  saveDraft();
+  const total = picked.reduce((sum, r) => sum + r.qty, 0);
+  const onto = merged ? ` (${number(merged)} added onto rows already there)` : '';
+  toast(`${number(picked.length)} item${picked.length === 1 ? '' : 's'}, ${number(total)} in all, put on the list${onto}. Check them, then press Add to container.`, 'ok', 9000);
+  wrap.querySelector('.add-row:last-child [data-f="qty"]')?.focus();
 }
 
 function clearRows() {
@@ -314,6 +460,7 @@ function renderManager({ container: c, contents, currency, capacity }, candidate
       <div id="add-rows">${rows.map(addRowHtml).join('')}</div>
       <div class="add-actions">
         <button type="button" class="btn btn-small" data-act="add-row">+ Another item</button>
+        <button type="button" class="btn btn-small" data-act="add-event" title="Pick several items from one tournament at once: they're added to this list for you to check">+ From an event…</button>
         <button type="button" class="link-btn small" data-act="add-detailed">Add one with stickers, float or a name tag…</button>
         <span class="spacer"></span>
         <span class="muted small">${number(room)} spaces left</span>
@@ -419,6 +566,7 @@ function setupManagerEvents() {
         $('#add-rows [data-f="name"]')?.focus();
       } else if (act === 'add-submit') await submitAdd();
       else if (act === 'add-detailed') editItem(null, { container_id: manager.id });
+      else if (act === 'add-event') openEventPicker(appendRows);
       else if (act === 'move-in') {
         const id = $('#move-candidate').value;
         if (!id) return;

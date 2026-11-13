@@ -158,6 +158,26 @@ CREATE TABLE IF NOT EXISTS item_images (
     icon             TEXT NOT NULL,   -- Steam image hash, or a full Steam CDN URL
     source           TEXT NOT NULL    -- catalogue file it came from
 );
+
+-- What a Steam sync noticed: items that left your Steam inventory (moved into a storage unit,
+-- or sold / traded) and items that came back out of a storage unit, waiting for you to confirm.
+CREATE TABLE IF NOT EXISTS inventory_changes (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind             TEXT NOT NULL CHECK (kind IN ('left', 'back')),
+    detected_at      TEXT NOT NULL,
+    market_hash_name TEXT NOT NULL,
+    quantity         INTEGER NOT NULL CHECK (quantity > 0),
+    details          TEXT NOT NULL,            -- JSON: the item as it was (wear, float, stickers, your notes...)
+    suggestion       TEXT,                     -- 'store', 'gone', 'take_out', or NULL when unsure
+    container_id     INTEGER,                  -- the storage unit it probably went into / came out of
+    unit_before      INTEGER,                  -- that unit's item count from Steam, before and after
+    unit_after       INTEGER,
+    sure             INTEGER NOT NULL DEFAULT 0,
+    status           TEXT NOT NULL DEFAULT 'pending',   -- pending / applied / dismissed
+    resolution       TEXT,                     -- what you chose: store / gone / take_out / keep / returned
+    resolved_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_changes_status ON inventory_changes (status);
 """
 
 
@@ -204,6 +224,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "UPDATE items SET is_storage = 1 WHERE category = 'container' AND (market_hash_name = 'Storage Unit' "
             "OR id IN (SELECT container_id FROM items WHERE container_id IS NOT NULL))"
         )
+    if "steam_count" not in columns:
+        # How many items Steam says a storage unit holds (from its public inventory description).
+        conn.execute("ALTER TABLE items ADD COLUMN steam_count INTEGER")
     snapshot_columns = {row[1] for row in conn.execute("PRAGMA table_info(portfolio_snapshots)")}
     if "basis" not in snapshot_columns:
         conn.execute("ALTER TABLE portfolio_snapshots ADD COLUMN market_value REAL")

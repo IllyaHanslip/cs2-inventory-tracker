@@ -45,7 +45,14 @@ def event_of(name: str, category: str) -> str | None:
     if category == "weapon_skin":
         return None
     match = _EVENT.search(name)
-    return match.group(1).strip() if match else None
+    if not match:
+        return None
+    # "ESL One Cologne 2015" and "Cologne 2015" are the same event: keep the city and the year
+    # ("DreamHack Winter 2014" stays "DreamHack 2014", as its stickers are named).
+    words = match.group(1).split()
+    if "DreamHack" in words:
+        return f"DreamHack {words[-1]}"
+    return " ".join(words[-2:]) if len(words) > 2 else " ".join(words)
 
 
 def type_of(name: str, category: str, weapon: str | None, weapon_type: str | None, agents: set[str]) -> str:

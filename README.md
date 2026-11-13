@@ -29,6 +29,13 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
   European Central Bank rates, so comparisons are fair.
 - **Containers and storage units**: Steam can't see inside Storage Units, so record what each one holds (up to
   1,000 items), with stacking, partial moves and removals, and a capacity bar.
+- **Storage moves noticed for you**: after a Steam sync, items that left your inventory or came back are
+  matched with each storage unit's item count from Steam: "15 Clutch Cases left and *Long Holds* went from 63
+  to 79: put them in it?" You confirm each one (or all at once); items that left while no unit grew are flagged
+  as sold or traded. Each unit's card shows whether its list matches Steam's count.
+- **Quick entry from an event**: pick a tournament (Budapest 2025…), narrow it to stickers, slabs or capsules
+  and Gold, Holo…, and type how many you have of each. They go onto the container's list by their exact
+  names for you to check before adding, alongside anything you typed yourself.
 - **Realistic sticker values**: applied stickers add only a share of their loose price. Where the stickers are
   worth more than the skin, the item is valued from real CSFloat listings and sales of the same skin with the
   same stickers.
@@ -229,7 +236,9 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
   and the pictures themselves load from Steam like synced items. Set `ITEM_IMAGES=false` to turn this off.
 - **Marketplaces that need your login** (such as BUFF163) are deliberately not automated. Add their prices
   as manual quotes.
-- **Storage Unit contents** aren't visible in public Steam inventories, so they're entered by hand.
+- **Storage Unit contents** aren't visible in public Steam inventories, so they're entered by hand (or
+  confirmed from what a sync noticed moving). Steam does show each unit's item count, which is how moves are
+  matched up: only the public inventory is read, never your account.
 - **Estimates only**: fees change, sticker values are estimates, and none of this is financial advice.
 
 ## Privacy and security

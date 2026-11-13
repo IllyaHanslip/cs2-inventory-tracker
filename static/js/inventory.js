@@ -202,6 +202,7 @@ export class InventoryView {
       });
       this.items = data.items;
       this.summary = data.summary;
+      r.export.href = exportUrl(this.scope);   // the live demo's file depends on what you've confirmed
       for (const el of r.chips.querySelectorAll('[data-count]')) {
         const n = data.counts[el.dataset.count] || 0;
         el.textContent = n ? String(n) : '';

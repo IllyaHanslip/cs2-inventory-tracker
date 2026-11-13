@@ -13,7 +13,7 @@ from typing import Any
 
 from config import Config
 
-from . import db, settings
+from . import db, moves, settings
 from .classify import categorize
 from .http_client import ApiError, RateLimitedClient
 
@@ -32,6 +32,9 @@ _VANITY_RE = re.compile(r"steamcommunity\.com/id/([^/?#]+)")
 _APPLIED_TITLE_RE = re.compile(r'title="(Sticker|Patch|Charm):\s*([^"]+)"', re.IGNORECASE)
 _APPLIED_TEXT_RE = re.compile(r"<br>\s*(Sticker|Patch|Charm)s?:\s*(.+?)\s*</center>", re.IGNORECASE | re.DOTALL)
 _NAME_TAG_RE = re.compile(r"Name Tag:\s*''(.*)''")
+# A storage unit's description includes how many items it holds, e.g. "Number of Items: 84".
+_UNIT_COUNT_RE = re.compile(r"Number of Items:\s*([\d,.\s]+)", re.IGNORECASE)
+_TAG_RE = re.compile(r"<[^>]+>")
 _PLACEHOLDER_RE = re.compile(r"%[a-z_]+(?::\d+)?%")
 
 _inventory_client = RateLimitedClient(
@@ -116,6 +119,18 @@ def _parse_properties(props: list[dict] | None) -> tuple[float | None, int | Non
     return float_value, seed
 
 
+def parse_unit_count(descriptions: list[dict] | None) -> int | None:
+    """How many items a storage unit holds, when Steam includes it in the description."""
+    for desc in descriptions or []:
+        text = _TAG_RE.sub(" ", html.unescape(str(desc.get("value") or "")))
+        match = _UNIT_COUNT_RE.search(text)
+        if match:
+            digits = re.sub(r"\D", "", match.group(1))
+            if digits:
+                return int(digits)
+    return None
+
+
 def _parse_name_tag(warnings: list[str] | None) -> str | None:
     for warning in warnings or []:
         match = _NAME_TAG_RE.search(warning)
@@ -164,6 +179,7 @@ def parse_asset(asset: dict, desc: dict | None, props: list | None, steam_id: st
         "tradable": int(bool(desc.get("tradable"))),
         "marketable": int(bool(desc.get("marketable"))),
         "stickers": parse_applied(desc.get("descriptions")),
+        "storage_count": parse_unit_count(desc.get("descriptions")) if market_hash_name == "Storage Unit" else None,
     }
 
 
@@ -255,11 +271,7 @@ def sync_inventory(steam_id_input: str, job=None) -> dict[str, Any]:
     with db.connect() as conn:
         existing = {
             row["asset_id"]: dict(row)
-            for row in conn.execute(
-                "SELECT id, asset_id, market_hash_name, name_tag, category FROM items "
-                "WHERE source = 'steam' AND steam_id = ?",
-                (steam_id,),
-            )
+            for row in conn.execute("SELECT * FROM items WHERE source = 'steam' AND steam_id = ?", (steam_id,))
         }
         if not fetched and existing:
             # Steam occasionally answers with an empty inventory during outages.
@@ -269,32 +281,47 @@ def sync_inventory(steam_id_input: str, job=None) -> dict[str, Any]:
             )
         seen: set[str] = set()
         new_containers: list[dict] = []
+        fetched_ids = {item["asset_id"] for item in fetched}
+        arrived: list[dict] = []         # new in Steam since the last sync
+        units: list[dict] = []           # storage units, with Steam's item count before and after
 
         for item in fetched:
             seen.add(item["asset_id"])
             values = [item[col] for col in _STEAM_COLUMNS]
             is_storage = int(item["market_hash_name"] == "Storage Unit")
             row = existing.get(item["asset_id"])
+            count = item.get("storage_count")
             if row:
                 item_id = row["id"]
                 assignments = ", ".join(f"{col} = ?" for col in _STEAM_COLUMNS)
                 conn.execute(
                     f"UPDATE items SET {assignments}, float_value = COALESCE(?, float_value), "
-                    "paint_seed = COALESCE(?, paint_seed), is_storage = MAX(is_storage, ?), updated_at = ? WHERE id = ?",
-                    (*values, item["float_value"], item["paint_seed"], is_storage, now, item_id),
+                    "paint_seed = COALESCE(?, paint_seed), is_storage = MAX(is_storage, ?), steam_count = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (*values, item["float_value"], item["paint_seed"], is_storage, count, now, item_id),
                 )
                 updated += 1
             else:
                 cols = ("source", "steam_id", "asset_id", *_STEAM_COLUMNS, "float_value", "paint_seed",
-                        "is_storage", "created_at", "updated_at")
+                        "is_storage", "steam_count", "created_at", "updated_at")
                 item_id = conn.execute(
                     f"INSERT INTO items ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                     ("steam", steam_id, item["asset_id"], *values, item["float_value"], item["paint_seed"],
-                     is_storage, now, now),
+                     is_storage, count, now, now),
                 ).lastrowid
                 added += 1
                 if item["category"] == "container":
                     new_containers.append({"id": item_id, **item})
+                if not is_storage:
+                    arrived.append({"id": item_id, **item})
+            if is_storage:
+                # Its count before: this unit's last sync, or the unit it replaced (Steam can re-issue
+                # a storage unit's asset id), matched by name tag.
+                before = row if row else next(
+                    (r for a, r in existing.items() if a not in fetched_ids and r["is_storage"]
+                     and r["market_hash_name"] == item["market_hash_name"] and r["name_tag"] == item["name_tag"]), None)
+                units.append({"id": item_id, "name_tag": item["name_tag"], "after": count,
+                              "before": before["steam_count"] if before else None})
 
             conn.execute("DELETE FROM item_stickers WHERE item_id = ?", (item_id,))
             conn.executemany(
@@ -302,9 +329,14 @@ def sync_inventory(steam_id_input: str, job=None) -> dict[str, Any]:
                 [(item_id, s["slot"], s["kind"], s["name"], s["scrape"]) for s in item["stickers"]],
             )
 
+        left: list[dict] = []            # gone from Steam since the last sync
         for asset_id, row in existing.items():
             if asset_id in seen:
                 continue
+            if not row["is_storage"]:
+                row["stickers"] = [dict(r) for r in conn.execute(
+                    "SELECT slot, kind, name, scrape FROM item_stickers WHERE item_id = ? ORDER BY slot", (row["id"],))]
+                left.append(row)
             contents = conn.execute("SELECT COUNT(*) FROM items WHERE container_id = ?", (row["id"],)).fetchone()[0]
             if contents:
                 # Steam can re-issue asset IDs (e.g. when a storage unit changes). Move any
@@ -322,6 +354,10 @@ def sync_inventory(steam_id_input: str, job=None) -> dict[str, Any]:
             conn.execute("DELETE FROM items WHERE id = ?", (row["id"],))
             removed += 1
 
+        # What moved in or out of storage units (or was sold / traded): suggestions for you to
+        # confirm on the Containers tab. Nothing to compare against on the very first sync.
+        changes = moves.detect(conn, left, arrived, units, now) if existing else 0
+
     settings.set_value("steam_id", steam_id)
     settings.set_value("last_steam_sync", now)
     log.info("Steam sync: %d fetched, %d added, %d updated, %d removed", len(fetched), added, updated, removed)
@@ -332,4 +368,5 @@ def sync_inventory(steam_id_input: str, job=None) -> dict[str, Any]:
         "updated": updated,
         "removed": removed,
         "contents_moved": rehomed,
+        "changes": changes,
     }

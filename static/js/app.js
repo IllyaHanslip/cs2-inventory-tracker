@@ -55,6 +55,9 @@ const app = {
     ];
     if (s.fx.date) parts.push(`FX: ${s.fx.source || 'stored rates'}`);
     document.getElementById('status-line').textContent = parts.join(' · ');
+    const alert = document.getElementById('tab-containers-alert');
+    alert.hidden = !s.pending_changes;
+    alert.textContent = s.pending_changes ? String(s.pending_changes) : '';
   },
 
   bindTopbar() {
@@ -228,6 +231,9 @@ const app = {
       const r = job.result || {};
       if (job.kind === 'sync' && r.fetched !== undefined) {
         toast(`Steam sync done: ${r.fetched} items (${r.added} new, ${r.removed} removed).`, 'ok', 8000);
+        if (r.changes) {
+          toast(`${r.changes} change${r.changes === 1 ? '' : 's'} to review on the Containers tab: items that went into or came out of a storage unit, or were sold.`, 'info', 12000);
+        }
       } else {
         toast(`${job.label} finished.`, 'ok');
       }

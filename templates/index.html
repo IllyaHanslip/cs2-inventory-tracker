@@ -44,7 +44,7 @@
   <nav class="tabs" role="tablist" aria-label="Views">
     <button role="tab" id="tab-public" aria-controls="panel-public" data-tab="public">Public Inventory</button>
     <button role="tab" id="tab-total" aria-controls="panel-total" data-tab="total">Total Portfolio</button>
-    <button role="tab" id="tab-containers" aria-controls="panel-containers" data-tab="containers">Containers <span class="tab-count" id="tab-containers-count"></span></button>
+    <button role="tab" id="tab-containers" aria-controls="panel-containers" data-tab="containers">Containers <span class="tab-count" id="tab-containers-count"></span><span class="tab-alert" id="tab-containers-alert" hidden></span></button>
     <button role="tab" id="tab-markets" aria-controls="panel-markets" data-tab="markets">Market Comparison &amp; Best Deals</button>
     <button role="tab" id="tab-planner" aria-controls="panel-planner" data-tab="planner">Sell Planner</button>
   </nav>
@@ -56,11 +56,13 @@
       <div>
         <h2 class="section-title">Storage &amp; containers</h2>
         <p class="muted section-intro">Steam's public inventory can't see inside Storage Units, so record what each one
-          holds here. Stored items count towards your Total Portfolio and are listed there too. Each container holds up
-          to 1,000 items.</p>
+          holds here. When you move items in or out in the game, the next Steam sync notices and suggests the change for
+          you to confirm. Stored items count towards your Total Portfolio and are listed there too. Each container holds
+          up to 1,000 items.</p>
       </div>
       <button type="button" class="btn btn-primary btn-lg" id="ct-new">+ New container</button>
     </div>
+    <div id="ct-changes"></div>
     <div class="stats" id="ct-stats"></div>
     <div class="sort-bar" id="ct-sort" role="group" aria-label="Sort containers"></div>
     <div class="container-grid" id="ct-grid"></div>
@@ -426,6 +428,17 @@
     </div>
   </form>
 </dialog>
+<dialog id="set-dialog" class="dialog dialog-wide" aria-labelledby="set-title">
+  <div class="dialog-head"><h2 id="set-title">Add from an event</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+  <div class="dialog-body" id="set-body"></div>
+  <div class="dialog-actions">
+    <span class="muted small" id="set-summary">Type how many you have next to each item.</span>
+    <span class="spacer"></span>
+    <button type="button" class="btn" data-close>Cancel</button>
+    <button type="button" class="btn btn-primary" id="set-add" disabled>Add to the list</button>
+  </div>
+</dialog>
+
 <datalist id="container-types"><option value="Storage Unit"></option></datalist>
 
 <datalist id="name-suggestions"></datalist>

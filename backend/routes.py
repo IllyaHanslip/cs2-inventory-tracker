@@ -9,7 +9,8 @@ from flask import Blueprint, Response, jsonify, request
 
 from config import Config
 
-from . import catalogue, comparables, db, evidence, fees, history, images, insights, planner, portfolio, settings, storage
+from . import (catalogue, comparables, db, evidence, events, fees, history, images, insights, moves, planner, portfolio,
+               settings, storage)
 from .classify import APPLIED_KINDS, CATEGORIES, EXTERIORS, applied_hash_name, categorize, exterior_from_float, exterior_from_name
 from .currency import FxConverter, last_source
 from .http_client import ApiError, RateLimitError
@@ -102,6 +103,7 @@ def status():
         currencies=fx.currencies(),
         fx={"date": fx.latest_date, "source": (last_source() or {}).get("source")},
         last_steam_sync=settings.get("last_steam_sync"),
+        pending_changes=moves.pending_count(),
         last_snapshot=settings.get("last_snapshot"),
         prices_updated=newest,
         last_daily_update=settings.get("last_daily_update"),
@@ -470,6 +472,45 @@ def add_to_container(container_id: int):
     images.ensure(name for name, _ in rows)
     price_from_saved_lists(name for name, _ in rows)
     return jsonify(added=len(rows) - stacked, stacked=stacked, contents_count=used, capacity=storage.CAPACITY), 201
+
+
+# ---------------------------------------------------------------------------
+# Changes noticed by Steam syncs (items moved into / out of storage units)
+# ---------------------------------------------------------------------------
+@bp.get("/changes")
+def list_changes():
+    return jsonify(moves.pending())
+
+
+@bp.post("/changes/<int:change_id>")
+def resolve_change(change_id: int):
+    data = _body()
+    action = str(data.get("action") or "")
+    container_id = _number(data.get("container_id"), "Storage unit", 1, None, integer=True)
+    result = moves.apply(change_id, action, container_id)
+    if action in ("store", "take_out"):
+        price_from_saved_lists([db.query_one("SELECT market_hash_name FROM inventory_changes WHERE id = ?",
+                                             (change_id,))["market_hash_name"]])
+    return jsonify(result=result, pending=moves.pending_count())
+
+
+@bp.post("/changes/apply-suggested")
+def resolve_suggested_changes():
+    return jsonify(moves.apply_suggested())
+
+
+# ---------------------------------------------------------------------------
+# Event sets: every sticker, slab, capsule... from one tournament, for quick entry
+# ---------------------------------------------------------------------------
+@bp.get("/sets")
+def list_sets():
+    return jsonify(sets=events.event_list())
+
+
+@bp.get("/sets/items")
+def set_items():
+    event = _text(request.args.get("event"), "Event", 100, required=True)
+    return jsonify(event=event, items=events.event_items(event))
 
 
 @bp.delete("/containers/<int:container_id>")

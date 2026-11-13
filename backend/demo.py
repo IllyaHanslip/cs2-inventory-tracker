@@ -7,9 +7,10 @@ your real portfolio.
 """
 from __future__ import annotations
 
+import json
 import math
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from config import Config
 
@@ -58,6 +59,16 @@ DEMO_CONTENTS = [
     ("Case Stash", "Fracture Case", 60, 0.48, 290),
     ("Case Stash", "Sticker | FaZe Clan (Holo) | Paris 2023", 8, 1.30, 210),
 ]
+# What the last two Steam syncs noticed, for the Containers tab to show (see moves.py): five
+# Revolution Cases came back out of "Long Holds" yesterday (Steam's count for it went 68 -> 63);
+# today 15 Clutch Cases and a P250 went in (63 -> 79), and 3 stickers left while no unit grew.
+LONG_HOLDS_STEAM_COUNT = 79
+DEMO_BACK = [("Revolution Case", 5)]                     # Steam items again, still on the unit's list
+DEMO_LEFT = [  # (market_hash_name, quantity, USD price, extras)
+    ("Clutch Case", 15, 0.55, {}),
+    ("P250 | Asiimov (Field-Tested)", 1, 3.20, {"float_value": 0.2731, "paint_seed": 512}),
+    ("Sticker | Heroic (Holo) | Paris 2023", 3, 1.10, {}),
+]
 BUFF_QUOTES = {"AK-47 | Redline (Field-Tested)": 0.83, "AWP | Asiimov (Battle-Scarred)": 0.81,
                "★ Karambit | Doppler (Factory New)": 0.85}
 
@@ -80,6 +91,26 @@ def _sticker_rate(price: float) -> float:
         return rmax
     t = (math.log10(price) - math.log10(lo)) / (math.log10(hi) - math.log10(lo))
     return rmin + t * (rmax - rmin)
+
+
+def _seed_changes(conn, long_holds: int) -> None:
+    now = datetime.now(timezone.utc)
+    stamp = lambda hours: (now - timedelta(hours=hours)).isoformat(timespec="seconds")  # noqa: E731
+    rows = []
+    for name, qty in DEMO_BACK:
+        rows.append(("back", stamp(26), name, qty, {"name": name, "category": categorize(name)}, "take_out",
+                     long_holds, 68, 63, 1))
+    for name, qty, _price, extras in DEMO_LEFT:
+        details = {"name": name, "category": categorize(name), "exterior": exterior_from_name(name), **extras,
+                   "stickers": []}
+        stored = name != "Sticker | Heroic (Holo) | Paris 2023"
+        rows.append(("left", stamp(2), name, qty, details, "store" if stored else "gone",
+                     long_holds if stored else None, 63 if stored else None, 79 if stored else None, 1))
+    conn.executemany(
+        "INSERT INTO inventory_changes (kind, detected_at, market_hash_name, quantity, details, suggestion, container_id, "
+        "unit_before, unit_after, sure) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(k, at, n, q, json.dumps(d), sug, unit, before, after, sure) for k, at, n, q, d, sug, unit, before, after, sure in rows],
+    )
 
 
 def seed_if_empty() -> bool:
@@ -117,6 +148,10 @@ def seed() -> None:
     market_ranges = {"steam": (1.0, 1.0, "USD"), "skinport": (0.80, 0.92, "EUR"), "csfloat": (0.86, 0.97, "USD"),
                      "marketcsgo": (0.76, 0.90, "USD"), "waxpeer": (0.79, 0.93, "USD")}
     mults = {name: {m: rng.uniform(lo, hi) for m, (lo, hi, _) in market_ranges.items()} for name in series}
+    extra = random.Random(731)
+    for name, _qty, price, _extras in DEMO_LEFT:
+        series[name] = _walk(price, HISTORY_DAYS, extra, 0.02)
+        mults[name] = {m: extra.uniform(lo, hi) for m, (lo, hi, _) in market_ranges.items()}
     val_mult = {name: sorted(m.values())[len(m) // 2] for name, m in mults.items()}
     low_mult = {name: min(m.values()) for name, m in mults.items()}  # stickers use the cheapest listing
 
@@ -176,6 +211,19 @@ def seed() -> None:
                 (name, name, categorize(name), exterior_from_name(name), qty, containers[tag], created, created),
             )
             held.append(("manual", name, qty, HISTORY_DAYS - days_held, [], None))
+
+        # Back in the Steam inventory (and still listed in Long Holds until you confirm).
+        for index, (name, qty) in enumerate(DEMO_BACK):
+            created = (today - timedelta(days=330)).isoformat() + "T12:00:00+00:00"
+            for copy in range(qty):
+                conn.execute(
+                    "INSERT INTO items (source, steam_id, asset_id, market_hash_name, name, category, quantity, "
+                    "created_at, updated_at) VALUES ('steam', ?, ?, ?, ?, ?, 1, ?, ?)",
+                    (DEMO_OWNER, f"demo-back-{index}-{copy}", name, name, categorize(name), created, created),
+                )
+            held.append(("steam", name, qty, HISTORY_DAYS - 330, [], None))
+        conn.execute("UPDATE items SET steam_count = ? WHERE id = ?", (LONG_HOLDS_STEAM_COUNT, containers["Long Holds"]))
+        _seed_changes(conn, containers["Long Holds"])
 
     # Portfolio history built from the same synthetic series.
     portfolio_rows = []
