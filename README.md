@@ -72,14 +72,15 @@ python app.py --open
 The app keeps running while its window is open. Prices refresh by themselves: on start-up, then hourly checks,
 with a full update (Steam re-sync, prices, snapshot) once a day. **Refresh prices** fetches immediately.
 
-**Keep it updating while the app is closed (Windows):** this adds a scheduled task, for your account only, that
-runs the daily update in the background, every day at 12:00 (or as soon as the PC is next on) and a few minutes
-after you sign in. It does nothing if the dashboard is open or today's update is already done, and logs to
-`data\update.log`. Days the PC is off all day are skipped; charts carry the last value across.
+**Keep it updating while the app is closed (Windows):** this adds a scheduled task, for your account only (no
+admin rights needed), that runs the update in the background every 2 hours while the PC is on. Each run exits
+straight away unless there's work to do (no snapshot yet today, or prices over 12 hours old), and skips entirely
+while the dashboard is open, so the real work happens about twice a day. It logs to `data\update.log`. Days the
+PC is off all day are skipped; charts carry the last value across.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1            # add -Time 18:30 to change the time
-powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1 -Remove    # remove it again
+powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1           # add -DryRun to preview
+powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1 -Remove   # remove it again
 ```
 
 On other systems, schedule `python app.py --update` with cron or similar.
