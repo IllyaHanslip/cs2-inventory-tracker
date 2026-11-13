@@ -28,6 +28,8 @@ def soft_cap(raw: float, cap: float) -> float:
     return cap * (1 - math.exp(-raw / cap))
 
 
+# Days covered by each kind of recent-sales figure ("recent" = Steam's last 24 hours).
+PERIOD_DAYS = {"recent": 1, "24 hours": 1, "7 days": 7, "30 days": 30, "90 days": 90}
 QUOTE_COLUMNS = ["market_hash_name", "market", "price", "currency", "volume", "url", "is_manual", "fetched_at"]
 SINGLE_MARKET_STRATEGIES = app_settings.MARKET_KEYS
 
@@ -69,6 +71,41 @@ class Valuator:
 
     def cash_out(self, market: str) -> bool:
         return bool(fees.profile(market, self.fee_overrides)["cash_out"])
+
+    # ------------------------------------------------------------- selling speed
+    def sell_capacity(self, name: str, market: str) -> int | None:
+        """About how many of this item ``market`` sells in BULK_SELL_DAYS, from its recent sales.
+        None = no sales figures for that market, so it's assumed to take any number."""
+        info = self.sales_by_source.get(name, {}).get(market)
+        if info is None:
+            # Skinport's sales history covers every item, so no entry means no sales there in 90 days.
+            return 0 if market == "skinport" and "skinport" in self.sales_feeds else None
+        per_day = (info.get("volume") or 0) / PERIOD_DAYS.get(info.get("period") or "", 1)
+        return max(1, round(per_day * Config.BULK_SELL_DAYS)) if per_day > 0 else 0
+
+    def bulk_plan(self, name: str, options: list[dict[str, Any]], quantity: int) -> tuple[float, list[dict[str, Any]]]:
+        """Estimated total for selling ``quantity`` copies at once, after fees. Markets are used best
+        price first, each taking about what it sells in BULK_SELL_DAYS (listing a penny under its
+        cheapest copy); markets without sales figures take the rest. If every market's sales are used
+        up, the remainder is counted at the lowest of the prices."""
+        remaining, total, plan = int(quantity), 0.0, []
+        for option in options:
+            if remaining <= 0:
+                break
+            source = sanity.sticker_inside(name) if option.get("basis") == "sticker_inside" else name
+            capacity = self.sell_capacity(source, option["market"])
+            take = remaining if capacity is None else min(remaining, capacity)
+            if take > 0:
+                plan.append({"market": option["market"], "units": take, "net": option["net"],
+                             "capacity": capacity, "wallet": option["wallet"]})
+                total += take * option["net"]
+                remaining -= take
+        if remaining > 0 and options:
+            last = options[-1]
+            plan.append({"market": last["market"], "units": remaining, "net": last["net"], "capacity": None,
+                         "wallet": last["wallet"], "overflow": True})
+            total += remaining * last["net"]
+        return total, plan
 
     @property
     def best_net(self) -> dict[str, float]:
@@ -127,16 +164,22 @@ class Valuator:
         return df.dropna(subset=["price_base"])
 
     def _load_sales(self) -> dict[str, dict[str, Any]]:
-        """Recent sale prices per item (base currency); the source with the most sales wins."""
+        """Recent sale prices per item (base currency); the source with the most sales wins.
+        Every source's figures are also kept (``sales_by_source``) for selling speeds."""
         out: dict[str, dict[str, Any]] = {}
-        for row in db.query("SELECT * FROM sale_prices"):
+        self.sales_by_source: dict[str, dict[str, dict[str, Any]]] = {}
+        rows = db.query("SELECT * FROM sale_prices")
+        self.sales_feeds = {row["source"] for row in rows}
+        for row in rows:
             price = self.fx.convert(row["price"], row["currency"], self.base)
             if not price or price <= 0:
                 continue
+            info = {"price": price, "volume": row["volume"], "source": row["source"],
+                    "period": row["period"], "fetched_at": row["fetched_at"]}
+            self.sales_by_source.setdefault(row["market_hash_name"], {})[row["source"]] = info
             current = out.get(row["market_hash_name"])
             if current is None or (row["volume"] or 0) > (current["volume"] or 0):
-                out[row["market_hash_name"]] = {"price": price, "volume": row["volume"], "source": row["source"],
-                                                "period": row["period"], "fetched_at": row["fetched_at"]}
+                out[row["market_hash_name"]] = info
         return out
 
     def _screen(self, df: pd.DataFrame) -> pd.DataFrame:

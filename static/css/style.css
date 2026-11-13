@@ -546,3 +546,8 @@ table.data tr.dim td { opacity: 0.6; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-delay: 0ms !important; transition-duration: 1ms !important; }
 }
+
+/* "Selling all N at once" estimate in the item view. */
+.bulk-box { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 13px; }
+.bulk-box ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-secondary); }
+.bulk-note { cursor: help; }

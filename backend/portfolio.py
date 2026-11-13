@@ -193,13 +193,47 @@ def build_frame(valuator, scope: str = "total", with_changes: bool = True) -> pd
     items["set_aside"] = items["market_hash_name"].map(
         lambda n: [{**a, "label": market_label(a["market"])} for a in valuator.set_aside.get(n, [])])
     items["sticker_inside"] = items["market_hash_name"].map(inside_info)
-    items["total_value"] = items["unit_value"] * items["quantity"]
+
+    # Selling everything at once: a market only buys so many of one item. Each takes about what it
+    # sells in BULK_SELL_DAYS (Valuator.bulk_plan), so 531 capsules aren't all counted at the price
+    # of a market that sells 8 a week. Plain copies of an item are pooled across rows (say several
+    # containers), so they share each market's sales instead of each counting them in full.
+    for name, options in zip(items["market_hash_name"], sell_lists):
+        for option in options:
+            source = sanity.sticker_inside(name) if option.get("basis") == "sticker_inside" else name
+            option["capacity"] = valuator.sell_capacity(source, option["market"])
+    plain = [(s not in ("custom", "evidence")) and not (p or 0) > 0
+             for s, p in zip(items["price_source"], items["sticker_premium"])]
+    pooled = items[plain].groupby("market_hash_name")["quantity"].sum()
+    plans: dict[Any, tuple] = {}
+    realised, cash_realised, bulk_plans, bulk_units = [], [], [], []
+    for row, options, is_plain in zip(items.itertuples(index=False), sell_lists, plain):
+        units = int(pooled[row.market_hash_name]) if is_plain else int(row.quantity)
+        key = ("plain", row.market_hash_name) if is_plain else ("row", row.id)
+        if key not in plans:
+            total, plan = valuator.bulk_plan(row.market_hash_name, options, units)
+            cash_total, cash_plan = valuator.bulk_plan(row.market_hash_name, [o for o in options if not o["wallet"]], units)
+            for step in plan:
+                step["label"] = market_label(step["market"])
+            plans[key] = (total / units if plan else None, cash_total / units if cash_plan else None, plan)
+        each, cash_each, plan = plans[key]
+        realised.append(each)
+        cash_realised.append(cash_each)
+        bulk_plans.append(plan)
+        bulk_units.append(units)
+    items["bulk_plan"] = bulk_plans
+    items["bulk_units"] = bulk_units   # copies pooled for the estimate (all rows of a plain item)
+    # True when selling them all can't happen at the best price alone (only matters for 2+ copies).
+    items["bulk_limited"] = [n > 1 and (len(p) > 1 or any(s.get("overflow") for s in p))
+                             for n, p in zip(bulk_units, bulk_plans)]
+    items["realised_unit"] = pd.Series(realised, index=items.index, dtype="float64")
+    items["total_value"] = items["realised_unit"] * items["quantity"]
     items["purchase_value"] = pd.Series(purchase, index=items.index, dtype="float64") * items["quantity"]
     items["profit"] = items["total_value"] - items["purchase_value"]
     # Cash-out: the same, counting only markets whose money you can withdraw.
     items["payout_unit"] = pd.Series([c["net"] if c else None for c in cash], index=items.index, dtype="float64")
     items["payout_market"] = [c["market"] if c else None for c in cash]
-    items["payout_value"] = items["payout_unit"] * items["quantity"]
+    items["payout_value"] = pd.Series(cash_realised, index=items.index, dtype="float64") * items["quantity"]
 
     # Containers: roll up the value of everything stored inside them (within this scope).
     items["is_container"] = items["category"] == "container"
@@ -310,7 +344,8 @@ ITEM_FIELDS = (
     "purchase_value", "profit", "change_24h", "change_7w", "best_market", "best_price", "quote_count",
     "quotes", "payout_unit", "payout_market", "payout_value", "stickers", "created_at", "updated_at",
     "market_unit_value", "market_total_value", "sell_market", "sell_quotes",
-    "value_basis", "sales", "set_aside", "sticker_inside",
+    "value_basis", "sales", "set_aside", "sticker_inside", "bulk_plan", "bulk_units", "bulk_limited",
+    "realised_unit",
 )
 
 
@@ -328,6 +363,8 @@ def to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
         item["sell_market_label"] = market_label(item["sell_market"]) if item["sell_market"] else None
         item["sell_quotes"] = rec.get("sell_quotes") or []
         item["set_aside"] = rec.get("set_aside") or []
+        item["bulk_plan"] = rec.get("bulk_plan") or []
+        item["bulk_limited"] = bool(rec.get("bulk_limited"))
         icon = rec.get("icon_url")
         item["icon"] = images.icon_src(icon)
         item["stickers"] = [{k: _py(v) for k, v in s.items()} for s in (rec.get("stickers") or [])]

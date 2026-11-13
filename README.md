@@ -109,6 +109,7 @@ Most of them can also be changed later in the app's **Settings** dialog.
 | `HOST`, `PORT` | Where the local server listens (default `127.0.0.1:5000`; keep `127.0.0.1` so only your PC can open it). |
 | `AUTO_DAILY_SNAPSHOT`, `AUTO_SYNC_STEAM` | Turn the automatic daily update and Steam re-sync on or off. |
 | `DAILY_UPDATE_TIME` | Earliest time of day for the automatic background update (default `12:00`). |
+| `BULK_SELL_DAYS` | For the "selling many at once" estimate: each market takes about what it sells in this many days (default `30`). |
 | `ITEM_IMAGES` | Find pictures for items you add by hand (default `true`). |
 
 ### API keys
@@ -129,6 +130,12 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
   its fees. For each market, that's its cheapest listing plus your stickers' value, minus the selling fee and
   withdrawal fee; the best market wins. Steam counts too, marked as Steam Wallet money. A **custom price** you
   set (or a CSFloat-comparables value) is treated as the item's full price and sold where fees are lowest.
+- **Selling many at once**: a market only buys so many of one item. When you hold several copies, each market
+  (best price first) is counted for about as many as it sells in 30 days, judged from its recent sales
+  (Skinport's sales history, Steam's when available); markets without sales figures take the rest. So 531
+  capsules aren't all valued at the price of a market that sells 8 a week. Copies spread across several entries
+  or containers are pooled. **Value** and every total use this estimate; **Price** stays the best price for
+  one, and the item view shows both, with each market's total for all your copies and how the estimate splits.
 - **Price check**: a listing is ignored when it's more than 3 times (and at least $1 above) the item's recent
   sales (Skinport's sales history, or Steam's median sale price), or without sales, its price on the other
   markets. A Sticker Slab with neither is compared with the sticker inside: a slab can be cracked open to get its

@@ -93,6 +93,8 @@ class Config:
     CSFLOAT_MIN_INTERVAL = max(0.5, _float("CSFLOAT_MIN_INTERVAL", 1.5))
     STEAM_INVENTORY_MIN_INTERVAL = 5.0
     PRICE_TTL_HOURS = _float("PRICE_TTL_HOURS", 12)  # per-item sources re-fetch after this
+    # Selling many of one item: each market is assumed to take about what it sells in this many days.
+    BULK_SELL_DAYS = max(1, _int("BULK_SELL_DAYS", 30))
 
     # --- HTTP behaviour -------------------------------------------------------
     REQUEST_TIMEOUT = _float("REQUEST_TIMEOUT", 25)

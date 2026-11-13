@@ -4,7 +4,7 @@
 import { api } from './api.js';
 import { confirmDialog, editItem, openItem, suggestNames } from './dialogs.js';
 import { markClean, protect, protectForm } from './guard.js';
-import { MarketFilter, availableMarkets, bestToSell, sellHtml } from './market-filter.js';
+import { MarketFilter, availableMarkets, bestToSell, bulkNote, sellHtml } from './market-filter.js';
 import { applySortWithin, cycleSort, getSort, sortItems } from './sortable.js';
 import { esc, money, number, state, store, thumbHtml, toast } from './util.js';
 
@@ -376,7 +376,7 @@ function renderContents(contents, currency, animate = false) {
         <td class="num strong" data-v="${item.quantity}">${number(item.quantity)}</td>
         <td class="num" data-v="${item.unit_value ?? ''}">${money(item.unit_value, currency)}</td>
         <td data-v="${top[0]?.net ?? ''}">${sellHtml(top, currency)}</td>
-        <td class="num strong" data-v="${item.total_value ?? ''}">${money(item.total_value, currency)}</td>
+        <td class="num strong" data-v="${item.total_value ?? ''}">${money(item.total_value, currency)}${bulkNote(item, currency)}</td>
         <td><div class="row-actions-cell">
           <button type="button" class="icon-btn" data-act="edit" data-id="${item.id}" aria-label="Edit ${esc(item.name)}" title="Edit">${ICONS.edit}</button>
           <button type="button" class="icon-btn" data-act="move" data-id="${item.id}" aria-label="Move ${esc(item.name)}" title="Move">${ICONS.move}</button>

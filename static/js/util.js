@@ -28,15 +28,15 @@ export function safeColor(color) {
 }
 
 const formatters = new Map();
-function formatter(currency, compact) {
-  const key = `${currency}|${compact}`;
+function formatter(currency, compact, maxDigits = 2) {
+  const key = `${currency}|${compact}|${maxDigits}`;
   if (!formatters.has(key)) {
     try {
       formatters.set(key, new Intl.NumberFormat(undefined, compact
         ? { style: 'currency', currency, notation: 'compact', maximumFractionDigits: 1 }
-        : { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+        : { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: maxDigits }));
     } catch {
-      formatters.set(key, new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }));
+      formatters.set(key, new Intl.NumberFormat(undefined, { maximumFractionDigits: maxDigits }));
     }
   }
   return formatters.get(key);
@@ -44,8 +44,13 @@ function formatter(currency, compact) {
 
 export function money(value, currency = state.currency, { compact = false } = {}) {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
-  if (!compact && value > 0 && value < 0.01) return `< ${formatter(currency, false).format(0.01)}`;
-  return formatter(currency, compact).format(value);
+  if (compact) return formatter(currency, true).format(value);
+  // Pennies matter on cheap items (531 capsules at £0.0504 each), so amounts under £1 get more
+  // decimals: 3 from 10p, 4 below that. Larger amounts keep the usual 2.
+  const size = Math.abs(value);
+  if (value > 0 && size < 0.0001) return `< ${formatter(currency, false, 4).format(0.0001)}`;
+  const digits = size === 0 || size >= 1 ? 2 : size >= 0.1 ? 3 : 4;
+  return formatter(currency, false, digits).format(value);
 }
 
 export function number(value, digits = 0) {

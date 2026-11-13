@@ -4,7 +4,7 @@ import { api } from './api.js';
 import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
 import * as containers from './containers.js';
 import * as dialogs from './dialogs.js';
-import { MarketFilter, availableMarkets, bestToSell, noCashLabel, sellHtml } from './market-filter.js';
+import { MarketFilter, availableMarkets, bestToSell, bulkNote, noCashLabel, sellHtml } from './market-filter.js';
 import { applySort, applySortWithin } from './sortable.js';
 import {
   CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, money, number, state, store, thumbHtml, toast,
@@ -247,6 +247,8 @@ export class InventoryView {
       } else {
         value = `${money(item.display_value)}<div class="sub">incl. ${number(item.contents_count)} stored inside</div>`;
       }
+    } else {
+      value += bulkNote(item);
     }
     const actions = [];
     if (item.is_container && item.container_id === null) {

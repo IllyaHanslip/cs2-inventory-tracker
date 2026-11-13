@@ -1,7 +1,7 @@
 // Market filter chips ("compare on specific markets") and the "best 3 to sell" / "3 cheapest"
 // helpers shared by every price list.
 
-import { esc, money, store } from './util.js';
+import { esc, money, number, store } from './util.js';
 
 /** Markets to offer: the enabled automatic sources plus any manual-quote markets seen in the data. */
 export function availableMarkets(status, quoteLists = []) {
@@ -73,6 +73,19 @@ export function cheapestHtml(top, currency) {
   if (!top.length) return '<span class="muted">—</span>';
   return `<ol class="cheapest">${top.map((q, i) => `<li class="${i === 0 ? 'first' : ''}"><span class="val">${money(q.price, currency)}</span>
     <span class="mkt">${esc(q.label)}</span></li>`).join('')}</ol>`;
+}
+
+/** "34 on Skinport at £0.11, 497 on CSFloat at £0.05": how selling every copy at once is estimated. */
+export function bulkText(plan, currency) {
+  return (plan || []).map((s) => `${number(s.units)} on ${s.label} at ${money(s.net, currency)}`).join(', ');
+}
+
+/** A note under a Value cell when selling every copy at once can't all happen at the best price. */
+export function bulkNote(item, currency) {
+  if (!item.bulk_limited) return '';
+  const title = `Selling all ${number(item.bulk_units)} at once: ${bulkText(item.bulk_plan, currency)}. `
+    + 'Each market is counted for about as many as it sells in 30 days.';
+  return `<div class="sub bulk-note" title="${esc(title)}">selling all: estimate</div>`;
 }
 
 /** The best-paying markets after fees among the selected ones (sell quotes arrive best first). */

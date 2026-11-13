@@ -5,7 +5,7 @@ import { api } from './api.js';
 import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
 import * as containers from './containers.js';
 import { initDialogs, markClean, protectForm } from './guard.js';
-import { MarketFilter, noCashLabel } from './market-filter.js';
+import { MarketFilter, bulkText, noCashLabel } from './market-filter.js';
 import { applySortWithin } from './sortable.js';
 import {
   CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, longDate, money, number, relTime, safeUrl, state,
@@ -272,7 +272,10 @@ function sellingSteps(item, wholeItem) {
       `−${money(best.sale_fee)}`),
     best.withdraw_rate ? kv(`− Withdrawal fee (${pctText(best.withdraw_rate)})`, `−${money(best.withdraw_fee)}`) : '',
     kv(item.quantity > 1 ? 'You receive (each)' : 'You receive', money(best.net), item.quantity > 1 ? '' : 'total'),
-    item.quantity > 1 ? kv(`You receive (× ${number(item.quantity)})`, money(item.total_value), 'total') : '',
+    item.quantity > 1 && item.bulk_limited ? kv(`At that price (× ${number(item.quantity)})`, money(best.net * item.quantity)) : '',
+    item.quantity > 1 ? kv(item.bulk_limited ? `Selling all ${number(item.quantity)} (estimate)` : `You receive (× ${number(item.quantity)})`,
+      money(item.total_value), 'total') : '',
+    item.bulk_limited ? kv('Sold on', `<span class="muted small">${esc(bulkText(item.bulk_plan))} (see Prices across markets)</span>`) : '',
     item.sales ? kv('Recent sales', `${money(item.sales.price)} <span class="muted small">${esc(item.sales.label)} · median of
       ${number(item.sales.volume || 0)} sale${item.sales.volume === 1 ? '' : 's'} (${esc(item.sales.period || 'recent')})</span>`) : '',
     item.set_aside.length ? kv('Ignored', `<span class="warn-text small">${number(item.set_aside.length)} unrealistic
@@ -298,6 +301,23 @@ function stickerInsideHtml(item) {
   </div>`;
 }
 
+/** "Selling all N at once": each market is counted for about as many as it sells in 30 days. */
+function bulkHtml(item, cur) {
+  const plan = item.bulk_plan || [];
+  if ((item.bulk_units || item.quantity) < 2 || !plan.length) return '';
+  const total = plan.reduce((sum, s) => sum + s.units * s.net, 0);
+  const why = (s) => {
+    if (s.overflow) return 'more than these markets sell in 30 days, so counted at the lowest price';
+    if (s.capacity === null || s.capacity === undefined) return 'no sales figures for this market, so it is assumed to take the rest';
+    return `it sells about ${number(s.capacity)} in 30 days`;
+  };
+  const pooled = item.bulk_units !== item.quantity ? ` (all ${number(item.bulk_units)} you hold, across your entries)` : '';
+  return `<div class="bulk-box"><div><strong>Selling all ${number(item.bulk_units)} at once</strong>${pooled}:
+      about <strong>${money(total, cur)}</strong> after fees</div>
+    <ul>${plan.map((s) => `<li>${number(s.units)} on ${esc(s.label)} at ${money(s.net, cur)} = ${money(s.units * s.net, cur)}
+      <span class="muted">(${esc(why(s))})</span></li>`).join('')}</ul></div>`;
+}
+
 const ASIDE_REASONS = {
   sales: (ref) => `more than 3 times its recent sales (${money(ref)})`,
   markets: (ref) => `more than 3 times its price on the other markets (${money(ref)})`,
@@ -317,8 +337,8 @@ function itemBodyHtml(item) {
     : '';
   const wholeItem = item.price_source === 'custom' || item.price_source === 'evidence';
   const valuation = [...sellingSteps(item, wholeItem),
-    item.is_container ? kv('Stored inside', `${money(item.contents_value)} <span class="muted small">(${number(item.contents_count)} items, after fees)</span>`) : '',
-    item.is_container ? kv('Total', money(item.display_value), 'total') : '',
+    item.is_container && item.contents_count ? kv('Stored inside', `${money(item.contents_value)} <span class="muted small">(${number(item.contents_count)} items, after fees)</span>`) : '',
+    item.is_container && item.contents_count ? kv('Total', money(item.display_value), 'total') : '',
     kv('Market value', item.market_unit_value !== null
       ? `${money(item.market_unit_value)} each <span class="muted small">to buy · ${wholeItem
         ? (item.price_source === 'custom' ? 'your custom price' : 'CSFloat comparables')
@@ -440,6 +460,7 @@ async function loadItemQuotes(item) {
     const whole = item.price_source === 'custom' || item.price_source === 'evidence';
     const premium = !whole && item.sticker_premium > 0 ? item.sticker_premium : 0;
     const cur = data.currency;
+    const qty = item.quantity;
     renderStickerMatch(data);
     let render = () => {};
     const filter = new MarketFilter($('#item-market-chips'), 'item-quotes', () => render());
@@ -467,34 +488,41 @@ async function loadItemQuotes(item) {
           : whole ? '<div class="sub">the item value</div>'
             : q.basis === 'sales' ? '<div class="sub">recent sales</div>'
               : q.basis === 'sticker_inside' ? '<div class="sub">sticker inside</div>' : '';
+        const speed = q.capacity === null || q.capacity === undefined ? ''
+          : q.capacity === 0 ? '<div class="sub">no sales in 90 days</div>'
+            : `<div class="sub">sells ~${number(q.capacity)} / 30 days</div>`;
         return `<tr data-i="${i}"><td class="num" data-v="${i + 1}">${i + 1}</td><td data-v="${esc(q.label)}">${name}${best}</td>
           <td class="num strong" data-v="${q.net}">${money(q.net, cur)}${q.wallet ? `<div class="sub">${esc(noCashLabel(q.market))}</div>` : ''}</td>
+          <td class="num" data-v="${q.net * qty}">${money(q.net * qty, cur)}</td>
           <td class="num" data-v="${q.gross}">${money(q.gross, cur)}${grossNote}</td>
           <td class="num" data-v="${fee}" title="${esc(q.raw?.fee_note || '')}">−${money(fee, cur)}<div class="sub">${esc(feeText(q))}</div></td>
           <td class="num" data-v="${listing ?? ''}">${listing !== null ? money(listing, cur) : '<span class="muted">—</span>'}${original}</td>
-          <td class="num" data-v="${q.raw?.volume ?? ''}">${q.raw && q.raw.volume !== null ? number(q.raw.volume) : '—'}</td>
+          <td class="num" data-v="${q.raw?.volume ?? ''}">${q.raw && q.raw.volume !== null ? number(q.raw.volume) : '—'}${speed}</td>
           <td class="muted small" data-v="${esc(q.raw?.fetched_at || '')}">${q.raw ? esc(relTime(q.raw.fetched_at)) : '—'}</td></tr>`;
       });
       const unpriced = absent.map((m, j) => `<tr data-i="${shown.length + j}" class="dim">
           <td class="num" data-v=""></td><td data-v="${esc(m.label)}">${esc(m.label)}</td>
-          <td colspan="6" class="muted small" data-v="">${esc(m.status)}</td></tr>`);
+          <td colspan="7" class="muted small" data-v="">${esc(m.status)}</td></tr>`);
       const aside = item.set_aside.filter((a) => filter.includes(a.market)).map((a, j) => `<tr data-i="${shown.length + absent.length + j}" class="dim">
           <td class="num" data-v=""></td><td data-v="${esc(a.label)}">${esc(a.label)}</td>
-          <td colspan="6" class="small warn-text" data-v="">Ignored: listed at ${money(a.price, cur)}, ${esc((ASIDE_REASONS[a.reason] || (() => 'unrealistic'))(a.reference))}</td></tr>`);
+          <td colspan="7" class="small warn-text" data-v="">Ignored: listed at ${money(a.price, cur)}, ${esc((ASIDE_REASONS[a.reason] || (() => 'unrealistic'))(a.reference))}</td></tr>`);
       const basis = whole
         ? `${item.price_source === 'custom' ? 'your custom price' : 'the value from CSFloat comparables'}, sold on each market`
         : `each market's cheapest listing of this skin${premium ? ', plus the sticker value counted for this item' : ''}`;
       box.innerHTML = `<div class="table-scroll"><table class="data" data-sort-id="item-quotes"><thead><tr>
           <th class="num" data-sort="num" data-key="rank">#</th><th data-sort="text" data-key="market">Market</th>
           <th class="num" data-sort="num" data-key="net" title="The selling price minus this market's selling and withdrawal fees">You'd receive</th>
+          <th class="num" data-sort="num" data-key="total" title="What you'd receive for one there, times how many you have">Total (× ${number(qty)})</th>
           <th class="num" data-sort="num" data-key="gross">Selling price</th>
           <th class="num" data-sort="num" data-key="fees" title="Hover a value for this market's fee details">Fees</th>
           <th class="num" data-sort="num" data-key="listing">Listing (${esc(cur)})</th>
           <th class="num" data-sort="num" data-key="volume">Listings / volume</th>
           <th data-sort="text" data-key="updated">Updated</th></tr></thead>
         <tbody>${priced.concat(unpriced, aside).join('')}</tbody></table></div>
+        ${bulkHtml(item, cur)}
         <p class="hint">"You'd receive" is the selling price minus that market's selling and withdrawal fees (change fees in Settings).
-          The selling price here is ${basis}. Steam pays into your Steam Wallet, which can't be withdrawn.</p>`;
+          The selling price here is ${basis}. "Total" assumes that market would take all ${number(qty)} at that price.
+          Steam pays into your Steam Wallet, which can't be withdrawn.</p>`;
       applySortWithin(box);
     };
     render();
