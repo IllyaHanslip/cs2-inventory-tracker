@@ -170,7 +170,8 @@ def _now() -> datetime:
 
 
 def daily_update_start(now: datetime | None = None) -> datetime:
-    """The earliest the daily update may run today: DAILY_UPDATE_TIME (default 12:00), local time."""
+    """The earliest the *automatic* (background) update may run today: DAILY_UPDATE_TIME (default
+    12:00), local time. Opening the dashboard updates straight away, whatever the time."""
     now = now or _now()
     try:
         at = datetime.strptime(Config.DAILY_UPDATE_TIME.strip(), "%H:%M").time()
@@ -179,15 +180,15 @@ def daily_update_start(now: datetime | None = None) -> datetime:
     return datetime.combine(now.date(), at)
 
 
-def daily_update_due(now: datetime | None = None) -> bool:
-    """Due from DAILY_UPDATE_TIME until today's daily update has completed - so never earlier in
-    the day, at that time if the PC is already on, as soon as it's on if it was off, and again
-    every hour after a run that couldn't reach the markets."""
+def daily_update_due(now: datetime | None = None, automatic: bool = False) -> bool:
+    """Whether today's daily update still needs to run. Once one has worked today - at any time,
+    including when you opened the dashboard in the morning - it isn't due until tomorrow. Until
+    then it stays due, so a run that couldn't reach the markets is retried next hour.
+    ``automatic`` (the background task): also never before DAILY_UPDATE_TIME."""
     from . import settings
 
     now = now or _now()
-    start = daily_update_start(now)
-    if now < start:
+    if automatic and now < daily_update_start(now):
         return False
     last = settings.get("last_daily_update")
     if last:
@@ -195,15 +196,15 @@ def daily_update_due(now: datetime | None = None) -> bool:
             done = datetime.fromisoformat(last).astimezone().replace(tzinfo=None)
         except (TypeError, ValueError):
             done = None
-        if done is not None and done >= start:
+        if done is not None and done.date() == now.date():
             return False
     return True
 
 
 def scheduled_action(now: datetime | None = None) -> tuple[str, str] | None:
-    """What the dashboard's hourly check should start: ("daily", why), ("refresh", why) or None.
-    Besides the daily update, only one-off catch-ups run (a market with no prices at all, sales or
-    history never checked), e.g. straight after you add a market or key."""
+    """What the open dashboard's hourly check should start: ("daily", why), ("refresh", why) or None.
+    The dashboard updates whenever it's open (no 12:00 rule): the daily update if today's hasn't
+    happened yet, then a refresh when prices are over 12 hours old, plus one-off catch-ups."""
     from . import db
     from .refresh import refresh_reasons
 
@@ -241,7 +242,8 @@ def background_update_running() -> bool:
 def background_update() -> dict[str, Any]:
     """The daily update without the dashboard open (``app.py --update``, run by the Windows
     scheduled task from scripts/install-daily-update.ps1). Runs only when it's due: not before
-    DAILY_UPDATE_TIME, once a day, and again next hour if the markets couldn't be reached."""
+    DAILY_UPDATE_TIME, not if today's update already happened (e.g. you opened the dashboard), and
+    again next hour if the markets couldn't be reached. Checking uses no internet at all."""
     from . import db, images
 
     if db.query_one("SELECT 1 FROM items LIMIT 1") is None:
@@ -250,7 +252,7 @@ def background_update() -> dict[str, Any]:
     start = daily_update_start(now)
     if now < start:
         return {"skipped": f"it's before {start:%H:%M}, when the daily update starts"}
-    if not daily_update_due(now):
+    if not daily_update_due(now, automatic=True):
         return {"skipped": "today's daily update is already done"}
     marker = _update_marker()
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -281,8 +283,8 @@ def find_pictures_now(timeout: float) -> None:
 
 
 def start_scheduler() -> None:
-    """While the dashboard is open: a check at start-up and then on every full hour, which runs
-    the daily update when it's due (see daily_update_due) plus one-off catch-ups."""
+    """While the dashboard is open: a check at start-up and then on every full hour (see
+    scheduled_action). The 12:00 rule only applies to the background task."""
     if not Config.AUTO_DAILY_SNAPSHOT:
         log.info("Daily snapshot scheduler disabled")
         return

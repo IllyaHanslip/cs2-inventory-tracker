@@ -1,4 +1,5 @@
-"""When the daily update runs: never before 12:00, once a day, retried hourly if the markets are unreachable."""
+"""When the daily update runs: automatically never before 12:00 (the dashboard any time), once a day,
+retried hourly if the markets are unreachable."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -30,16 +31,14 @@ def clock(client, monkeypatch):
     return state
 
 
-def test_due_from_midday_until_done(clock):
-    assert not jobs.daily_update_due(at(9))                     # never before 12:00
-    assert not jobs.daily_update_due(at(11, 59))
-    assert jobs.daily_update_due(at(12))                        # at 12:00 if the PC is on
-    assert jobs.daily_update_due(at(17, 30))                    # or whenever it's switched on later
-    mark_done(at(9, 30))                                        # an update this morning doesn't count
-    assert jobs.daily_update_due(at(12))
-    mark_done(at(12, 3))
-    assert not jobs.daily_update_due(at(12, 30)) and not jobs.daily_update_due(at(23))
-    assert not jobs.daily_update_due(at(9, days=1)) and jobs.daily_update_due(at(12, days=1))   # tomorrow
+def test_automatic_from_midday_dashboard_any_time(clock):
+    auto = lambda when: jobs.daily_update_due(when, automatic=True)   # noqa: E731
+    assert not auto(at(9)) and not auto(at(11, 59))             # automatically: never before 12:00
+    assert auto(at(12)) and auto(at(17, 30))                    # at 12:00, or whenever the PC is on later
+    assert jobs.daily_update_due(at(9))                         # opening the dashboard: any time
+    mark_done(at(9, 30))                                        # updated this morning (dashboard open)...
+    assert not auto(at(12)) and not jobs.daily_update_due(at(15))   # ...so nothing more today
+    assert not auto(at(9, days=1)) and auto(at(12, days=1))     # tomorrow from 12:00 again
 
 
 def test_daily_job_counts_only_when_prices_arrived(clock, monkeypatch):
@@ -72,14 +71,16 @@ def test_background_update_waits_for_midday_and_retries_hourly(clock, monkeypatc
     clock["now"] = at(14)                                       # done for today
     assert jobs.background_update() == {"skipped": "today's daily update is already done"}
     assert runs == [at(12), at(13)]
+    clock["now"] = at(12, days=1)                               # next day: the dashboard updated at 9:00
+    mark_done(at(9, days=1))
+    assert jobs.background_update() == {"skipped": "today's daily update is already done"}
     assert not jobs.background_update_running()                 # the marker is cleared afterwards
 
 
 def test_dashboard_schedule(clock, monkeypatch):
     monkeypatch.setattr(refresh, "refresh_reasons", lambda: [])
-    assert jobs.scheduled_action(at(10)) is None
-    assert jobs.scheduled_action(at(12))[0] == "daily"
-    mark_done(at(12, 1))
+    assert jobs.scheduled_action(at(10))[0] == "daily"          # opened in the morning: update now
+    mark_done(at(10, 1))
     assert jobs.scheduled_action(at(15)) is None
     monkeypatch.setattr(refresh, "refresh_reasons", lambda: ["Waxpeer has no prices yet"])
     assert jobs.scheduled_action(at(10)) == ("refresh", "Waxpeer has no prices yet")   # one-off catch-ups

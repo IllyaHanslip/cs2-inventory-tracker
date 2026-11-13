@@ -8,14 +8,15 @@
       * every hour from 12:00 until midnight - and if the PC was off at one of those times, as soon as
         it's switched on again;
       * 2 minutes after you sign in to Windows.
-    Each run decides for itself and usually exits in a second or two:
-      * before 12:00 it does nothing - the daily update never runs earlier in the day;
+    Each run decides for itself and usually exits in a second or two, using no internet:
+      * before 12:00 it does nothing - automatic updates never start earlier in the day;
       * from 12:00 it runs the update once (at 12:00 if the PC is on, or when you switch it on later);
       * if that couldn't reach the markets (say the internet was down), the next hour tries again;
-      * once it has worked, nothing more happens until tomorrow;
-      * while the dashboard is open it does nothing: the dashboard follows the same rules itself.
+      * once today's update has happened - by this task, or because you opened the dashboard -
+        nothing more happens until tomorrow;
+      * while the dashboard is open it does nothing: the dashboard keeps itself up to date.
     If the PC is off all day, that day is skipped and charts carry the last value across.
-    Every run is noted in data\update.log.
+    Every run is noted in data\update.log. One update downloads about 5-6 MB.
 
         powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1
         powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1 -DryRun
@@ -95,4 +96,5 @@ try {
 
 Write-Host "Done. The daily update now runs once a day $when."
 Write-Host "If it can't reach the markets, it tries again every hour until midnight."
+Write-Host "Opening the dashboard updates straight away at any time, and then counts as that day's update."
 Write-Host "Each run is noted in $(Join-Path $root 'data\update.log'). To undo: add -Remove to the same command."

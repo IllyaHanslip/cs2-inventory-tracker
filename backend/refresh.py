@@ -123,9 +123,9 @@ def _hours_since(iso: str | None) -> float:
 
 
 def refresh_reasons() -> list[str]:
-    """Catch-ups that can't wait for the daily update (empty list = nothing to catch up on): a market
-    with no prices at all (just enabled, or a key just added), sales never fetched, or older history
-    not yet checked. Regular price updates happen in the daily update (see jobs.daily_update_due)."""
+    """Why the open dashboard should refresh prices now (empty list = prices are fine): a market
+    with no prices at all (just enabled, or a key just added), prices over 12 hours old, sales never
+    fetched, or older history not yet checked. The background task only runs the daily update."""
     if not db.query_one("SELECT 1 FROM items LIMIT 1"):
         return []
     prefs = settings.get_all()
@@ -136,6 +136,9 @@ def refresh_reasons() -> list[str]:
         source = SOURCES[key]
         if source.available()[0] and key not in have and _hours_since(attempts.get(key)) > Config.PRICE_TTL_HOURS:
             reasons.append(f"{source.label} has no prices yet")
+    newest = db.query_one("SELECT MAX(fetched_at) AS t FROM market_prices WHERE is_manual = 0")["t"]
+    if newest and _hours_since(newest) > Config.PRICE_TTL_HOURS:
+        reasons.append(f"prices are more than {Config.PRICE_TTL_HOURS:g} hours old")
     no_sales = not db.query_one("SELECT 1 FROM sale_prices WHERE source = 'skinport'")
     if "skinport" in prefs["enabled_markets"] and no_sales and _hours_since(attempts.get("sales")) > Config.PRICE_TTL_HOURS:
         reasons.append("recent sales haven't been fetched yet")

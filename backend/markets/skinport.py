@@ -17,6 +17,7 @@ SALES_URL = "https://api.skinport.com/v1/sales/history"
 # Sales windows Skinport reports, shortest first. A window needs this many sales to be preferred.
 SALES_WINDOWS = (("last_7_days", "7 days"), ("last_30_days", "30 days"), ("last_90_days", "90 days"))
 SALES_PREFERRED_VOLUME = 3
+SALES_CACHE_SECONDS = 24 * 3600   # ~2 MB, and sales move slowly: once a day is plenty
 
 
 def pick_sales(entry: dict) -> tuple[float, int, str] | None:
@@ -55,9 +56,9 @@ class Skinport(BulkPriceList):
 
     def sales(self) -> list[list]:
         """Recent sales of every item: [name, median price, number of sales, period] (cached like the
-        price list). Sales are real transactions, so they show what listings are realistic."""
+        price list, but for a day). Sales are real transactions, so they show what listings are realistic."""
         key = f"sales_skinport_{self.currency}"
-        cached = cache.get_cached(key, Config.BULK_CACHE_MINUTES * 60)
+        cached = cache.get_cached(key, SALES_CACHE_SECONDS)
         if cached is not None:
             return cached
         try:

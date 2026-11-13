@@ -69,16 +69,20 @@ cp .env.example .env               # optional - edit to add a CSFloat key
 python app.py --open
 ```
 
-The app keeps running while its window is open. **Refresh prices** fetches immediately. Otherwise the **daily
-update** (Steam re-sync, prices, snapshot) runs once a day, never before 12:00: at 12:00 if the PC is on, or as
-soon as it's on after that. If the markets can't be reached (say the internet is down), it's tried again every
-hour until it works. One-off catch-ups, such as a market you've just enabled, run straight away.
+The app keeps running while its window is open. Whenever you open it, it brings everything up to date straight
+away (the **daily update**: Steam re-sync, prices, snapshot, if it hasn't run yet today), then refreshes prices
+when they're over 12 hours old while it stays open. **Refresh prices** fetches immediately, any time.
 
 **Keep it updating while the app is closed (Windows):** this adds a scheduled task, for your account only, that
-follows the same rules in the background, with no window. It runs every hour from 12:00 and 2 minutes after you
-sign in, and usually exits within a second: before 12:00, once today's update has worked, or while the
-dashboard is open (it updates itself). Each run is noted in `data\update.log`. Days the PC is off all day are
-skipped; charts carry the last value across.
+runs the daily update in the background with no window, never before 12:00: at 12:00 if the PC is on, or as soon
+as it's on after that. If the markets can't be reached (say the internet is down), it tries again the next hour.
+Once today's update has happened, by the task or because you opened the dashboard, it does nothing more until
+tomorrow; those hourly checks only read your local database and use no internet. Each run is noted in
+`data\update.log`. Days the PC is off all day are skipped; charts carry the last value across.
+
+An update downloads about 5–6 MB (mostly the Skinport, Market.CSGO and Waxpeer price lists, plus Skinport's
+sales history, which is fetched at most once a day). The one-per-item CSFloat and Steam requests are small and
+spaced seconds apart, so they never hog a slow connection.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1           # add -DryRun to preview
@@ -104,7 +108,7 @@ Most of them can also be changed later in the app's **Settings** dialog.
 | `STICKER_RATE_MIN` / `MAX`, `STICKER_PREMIUM_CAP` | Tune the sticker formula (5–15 % of loose price, capped at 100 % of the skin's price by default). |
 | `HOST`, `PORT` | Where the local server listens (default `127.0.0.1:5000`; keep `127.0.0.1` so only your PC can open it). |
 | `AUTO_DAILY_SNAPSHOT`, `AUTO_SYNC_STEAM` | Turn the automatic daily update and Steam re-sync on or off. |
-| `DAILY_UPDATE_TIME` | Earliest time of day for the daily update (default `12:00`). |
+| `DAILY_UPDATE_TIME` | Earliest time of day for the automatic background update (default `12:00`). |
 | `ITEM_IMAGES` | Find pictures for items you add by hand (default `true`). |
 
 ### API keys
