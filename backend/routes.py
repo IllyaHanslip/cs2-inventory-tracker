@@ -15,7 +15,7 @@ from .currency import FxConverter, last_source
 from .http_client import ApiError, RateLimitError
 from .jobs import JobBusy, jobs, refresh_job, sync_job
 from .markets import MANUAL_PREFIX, SOURCES, Quote, market_label
-from .refresh import save_quotes
+from .refresh import price_from_saved_lists, save_quotes
 from .steam_inventory import resolve_steam_id
 from .valuation import Valuator
 
@@ -346,6 +346,7 @@ def create_item():
             storage.mark_storage(conn, container_id)
         item_id, stacked = storage.add_item(conn, values, stickers or [])
     images.ensure([values["market_hash_name"]])
+    price_from_saved_lists([values["market_hash_name"], *(applied_hash_name(s["kind"], s["name"]) for s in stickers or [])])
     return jsonify(item=_get_item(item_id), stacked=stacked), 201
 
 
@@ -368,6 +369,7 @@ def update_item(item_id: int):
             _replace_stickers(conn, item_id, stickers)
     if values.get("market_hash_name"):
         images.ensure([values["market_hash_name"]])
+    price_from_saved_lists([values.get("market_hash_name"), *(applied_hash_name(s["kind"], s["name"]) for s in stickers or [])])
     return jsonify(item=_get_item(item_id))
 
 
@@ -466,6 +468,7 @@ def add_to_container(container_id: int):
             stacked += storage.add_item(conn, values, [])[1]
         used = storage.contents_count(conn, container_id)
     images.ensure(name for name, _ in rows)
+    price_from_saved_lists(name for name, _ in rows)
     return jsonify(added=len(rows) - stacked, stacked=stacked, contents_count=used, capacity=storage.CAPACITY), 201
 
 

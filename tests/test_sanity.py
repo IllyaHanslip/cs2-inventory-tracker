@@ -176,3 +176,20 @@ def test_container_cards_link_to_stored_items(client):
     card = client.get("/api/containers").get_json()["containers"][0]
     stored = client.get(f"/api/containers/{box}").get_json()["contents"][0]
     assert card["preview"][0]["id"] == stored["id"]
+
+
+def test_new_items_priced_at_once_from_saved_lists(client):
+    """Adding items prices them from the lists already saved on this PC - no download needed."""
+    from backend import cache
+
+    cache.set_cached(SOURCES["waxpeer"]._cache_key(), [["Recoil Case", 0.5, 30, None], [STICKER, 0.8, 5, None]])
+    cache.set_cached(f"sales_skinport_{SOURCES['skinport'].currency}", [[SLAB, 0.71, 1, "90 days"]])
+    db.execute("UPDATE api_cache SET fetched_at = 0")          # old lists still count: nothing is downloaded
+    client.post("/api/items", json={"market_hash_name": "Recoil Case", "quantity": 3}, headers=HEADERS)
+    assert item(client, "Recoil Case")["unit_value"] == pytest.approx(0.5 * 0.94 * 0.98)   # Waxpeer: 6 % + 2 %
+    box = client.post("/api/items", json={"market_hash_name": "Storage Unit", "category": "container"},
+                      headers=HEADERS).get_json()["item"]["id"]
+    client.post(f"/api/containers/{box}/items", json={"items": [{"market_hash_name": SLAB, "quantity": 2}]},
+                headers=HEADERS)
+    slab = item(client, SLAB)
+    assert slab["value_basis"] == "sales" and slab["sticker_inside"]["value"] is not None

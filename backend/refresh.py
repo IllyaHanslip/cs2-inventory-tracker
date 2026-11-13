@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 from config import Config
 
-from . import comparables, currency, db, history, images, settings
+from . import cache, comparables, currency, db, history, images, settings
 from .classify import applied_hash_name
 from .sanity import sticker_inside
 from .http_client import ApiError, AuthError, CancelledError, RateLimitError
@@ -54,6 +54,30 @@ def save_quotes(market: str, quotes: Iterable[Quote], *, manual: bool = False) -
     sold = [q for q in quotes if q.sold_price]
     if sold:
         save_sales(market, [(q.market_hash_name, q.sold_price, q.currency, q.volume, "recent") for q in sold])
+
+
+def price_from_saved_lists(names) -> int:
+    """Price newly added items straight away from the price lists and sales already saved on this
+    PC (no download), so they don't sit unpriced until the next refresh. Per-item markets (CSFloat,
+    Steam) fill in on the next refresh. Returns how many prices were found."""
+    wanted = {n for n in names if n and n not in NEVER_LISTED}
+    wanted |= {inner for n in wanted if (inner := sticker_inside(n))}
+    if not wanted:
+        return 0
+    enabled = settings.get_all()["enabled_markets"]
+    found = 0
+    for key in enabled:
+        source = SOURCES[key]
+        if not source.bulk:
+            continue
+        quotes = source.saved_quotes(wanted)
+        save_quotes(key, quotes.values())
+        found += len(quotes)
+    if "skinport" in enabled:
+        skinport = SOURCES["skinport"]
+        rows = cache.get_stale(f"sales_skinport_{skinport.currency}") or []
+        save_sales("skinport", [(r[0], r[1], skinport.currency, r[2], r[3]) for r in rows if r[0] in wanted])
+    return found
 
 
 def save_sales(source: str, rows: list[tuple]) -> None:

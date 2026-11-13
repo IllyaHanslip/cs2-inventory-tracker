@@ -61,12 +61,19 @@ class BulkPriceList(MarketSource):
         cache.set_cached(key, rows)
         return rows
 
-    def fetch_bulk(self, names: set[str]) -> dict[str, Quote]:
+    def _quotes(self, rows: list[list], names: set[str]) -> dict[str, Quote]:
         return {
             row[0]: Quote(row[0], float(row[1]), self.currency, row[2], row[3] or self.listing_url(row[0]))
-            for row in self.load_rows()
+            for row in rows
             if row[0] in names
         }
+
+    def fetch_bulk(self, names: set[str]) -> dict[str, Quote]:
+        return self._quotes(self.load_rows(), names)
+
+    def saved_quotes(self, names: set[str]) -> dict[str, Quote]:
+        """Prices from the list already saved on this PC, however old - never downloads."""
+        return self._quotes(cache.get_stale(self._cache_key()) or [], names)
 
 
 class MarketCSGO(BulkPriceList):
