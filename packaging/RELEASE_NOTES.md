@@ -2,7 +2,13 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.1.0
+### What's new in v1.1.1
+
+- The first Steam sync after updating saves each storage unit's item count from Steam. Until then the
+  app can't tell a stored item from a sold one, so it asks where items went instead of guessing
+  "sold". From the next sync on, moves are matched up automatically.
+
+### v1.1.0
 
 - **Storage moves noticed for you.** After a Steam sync, items that left your inventory or came back
   are matched with each storage unit's item count from Steam ("15 Clutch Cases left and Long Holds

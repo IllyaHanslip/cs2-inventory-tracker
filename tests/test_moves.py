@@ -159,3 +159,17 @@ def test_event_sets(client, monkeypatch):
     slab = client.get("/api/sets/items?event=Budapest 2025").get_json()["items"][0]
     assert (slab["kind"], slab["subject"], slab["variant"]) == ("Sticker slab", "3DMAX", "Gold")
     assert client.get("/api/sets/items").status_code == 400
+
+
+def test_first_sync_after_updating_asks_instead_of_guessing_sold(client, steam):
+    """Counts saved for the first time: an item that left can't be called "sold" yet."""
+    steam(make("unit-1", "Storage Unit"), make("case-1", "Recoil Case"))          # older version: no count saved
+    steam(make("unit-1", "Storage Unit", storage_count=1))                        # case moved in meanwhile
+    (change,) = pending()
+    assert change["suggestion"] is None
+    # From then on the counts are compared: a brand-new unit starts from zero.
+    steam(make("unit-1", "Storage Unit", storage_count=1), make("unit-2", "Storage Unit", storage_count=0,
+                                                                name_tag="New"), make("case-2", "Recoil Case"))
+    steam(make("unit-1", "Storage Unit", storage_count=1), make("unit-2", "Storage Unit", storage_count=1, name_tag="New"))
+    new = [c for c in pending() if c["id"] != change["id"]]
+    assert len(new) == 1 and new[0]["suggestion"] == "store" and new[0]["container_label"] == "New"

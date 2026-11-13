@@ -38,7 +38,9 @@ def detect(conn, left: list[dict], arrived: list[dict], units: list[dict], now: 
     if not left and not arrived:
         return 0
     info = {u["id"]: u for u in units}
-    counts_known = bool(units) and all(u["after"] is not None for u in units)
+    # Only when every unit's count is known before and after can "no unit grew" mean "sold". (The
+    # first sync after updating has no earlier counts saved yet: then you're asked instead.)
+    counts_known = bool(units) and all(u["after"] is not None and u["before"] is not None for u in units)
     deltas = {u["id"]: u["after"] - u["before"] for u in units if u["after"] is not None and u["before"] is not None}
     found: list[tuple] = []
 

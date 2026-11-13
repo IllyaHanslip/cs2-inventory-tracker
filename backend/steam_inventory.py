@@ -320,8 +320,9 @@ def sync_inventory(steam_id_input: str, job=None) -> dict[str, Any]:
                 before = row if row else next(
                     (r for a, r in existing.items() if a not in fetched_ids and r["is_storage"]
                      and r["market_hash_name"] == item["market_hash_name"] and r["name_tag"] == item["name_tag"]), None)
+                # A storage unit you've only just got starts empty.
                 units.append({"id": item_id, "name_tag": item["name_tag"], "after": count,
-                              "before": before["steam_count"] if before else None})
+                              "before": before["steam_count"] if before else (0 if count is not None else None)})
 
             conn.execute("DELETE FROM item_stickers WHERE item_id = ?", (item_id,))
             conn.executemany(
