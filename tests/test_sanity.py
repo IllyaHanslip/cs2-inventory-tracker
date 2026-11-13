@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from backend import catalogue, db, history, jobs, refresh, sanity
+from backend import catalogue, db, history, refresh, sanity
 from backend.comparables import StickerIds
 from backend.markets import SOURCES, Quote
 from backend.markets.skinport import pick_sales
@@ -176,21 +176,3 @@ def test_container_cards_link_to_stored_items(client):
     card = client.get("/api/containers").get_json()["containers"][0]
     stored = client.get(f"/api/containers/{box}").get_json()["contents"][0]
     assert card["preview"][0]["id"] == stored["id"]
-
-
-def test_background_update_runs_only_when_needed(client, monkeypatch):
-    calls = []
-    monkeypatch.setattr(jobs, "daily_job", lambda job: calls.append("daily") or {})
-    monkeypatch.setattr(jobs, "refresh_job", lambda job: calls.append("refresh") or {})
-    assert jobs.background_update() == {"skipped": "no items yet"}
-
-    client.post("/api/items", json={"market_hash_name": "Recoil Case"}, headers=HEADERS)
-    seen = []
-    monkeypatch.setattr(jobs, "daily_job", lambda job: seen.append(jobs.background_update_running()) or {})
-    outcome = jobs.background_update()
-    assert outcome["ran"] == "daily update" and seen == [True]     # marked as running meanwhile...
-    assert not jobs.background_update_running()                      # ...and cleared afterwards
-
-    history.take_snapshot()
-    monkeypatch.setattr(refresh, "refresh_reasons", lambda: [])
-    assert jobs.background_update() == {"skipped": "already up to date today"}

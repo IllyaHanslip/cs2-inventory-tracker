@@ -37,6 +37,8 @@ class BulkPriceList(MarketSource):
         return None
 
     def load_rows(self) -> list[list]:
+        # ``stale`` is set when the market couldn't be reached and its last saved list was used.
+        self.stale = False
         key = self._cache_key()
         cached = cache.get_cached(key, Config.BULK_CACHE_MINUTES * 60)
         if cached is not None:
@@ -53,6 +55,7 @@ class BulkPriceList(MarketSource):
             stale = cache.get_stale(key)
             if stale is not None:
                 log.warning("%s unavailable (%s); using cached prices", self.label, exc)
+                self.stale = True
                 return stale
             raise ApiError(f"{self.label}: {exc}") from None
         cache.set_cached(key, rows)

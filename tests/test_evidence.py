@@ -95,4 +95,4 @@ def test_refresh_reasons(client, monkeypatch):
     db.execute("UPDATE market_prices SET fetched_at = ?", (db.utcnow_iso(),))
     assert refresh_reasons() == []                                  # tried recently - don't hammer
     db.execute("UPDATE market_prices SET fetched_at = '2020-01-01T00:00:00+00:00'")
-    assert any("hours old" in r for r in refresh_reasons())
+    assert refresh_reasons() == []          # old prices wait for the daily update (see test_schedule.py)

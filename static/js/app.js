@@ -45,6 +45,7 @@ const app = {
     const parts = [
       `Steam sync: ${s.last_steam_sync ? relTime(s.last_steam_sync) : 'never'}`,
       `Prices updated: ${s.prices_updated ? relTime(s.prices_updated) : 'never'}`,
+      `Daily update (from ${s.daily_update_time}): ${s.last_daily_update ? relTime(s.last_daily_update) : 'not yet'}`,
       `Last snapshot: ${s.last_snapshot ? relTime(s.last_snapshot) : 'none yet'}`,
       'Values: after selling fees',
       `Markets: ${s.markets.filter((m) => m.enabled && m.available).map((m) => m.label).join(', ') || 'none'}`,

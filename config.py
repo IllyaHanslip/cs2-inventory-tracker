@@ -103,7 +103,8 @@ class Config:
     # --- Scheduler ------------------------------------------------------------
     AUTO_DAILY_SNAPSHOT = _bool("AUTO_DAILY_SNAPSHOT", True)
     AUTO_SYNC_STEAM = _bool("AUTO_SYNC_STEAM", True)
-    SCHEDULER_INTERVAL_MINUTES = max(5, _int("SCHEDULER_INTERVAL_MINUTES", 60))
+    # The daily update (Steam re-sync, prices, snapshot) never runs before this time of day (24-hour, local).
+    DAILY_UPDATE_TIME = _env("DAILY_UPDATE_TIME", "12:00")
 
     # --- Misc -----------------------------------------------------------------
     STEAM_IMAGE_CDN = _env("STEAM_IMAGE_CDN", "https://community.steamstatic.com/economy/image/")

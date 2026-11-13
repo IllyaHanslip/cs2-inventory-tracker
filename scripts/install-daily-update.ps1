@@ -1,18 +1,31 @@
 <#
 .SYNOPSIS
-    Keeps prices and the daily snapshot up to date even on days you don't open the dashboard.
+    Runs the daily update (prices, Steam re-sync, snapshot) even on days you don't open the dashboard.
 
 .DESCRIPTION
-    Registers a Windows scheduled task (for your user account only, no admin rights needed) that
-    runs "app.py --update" in the background, with no window, every 2 hours while the PC is on
-    (and straight away if the PC was off at a scheduled time). Each run checks first and exits
-    within a second or two if there's nothing to do: today's snapshot is saved and prices are
-    under 12 hours old, or the dashboard is open (it updates itself). So the real work happens
-    about twice a day. If the PC is off all day, that day is skipped: charts carry the last
-    value across the gap. What it did is written to data\update.log.
+    Registers a Windows scheduled task, for your user account only, that runs "app.py --update" in the
+    background with no window:
+      * every hour from 12:00 until midnight - and if the PC was off at one of those times, as soon as
+        it's switched on again;
+      * 2 minutes after you sign in to Windows.
+    Each run decides for itself and usually exits in a second or two:
+      * before 12:00 it does nothing - the daily update never runs earlier in the day;
+      * from 12:00 it runs the update once (at 12:00 if the PC is on, or when you switch it on later);
+      * if that couldn't reach the markets (say the internet was down), the next hour tries again;
+      * once it has worked, nothing more happens until tomorrow;
+      * while the dashboard is open it does nothing: the dashboard follows the same rules itself.
+    If the PC is off all day, that day is skipped and charts carry the last value across.
+    Every run is noted in data\update.log.
 
         powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1
+        powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1 -DryRun
         powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1 -Remove
+
+    To use a time other than 12:00, set DAILY_UPDATE_TIME (e.g. 18:00) in .env and pass the same
+    time here with -Time 18:00.
+
+.PARAMETER Time
+    First run of the day (24-hour clock, default 12:00). Keep it the same as DAILY_UPDATE_TIME in .env.
 
 .PARAMETER Remove
     Delete the scheduled task again.
@@ -20,7 +33,7 @@
 .PARAMETER DryRun
     Show what would be registered without changing anything.
 #>
-param([switch]$Remove, [switch]$DryRun)
+param([string]$Time = '12:00', [switch]$Remove, [switch]$DryRun)
 
 $ErrorActionPreference = 'Stop'
 $taskName = 'CS2 Inventory Intelligence - daily update'
@@ -40,29 +53,46 @@ $pythonw = Join-Path $root '.venv\Scripts\pythonw.exe'
 if (-not (Test-Path $pythonw)) {
     throw "Python environment not found. Run launch.bat once first (it sets everything up), then run this again."
 }
+$at = [datetime]::ParseExact($Time, 'HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+$untilMidnight = $at.Date.AddDays(1).AddMinutes(-1) - $at
 $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 $action = New-ScheduledTaskAction -Execute $pythonw -Argument "`"$(Join-Path $root 'app.py')`" --update" -WorkingDirectory $root
-# Every day from midnight, repeating every 2 hours.
-$trigger = New-ScheduledTaskTrigger -Daily -At '00:00'
-$trigger.Repetition = (New-ScheduledTaskTrigger -Once -At '00:00' -RepetitionInterval (New-TimeSpan -Hours 2) `
-    -RepetitionDuration (New-TimeSpan -Hours 23 -Minutes 59)).Repetition
+# Every day from $Time, repeating hourly until midnight (the hourly retry).
+$hourly = New-ScheduledTaskTrigger -Daily -At $at
+$hourly.Repetition = (New-ScheduledTaskTrigger -Once -At $at -RepetitionInterval (New-TimeSpan -Hours 1) `
+    -RepetitionDuration $untilMidnight).Repetition
+# Shortly after you sign in (before $Time it simply does nothing).
+$signIn = New-ScheduledTaskTrigger -AtLogOn -User $user
+$signIn.Delay = 'PT2M'
+# StartWhenAvailable: a run missed because the PC was off happens as soon as it's on again.
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit (New-TimeSpan -Hours 2) -MultipleInstances IgnoreNew
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+$description = 'Refreshes CS2 Inventory Intelligence prices and saves the daily snapshot after ' + $at.ToString('HH:mm') +
+    ', even when the dashboard is closed. Retries hourly if the markets cannot be reached.'
 
 if ($DryRun) {
     Write-Host "Would register '$taskName' for $user"
-    Write-Host "  runs:    $pythonw $($action.Arguments)"
-    Write-Host "  in:      $root"
-    Write-Host "  when:    daily from $($trigger.StartBoundary), every $($trigger.Repetition.Interval) for $($trigger.Repetition.Duration)"
-    Write-Host "  catches up after missed runs: $($settings.StartWhenAvailable)"
+    Write-Host "  runs:  $pythonw $($action.Arguments)"
+    Write-Host "  in:    $root"
+    Write-Host "  when:  daily from $($at.ToString('HH:mm')), every hour for $untilMidnight; and 2 minutes after you sign in"
+    Write-Host "  catches up after the PC was off: $($settings.StartWhenAvailable)"
     return
 }
 
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings `
-    -Principal $principal -Force `
-    -Description 'Refreshes CS2 Inventory Intelligence prices and saves the daily snapshot, even when the dashboard is closed.' | Out-Null
+$register = @{ TaskName = $taskName; Action = $action; Settings = $settings; Principal = $principal;
+               Description = $description; Force = $true }
+try {
+    Register-ScheduledTask @register -Trigger $hourly, $signIn | Out-Null
+    $when = "after $($at.ToString('HH:mm')) - at that time if the PC is on, or as soon as you sign in later"
+} catch [Microsoft.Management.Infrastructure.CimException] {
+    # Some PCs only let administrators add sign-in triggers. The hourly trigger still catches
+    # up straight after the PC is switched on, because missed runs start as soon as possible.
+    Register-ScheduledTask @register -Trigger $hourly | Out-Null
+    $when = "after $($at.ToString('HH:mm')) - at that time if the PC is on, or soon after you switch it on later"
+}
 
-Write-Host "Scheduled '$taskName': every 2 hours while the PC is on (it only does real work about twice a day)."
-Write-Host "Results are logged to $(Join-Path $root 'data\update.log'). Remove it with: -Remove"
+Write-Host "Done. The daily update now runs once a day $when."
+Write-Host "If it can't reach the markets, it tries again every hour until midnight."
+Write-Host "Each run is noted in $(Join-Path $root 'data\update.log'). To undo: add -Remove to the same command."

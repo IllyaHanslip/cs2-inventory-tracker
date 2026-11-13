@@ -123,8 +123,9 @@ def _hours_since(iso: str | None) -> float:
 
 
 def refresh_reasons() -> list[str]:
-    """Why a price refresh is due right now (empty list = prices are fine).
-    Used at start-up and by the hourly scheduler, so new markets/keys fill in without waiting a day."""
+    """Catch-ups that can't wait for the daily update (empty list = nothing to catch up on): a market
+    with no prices at all (just enabled, or a key just added), sales never fetched, or older history
+    not yet checked. Regular price updates happen in the daily update (see jobs.daily_update_due)."""
     if not db.query_one("SELECT 1 FROM items LIMIT 1"):
         return []
     prefs = settings.get_all()
@@ -135,10 +136,8 @@ def refresh_reasons() -> list[str]:
         source = SOURCES[key]
         if source.available()[0] and key not in have and _hours_since(attempts.get(key)) > Config.PRICE_TTL_HOURS:
             reasons.append(f"{source.label} has no prices yet")
-    newest = db.query_one("SELECT MAX(fetched_at) AS t FROM market_prices WHERE is_manual = 0")["t"]
-    if newest and _hours_since(newest) > Config.PRICE_TTL_HOURS:
-        reasons.append(f"prices are more than {Config.PRICE_TTL_HOURS:g} hours old")
-    if "skinport" in prefs["enabled_markets"] and not db.query_one("SELECT 1 FROM sale_prices WHERE source = 'skinport'")             and _hours_since(attempts.get("sales")) > Config.PRICE_TTL_HOURS:
+    no_sales = not db.query_one("SELECT 1 FROM sale_prices WHERE source = 'skinport'")
+    if "skinport" in prefs["enabled_markets"] and no_sales and _hours_since(attempts.get("sales")) > Config.PRICE_TTL_HOURS:
         reasons.append("recent sales haven't been fetched yet")
     if db.query_one("SELECT 1 FROM portfolio_snapshots WHERE basis = 'after_fees' AND screened = 0"):
         reasons.append("older history needs checking for unrealistic prices")
@@ -212,6 +211,8 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
         return {"names": 0, "quotes": {}, "warnings": []}
 
     found: dict[str, int] = {}
+    fresh: list[str] = []         # markets that sent new prices
+    unreachable: list[str] = []   # markets that couldn't be reached (e.g. no internet)
     per_item: list[MarketSource] = []
     for key in prefs["enabled_markets"]:
         source = SOURCES[key]
@@ -228,11 +229,18 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
             quotes = source.fetch_bulk(set(names))
         except ApiError as exc:
             job.warn(f"{source.label}: {exc}")
+            unreachable.append(key)
+            continue
+        if getattr(source, "stale", False):
+            job.warn(f"{source.label} couldn't be reached, so its last saved prices were kept.")
+            unreachable.append(key)
             continue
         save_quotes(key, quotes.values())
         drop_quotes(key, [n for n in names if n not in quotes])
         _mark_checked(key, *names)
         found[key] = len(quotes)
+        if quotes:
+            fresh.append(key)
 
     if "skinport" in prefs["enabled_markets"]:
         found["sales"] = refresh_sales(names, job)
@@ -246,6 +254,10 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
             for key, future in futures.items():
                 count, warning = future.result()
                 found[key] = count
+                if count:
+                    fresh.append(key)
+                elif warning and work[key]:
+                    unreachable.append(key)
                 if warning:
                     job.warn(warning)
 
@@ -261,4 +273,7 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
     job.update(message="Saving today's snapshot…")
     snapshot = history.take_snapshot()
     job.update(message="Prices updated.")
-    return {"names": len(names), "quotes": found, "sticker_evidence": sticker_evidence, "snapshot": snapshot}
+    return {"names": len(names), "quotes": found, "sticker_evidence": sticker_evidence, "snapshot": snapshot,
+            "fresh": fresh, "unreachable": unreachable,
+            # Complete unless nothing new arrived because markets couldn't be reached.
+            "complete": bool(fresh) or not unreachable}

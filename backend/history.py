@@ -33,10 +33,6 @@ def _days_ago(days: int) -> str:
     return (date.today() - timedelta(days=days)).isoformat()
 
 
-def has_snapshot_today() -> bool:
-    return db.query_one("SELECT 1 FROM portfolio_snapshots WHERE snapshot_date = ?", (today(),)) is not None
-
-
 # ---------------------------------------------------------------------------
 # Writing snapshots
 # ---------------------------------------------------------------------------

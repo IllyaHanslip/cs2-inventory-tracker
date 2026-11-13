@@ -5,6 +5,8 @@ import logging
 import threading
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
+from datetime import time as clock_time
 from typing import Any, Callable
 
 from config import Config
@@ -136,7 +138,8 @@ def refresh_job(job: Job, force: bool = False) -> dict[str, Any]:
 
 
 def daily_job(job: Job) -> dict[str, Any]:
-    """Re-sync the saved Steam inventory (if any), refresh prices and snapshot."""
+    """Re-sync the saved Steam inventory (if any), refresh prices and snapshot. Counts as today's
+    daily update only if fresh prices arrived; otherwise it's tried again next hour."""
     from . import settings
     from .refresh import refresh_prices
 
@@ -150,7 +153,73 @@ def daily_job(job: Job) -> dict[str, Any]:
         except (ApiError, ValueError) as exc:
             job.warn(f"Steam sync skipped: {exc}")
     result["prices"] = refresh_prices(job)
+    result["complete"] = bool(result["prices"].get("complete", True))
+    if result["complete"]:
+        settings.set_value("last_daily_update", _now().astimezone(timezone.utc).replace(microsecond=0).isoformat())
+    else:
+        job.warn("No market could be reached (is the internet down?), so the daily update will be tried again next hour.")
     return result
+
+
+# ---------------------------------------------------------------------------
+# When the daily update runs
+# ---------------------------------------------------------------------------
+def _now() -> datetime:
+    """Local time now (a function, so tests can set the clock)."""
+    return datetime.now()
+
+
+def daily_update_start(now: datetime | None = None) -> datetime:
+    """The earliest the daily update may run today: DAILY_UPDATE_TIME (default 12:00), local time."""
+    now = now or _now()
+    try:
+        at = datetime.strptime(Config.DAILY_UPDATE_TIME.strip(), "%H:%M").time()
+    except ValueError:
+        at = clock_time(12, 0)
+    return datetime.combine(now.date(), at)
+
+
+def daily_update_due(now: datetime | None = None) -> bool:
+    """Due from DAILY_UPDATE_TIME until today's daily update has completed - so never earlier in
+    the day, at that time if the PC is already on, as soon as it's on if it was off, and again
+    every hour after a run that couldn't reach the markets."""
+    from . import settings
+
+    now = now or _now()
+    start = daily_update_start(now)
+    if now < start:
+        return False
+    last = settings.get("last_daily_update")
+    if last:
+        try:
+            done = datetime.fromisoformat(last).astimezone().replace(tzinfo=None)
+        except (TypeError, ValueError):
+            done = None
+        if done is not None and done >= start:
+            return False
+    return True
+
+
+def scheduled_action(now: datetime | None = None) -> tuple[str, str] | None:
+    """What the dashboard's hourly check should start: ("daily", why), ("refresh", why) or None.
+    Besides the daily update, only one-off catch-ups run (a market with no prices at all, sales or
+    history never checked), e.g. straight after you add a market or key."""
+    from . import db
+    from .refresh import refresh_reasons
+
+    if db.query_one("SELECT 1 FROM items LIMIT 1") is None or jobs.busy() or background_update_running():
+        return None
+    if daily_update_due(now):
+        return "daily", "the daily update is due"
+    reasons = refresh_reasons()
+    return ("refresh", "; ".join(reasons)) if reasons else None
+
+
+def seconds_to_next_hour(now: datetime | None = None) -> float:
+    """Seconds until just after the next full hour, so checks happen at 12:00, 13:00, ..."""
+    now = now or _now()
+    following = (now + timedelta(hours=1)).replace(minute=0, second=5, microsecond=0)
+    return max((following - now).total_seconds(), 30.0)
 
 
 UPDATE_MARKER_MAX_AGE = 2 * 3600   # a marker older than this is left over from a crash
@@ -171,27 +240,26 @@ def background_update_running() -> bool:
 
 def background_update() -> dict[str, Any]:
     """The daily update without the dashboard open (``app.py --update``, run by the Windows
-    scheduled task from scripts/install-daily-update.ps1). Does nothing if today's snapshot is
-    already saved and prices are fresh."""
+    scheduled task from scripts/install-daily-update.ps1). Runs only when it's due: not before
+    DAILY_UPDATE_TIME, once a day, and again next hour if the markets couldn't be reached."""
     from . import db, images
-    from .history import has_snapshot_today
-    from .refresh import refresh_reasons
 
     if db.query_one("SELECT 1 FROM items LIMIT 1") is None:
         return {"skipped": "no items yet"}
-    snapshot_done = has_snapshot_today()
-    reasons = refresh_reasons()
-    if snapshot_done and not reasons:
-        return {"skipped": "already up to date today"}
+    now = _now()
+    start = daily_update_start(now)
+    if now < start:
+        return {"skipped": f"it's before {start:%H:%M}, when the daily update starts"}
+    if not daily_update_due(now):
+        return {"skipped": "today's daily update is already done"}
     marker = _update_marker()
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(str(time.time()), encoding="utf-8")
     try:
         images.backfill()
         job = Job("daily", "Daily update")
-        result = refresh_job(job) if snapshot_done else daily_job(job)
-        return {"ran": "price refresh" if snapshot_done else "daily update", "reasons": reasons,
-                "result": result, "warnings": job.warnings}
+        result = daily_job(job)
+        return {"ran": "daily update", "complete": result["complete"], "result": result, "warnings": job.warnings}
     finally:
         marker.unlink(missing_ok=True)
 
@@ -213,17 +281,14 @@ def find_pictures_now(timeout: float) -> None:
 
 
 def start_scheduler() -> None:
-    """Checks at start-up and then hourly: runs the daily update once a day, and refreshes
-    prices sooner when a market has no prices yet (e.g. just enabled, or a key just added)
-    or the prices have gone stale."""
+    """While the dashboard is open: a check at start-up and then on every full hour, which runs
+    the daily update when it's due (see daily_update_due) plus one-off catch-ups."""
     if not Config.AUTO_DAILY_SNAPSHOT:
         log.info("Daily snapshot scheduler disabled")
         return
 
     def loop() -> None:
-        from . import db, images
-        from .history import has_snapshot_today
-        from .refresh import refresh_reasons
+        from . import images
 
         if SHUTDOWN.wait(10):  # give the web server a moment to start
             return
@@ -233,20 +298,18 @@ def start_scheduler() -> None:
             except Exception:  # noqa: BLE001
                 log.exception("Finding item pictures failed")
             try:
-                has_items = db.query_one("SELECT 1 FROM items LIMIT 1") is not None
-                # Skip while the scheduled background update (app.py --update) is doing the same work.
-                if has_items and not jobs.busy() and not background_update_running():
-                    reasons = refresh_reasons()
-                    if not has_snapshot_today():
-                        log.info("No snapshot for today yet - starting the daily update")
+                action = scheduled_action()
+                if action:
+                    kind, why = action
+                    log.info("Starting the %s: %s", "daily update" if kind == "daily" else "price refresh", why)
+                    if kind == "daily":
                         jobs.start("daily", "Daily update", daily_job)
-                    elif reasons:
-                        log.info("Refreshing prices: %s", "; ".join(reasons))
+                    else:
                         jobs.start("refresh", "Price refresh", refresh_job)
             except JobBusy:
                 pass
             except Exception:  # noqa: BLE001
                 log.exception("Scheduler tick failed")
-            SHUTDOWN.wait(Config.SCHEDULER_INTERVAL_MINUTES * 60)
+            SHUTDOWN.wait(seconds_to_next_hour())
 
     threading.Thread(target=loop, name="scheduler", daemon=True).start()

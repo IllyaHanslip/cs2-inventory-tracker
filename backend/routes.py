@@ -104,6 +104,8 @@ def status():
         last_steam_sync=settings.get("last_steam_sync"),
         last_snapshot=settings.get("last_snapshot"),
         prices_updated=newest,
+        last_daily_update=settings.get("last_daily_update"),
+        daily_update_time=Config.DAILY_UPDATE_TIME,
         fees={"checked": fees.FEES_CHECKED, "markets": fee_rows},
         job=jobs.status(),
         categories=CATEGORIES,

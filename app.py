@@ -117,11 +117,14 @@ def _background_update(url: str) -> int:
         log.exception("Background update failed")
         return 1
     if outcome.get("skipped"):
-        log.info("Background update skipped: %s", outcome["skipped"])
+        log.info("Nothing to do: %s.", outcome["skipped"])
+        return 0
+    for warning in outcome.get("warnings", []):
+        log.warning(warning)
+    if outcome["complete"]:
+        log.info("Daily update done.")
     else:
-        log.info("Background update done (%s; %s)", outcome["ran"], "; ".join(outcome["reasons"]) or "daily snapshot")
-        for warning in outcome.get("warnings", []):
-            log.warning(warning)
+        log.warning("Daily update couldn't reach the markets - it will be tried again next hour.")
     return 0
 
 

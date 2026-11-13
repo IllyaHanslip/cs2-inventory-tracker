@@ -69,19 +69,23 @@ cp .env.example .env               # optional - edit to add a CSFloat key
 python app.py --open
 ```
 
-The app keeps running while its window is open. Prices refresh by themselves: on start-up, then hourly checks,
-with a full update (Steam re-sync, prices, snapshot) once a day. **Refresh prices** fetches immediately.
+The app keeps running while its window is open. **Refresh prices** fetches immediately. Otherwise the **daily
+update** (Steam re-sync, prices, snapshot) runs once a day, never before 12:00: at 12:00 if the PC is on, or as
+soon as it's on after that. If the markets can't be reached (say the internet is down), it's tried again every
+hour until it works. One-off catch-ups, such as a market you've just enabled, run straight away.
 
-**Keep it updating while the app is closed (Windows):** this adds a scheduled task, for your account only (no
-admin rights needed), that runs the update in the background every 2 hours while the PC is on. Each run exits
-straight away unless there's work to do (no snapshot yet today, or prices over 12 hours old), and skips entirely
-while the dashboard is open, so the real work happens about twice a day. It logs to `data\update.log`. Days the
-PC is off all day are skipped; charts carry the last value across.
+**Keep it updating while the app is closed (Windows):** this adds a scheduled task, for your account only, that
+follows the same rules in the background, with no window. It runs every hour from 12:00 and 2 minutes after you
+sign in, and usually exits within a second: before 12:00, once today's update has worked, or while the
+dashboard is open (it updates itself). Each run is noted in `data\update.log`. Days the PC is off all day are
+skipped; charts carry the last value across.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1           # add -DryRun to preview
 powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1 -Remove   # remove it again
 ```
+
+To use another time, set `DAILY_UPDATE_TIME` in `.env` and pass the same time to the script with `-Time`.
 
 On other systems, schedule `python app.py --update` with cron or similar.
 
@@ -100,6 +104,7 @@ Most of them can also be changed later in the app's **Settings** dialog.
 | `STICKER_RATE_MIN` / `MAX`, `STICKER_PREMIUM_CAP` | Tune the sticker formula (5–15 % of loose price, capped at 100 % of the skin's price by default). |
 | `HOST`, `PORT` | Where the local server listens (default `127.0.0.1:5000`; keep `127.0.0.1` so only your PC can open it). |
 | `AUTO_DAILY_SNAPSHOT`, `AUTO_SYNC_STEAM` | Turn the automatic daily update and Steam re-sync on or off. |
+| `DAILY_UPDATE_TIME` | Earliest time of day for the daily update (default `12:00`). |
 | `ITEM_IMAGES` | Find pictures for items you add by hand (default `true`). |
 
 ### API keys
