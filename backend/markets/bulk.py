@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import quote
 
 from config import Config
 
 from .. import cache
 from ..http_client import ApiError, RateLimitedClient
-from .base import MarketSource, Quote
+from .base import MarketSource, Quote, page_slug
 
 log = logging.getLogger(__name__)
 
@@ -83,6 +84,10 @@ class MarketCSGO(BulkPriceList):
     label = "Market.CSGO"
     url = "https://market.csgo.com/api/v2/prices/USD.json"
 
+    def listing_url(self, market_hash_name: str) -> str | None:
+        # Its item pages are /en/<category>/<exact name>; the item is found by its name.
+        return f"https://market.csgo.com/en/{quote(_csgo_category(market_hash_name))}/{quote(market_hash_name, safe='')}"
+
     def parse(self, data):
         if not data.get("success"):
             raise ApiError("Market.CSGO reported an error")
@@ -97,6 +102,10 @@ class Waxpeer(BulkPriceList):
     url = "https://api.waxpeer.com/v1/prices"
     params = {"game": "csgo", "minified": 1}
 
+    def listing_url(self, market_hash_name: str) -> str | None:
+        slug = page_slug(market_hash_name)          # waxpeer.com/<slug>/item
+        return f"https://waxpeer.com/{slug}/item" if slug else None
+
     def parse(self, data):
         if not data.get("success"):
             raise ApiError("Waxpeer reported an error")
@@ -105,6 +114,25 @@ class Waxpeer(BulkPriceList):
             for i in data["items"]
             if i.get("min") and (i.get("count") or 0) > 0
         ]
+
+
+def _csgo_category(name: str) -> str:
+    """Market.CSGO's section for an item (Rifle, Knife, Container, Sticker...)."""
+    from ..classify import categorize
+    from ..tags import WEAPON_CLASS, split_skin
+
+    category = categorize(name)
+    if category == "container":
+        return "Container"
+    if category in ("sticker", "sticker_slab"):
+        return "Sticker"
+    if category == "weapon_skin":
+        if name.startswith("★"):
+            return "Gloves" if "Gloves" in name or "Wraps" in name else "Knife"
+        weapon, _finish = split_skin(name)
+        cls = WEAPON_CLASS.get(weapon or "", "Other")
+        return {"Sniper rifle": "Sniper Rifle", "Machine gun": "Machinegun"}.get(cls, cls)
+    return "Other"
 
 
 def _int(value) -> int | None:

@@ -31,6 +31,9 @@ class SteamMarket(MarketSource):
             "Steam Market", min_interval=Config.STEAM_MARKET_MIN_INTERVAL, base_backoff=45, max_retries=1
         )
 
+    def listing_url(self, market_hash_name: str) -> str | None:
+        return steam_listing_url(market_hash_name)
+
     def fetch_one(self, market_hash_name: str) -> Quote | None:
         resp = self.client.get(
             PRICEOVERVIEW_URL,

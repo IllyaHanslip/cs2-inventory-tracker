@@ -155,6 +155,11 @@ class Valuator:
         df = pd.DataFrame(db.query(f"SELECT {', '.join(QUOTE_COLUMNS)} FROM market_prices"), columns=QUOTE_COLUMNS)
         enabled = set(self.prefs["enabled_markets"])
         df = df[df["market"].isin(enabled) | (df["is_manual"] == 1)].copy()
+        from .markets import SOURCES   # (here: the markets package imports this module's neighbours)
+
+        df["url"] = [url if isinstance(url, str) and url else
+                     (SOURCES[market].listing_url(name) if market in SOURCES else None)
+                     for url, market, name in zip(df["url"], df["market"], df["market_hash_name"])]
         df["price_base"] = pd.Series(
             [self.fx.convert(p, c, self.base) for p, c in zip(df["price"], df["currency"])],
             index=df.index,

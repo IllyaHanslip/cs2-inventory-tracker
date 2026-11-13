@@ -133,8 +133,9 @@ def plan(target: float, valuator, *, include_wallet: bool = False, keep: set[int
                                       "weekly": lot["weekly"]})
         step["units"] += 1
         step["proceeds"] += net
-        where = step["markets"].setdefault(market, {"market": market, "label": market_label(market), "units": 0,
-                                                    "net": net, "capacity": capacity})
+        where = step["markets"].setdefault(market, {
+            "market": market, "label": market_label(market), "units": 0, "net": net, "capacity": capacity,
+            "url": next((o.get("url") for o in lot["options"] if o["market"] == market), None)})
         where["units"] += 1
         bucket = markets.setdefault(market, {"market": market, "label": market_label(market), "units": 0, "proceeds": 0.0})
         bucket["units"] += 1

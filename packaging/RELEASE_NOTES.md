@@ -2,7 +2,14 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.2.1
+### What's new in v1.2.2
+
+- **Links to every market**: Waxpeer and Market.CSGO prices now link straight to the item's page there,
+  like Steam, Skinport and CSFloat (prices saved earlier get their links too). In "Best 3 to sell" and the
+  Sell Planner, each market's name opens the item on that market.
+- Manual quotes can have a link to the listing you saw.
+
+### v1.2.1
 
 - Item names inside containers and in the Sell Planner look like the rest of the app instead of like
   links; click anywhere on the row (or press Enter on it) to see the item's details.

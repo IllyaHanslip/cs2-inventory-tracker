@@ -1,7 +1,7 @@
 // Market filter chips ("compare on specific markets") and the "best 3 to sell" / "3 cheapest"
 // helpers shared by every price list.
 
-import { esc, money, number, store } from './util.js';
+import { esc, money, number, safeUrl, store } from './util.js';
 
 /** Markets to offer: the enabled automatic sources plus any manual-quote markets seen in the data. */
 export function availableMarkets(status, quoteLists = []) {
@@ -106,5 +106,13 @@ export function noCashLabel(market, short = false) {
 export function sellHtml(top, currency) {
   if (!top.length) return '<span class="muted">—</span>';
   return `<ol class="cheapest">${top.map((q, i) => `<li class="${i === 0 ? 'first' : ''}"><span class="val">${money(q.net, currency)}</span>
-    <span class="mkt">${esc(q.label)}${q.wallet ? ` <span class="wallet-tag" title="${esc(noCashLabel(q.market))}">${esc(noCashLabel(q.market, true))}</span>` : ''}</span></li>`).join('')}</ol>`;
+    <span class="mkt">${marketLink(q.label, q.url)}${q.wallet ? ` <span class="wallet-tag" title="${esc(noCashLabel(q.market))}">${esc(noCashLabel(q.market, true))}</span>` : ''}</span></li>`).join('')}</ol>`;
+}
+
+/** A market's name, linking to the item's page on that market when there is one. */
+export function marketLink(label, url) {
+  const href = safeUrl(url);
+  return href
+    ? `<a class="market-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="Open on ${esc(label)}">${esc(label)} <span aria-hidden="true">↗</span></a>`
+    : esc(label);
 }

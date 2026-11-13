@@ -27,6 +27,9 @@ class CSFloat(MarketSource):
             return False, "needs CSFLOAT_API_KEY in .env"
         return True, ""
 
+    def listing_url(self, market_hash_name: str) -> str | None:
+        return f"https://csfloat.com/search?market_hash_name={quote(market_hash_name, safe='')}"
+
     def fetch_one(self, market_hash_name: str) -> Quote | None:
         resp = self.client.get(
             LISTINGS_URL,
@@ -58,6 +61,6 @@ class CSFloat(MarketSource):
             float(cents) / 100.0,
             "USD",
             None,
-            f"https://csfloat.com/search?market_hash_name={quote(market_hash_name, safe='')}",
+            self.listing_url(market_hash_name),
             reference_price=float(reference) / 100.0 if isinstance(reference, (int, float)) and reference > 0 else None,
         )

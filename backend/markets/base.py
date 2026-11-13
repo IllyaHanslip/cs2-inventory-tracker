@@ -18,6 +18,12 @@ class Quote:
     reference_price: float | None = None   # the market's own estimate of what it sells for (CSFloat)
 
 
+def page_slug(market_hash_name: str) -> str:
+    """The item-page form of a name used by Waxpeer and Skinport: lower case, words joined by "-"
+    ("StatTrak™ AK-47 | Redline (Field-Tested)" -> "stattrak-ak-47-redline-field-tested")."""
+    return re.sub(r"[^a-z0-9]+", "-", market_hash_name.lower().replace("™", "").replace("★", "")).strip("-")
+
+
 class MarketSource:
     key = ""
     label = ""
@@ -32,6 +38,10 @@ class MarketSource:
 
     def fetch_one(self, market_hash_name: str) -> Quote | None:
         raise NotImplementedError
+
+    def listing_url(self, market_hash_name: str) -> str | None:
+        """The item's page on this market (for quotes saved without one)."""
+        return None
 
 
 def parse_money(text: str | None) -> float | None:

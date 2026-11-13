@@ -681,3 +681,8 @@ tbody.group-body.collapsed tr.row { display: none; }
 .pnl-scroll { max-height: 640px; overflow-y: auto; overscroll-behavior: contain; }
 .pnl-scroll { --head-top: 0px; }   /* headers stick to the top of this box, not the page */
 .danger-text { color: var(--critical-text); }
+
+/* Links to an item's page on a market */
+.market-link { color: #8fbaf0; text-decoration: none; }
+.market-link:hover, .market-link:focus-visible { color: var(--accent-hover); text-decoration: underline; }
+.market-link span { font-size: 0.85em; }

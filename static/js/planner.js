@@ -3,7 +3,7 @@
 
 import { api } from './api.js';
 import * as dialogs from './dialogs.js';
-import { noCashLabel } from './market-filter.js';
+import { marketLink, noCashLabel } from './market-filter.js';
 import { applySort } from './sortable.js';
 import { debounce, esc, money, number, store, thumbHtml, toast } from './util.js';
 
@@ -44,6 +44,7 @@ export class PlannerView {
         this.reload();
         return;
       }
+      if (event.target.closest('a')) return;            // a market link: just open it
       const view = event.target.closest('[data-view]');
       if (view) this.view(view.dataset.view);
     });
@@ -115,7 +116,7 @@ export class PlannerView {
         <td>${thumbHtml({ icon: s.icon, category: 'other' })}</td>
         <td data-v="${esc(s.name)}"><div class="item-name">${esc(s.name)}</div></td>
         <td class="num strong" data-v="${s.units}">${number(s.units)}<div class="sub">of ${number(s.held)}</div></td>
-        <td data-v="${esc(s.markets.map((m) => m.label).join(', '))}">${s.markets.map((m) => `${number(m.units)} on ${esc(m.label)}
+        <td data-v="${esc(s.markets.map((m) => m.label).join(', '))}">${s.markets.map((m) => `${number(m.units)} on ${marketLink(m.label, m.url)}
           <span class="muted small">at ${money(m.net, cur)}${m.market === 'steam' ? ` · ${esc(noCashLabel('steam', true))}` : ''}</span>`).join('<br>')}</td>
         <td class="num strong" data-v="${s.proceeds}">${money(s.proceeds, cur)}</td>
         <td class="small" data-v="${esc(s.reasons.join('; '))}">${s.reasons.map(esc).join('<br>')}</td>

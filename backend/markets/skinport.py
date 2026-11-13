@@ -11,6 +11,7 @@ from config import Config
 
 from .. import cache
 from ..http_client import ApiError, RateLimitedClient
+from .base import page_slug
 from .bulk import BulkPriceList
 
 SALES_URL = "https://api.skinport.com/v1/sales/history"
@@ -53,6 +54,11 @@ class Skinport(BulkPriceList):
     @property
     def params(self) -> dict:  # type: ignore[override]
         return {"app_id": 730, "currency": self.currency, "tradable": 0}
+
+    def listing_url(self, market_hash_name: str) -> str | None:
+        # Skinport sends each item's page with its prices; this is the same address, for any saved without it.
+        slug = page_slug(market_hash_name)
+        return f"https://skinport.com/item/{slug}" if slug else None
 
     def sales(self) -> list[list]:
         """Recent sales of every item: [name, median price, number of sales, period] (cached like the

@@ -671,7 +671,10 @@ def add_quote():
     code = _currency(data.get("currency"), "Currency") or settings.get("base_currency")
     if code not in FxConverter.load().currencies():
         raise ValueError(f"No exchange rate is available for {code}. Refresh prices first to load rates.")
-    save_quotes(MANUAL_PREFIX + label, [Quote(name, price, code)], manual=True)
+    url = str(data.get("url") or "").strip() or None
+    if url and (len(url) > 500 or not re.match(r"https?://[^\s/]+\.[^\s]+$", url)):
+        raise ValueError("The link must be a web address starting with https://")
+    save_quotes(MANUAL_PREFIX + label, [Quote(name, price, code, None, url)], manual=True)
     return jsonify(ok=True), 201
 
 
