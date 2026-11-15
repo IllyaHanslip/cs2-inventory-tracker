@@ -2,7 +2,24 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.2.2
+### What's new in v1.3.0
+
+- **Smoother to use**: toggles have a highlight that slides to your choice, the tab underline slides
+  between tabs, pop-ups and tabs fade in, confirmed changes slide away, and buttons and filters respond
+  as you click them. Switching toggles (Selling / Buying, the Profit & Loss views, the Sell Planner's
+  wallet option) no longer makes the page jump.
+- **Column headers**: hovering one highlights it without moving any column or re-wrapping any text, and
+  sort arrows no longer change a column's width.
+- **One row per market** in an item's details: a market whose only listing is unrealistic now says so
+  once ("Ignored: its lowest listing (£0.78) is more than 3 times what it has recently sold for…"),
+  linking to that listing, instead of also saying it isn't listed there. Market Comparison marks those
+  as "ignored" (hover for why) rather than "—".
+- The market table in an item's details has evenly spaced number columns, with fees on two lines.
+- **Market Comparison**: click any row to see that item's details.
+- **Changes from Steam syncs**: what you choose or type on each row is kept when you confirm another
+  one (and if you reload), and "Confirm all as set" confirms every row exactly as you've set it.
+
+### v1.2.2
 
 - **Links to every market**: Waxpeer and Market.CSGO prices now link straight to the item's page there,
   like Steam, Skinport and CSFloat (prices saved earlier get their links too). In "Best 3 to sell" and the

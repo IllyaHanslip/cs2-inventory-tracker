@@ -121,6 +121,8 @@ DEMO_LEDGER = [
     (6, "out", "Sticker | Liquid (Holo) | Paris 2023", 2, 1.45, 1.10),
     (3, "out", "MAG-7 | Justice (Field-Tested)", 1, 1.85, None),
 ]
+# One silly listing, so the demo shows how the app ignores prices nobody would pay.
+UNREALISTIC_LISTING = ("Recoil Case", "skinport")
 BUFF_QUOTES = {"AK-47 | Redline (Field-Tested)": 0.83, "AWP | Asiimov (Battle-Scarred)": 0.81,
                "★ Karambit | Doppler (Factory New)": 0.85}
 
@@ -234,8 +236,10 @@ def seed() -> None:
         last = values[-1]
         for market, (_, _, ccy) in market_ranges.items():
             volume = None if market == "csfloat" else rng.randint(1, 9000)
-            quote_rows.append((name, market, round(last * mults[name][market] * fx[(days[-1], ccy)], 2), ccy,
-                               volume, None, 0, now))
+            price = round(last * mults[name][market] * fx[(days[-1], ccy)], 2)
+            if (name, market) == UNREALISTIC_LISTING:
+                price = round(price * 60, 2)   # someone's asking far too much: the app ignores it
+            quote_rows.append((name, market, price, ccy, volume, None, 0, now))
         if name in BUFF_QUOTES:
             quote_rows.append((name, "manual:Buff163", round(last * BUFF_QUOTES[name] * fx[(days[-1], "CNY")], 1),
                                "CNY", None, None, 1, now))

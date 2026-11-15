@@ -7,6 +7,7 @@ import * as dialogs from './dialogs.js';
 import { InventoryView } from './inventory.js';
 import { initLayout, updateStickyOffsets } from './layout.js';
 import { MarketsView } from './markets.js';
+import { initMotion } from './motion.js';
 import { PlannerView } from './planner.js';
 import { PnlView } from './pnl.js';
 import { deltaHtml, esc, money, number, relTime, state, store, toast } from './util.js';
@@ -35,6 +36,7 @@ const app = {
     this.views.pnl = new PnlView(document.getElementById('panel-pnl'), this);
     this.bindTopbar();
     this.bindTabs();
+    initMotion();
     initLayout();
     await Promise.all([this.views.public.reload(), this.views.total.reload(), this.views.containers.reload()]);
     const job = state.status.job;

@@ -6,6 +6,7 @@ import { api } from './api.js';
 import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
 import { confirmDialog, suggestNames } from './dialogs.js';
 import { markClean, protectForm } from './guard.js';
+import { steady } from './motion.js';
 import { applySortWithin } from './sortable.js';
 import { esc, longDate, money, number, store, thumbHtml, toast } from './util.js';
 
@@ -95,6 +96,7 @@ export class PnlView {
         ? `On ${items(t.spent.items)} bought with a price.`
         : 'Nothing yet: this counts every item bought with a price.',
     }[this.mode];
+    steady(this.el.explain);
 
     this.renderChart();
     this.renderStats();

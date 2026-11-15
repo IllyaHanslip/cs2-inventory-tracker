@@ -15,6 +15,41 @@ const $ = (selector) => document.querySelector(selector);
 // Rows typed into "Add items" are saved per container as you go, so closing the window,
 // reloading the page or restarting the app doesn't lose them.
 const draftKey = (id) => `draft:container:${id}`;
+const CHANGE_DRAFTS = 'draft:changes';
+const changeDrafts = new Map(Object.entries(store.get(CHANGE_DRAFTS, {}) || {}));
+
+function saveChangeDraft(row) {
+  const select = row.querySelector('select');
+  const price = row.querySelector('.change-price input');
+  changeDrafts.set(row.dataset.key, { choice: select ? select.value : null, price: price ? price.value : '' });
+  store.set(CHANGE_DRAFTS, Object.fromEntries(changeDrafts));
+}
+
+function forgetChangeDraft(key) {
+  changeDrafts.delete(String(key));
+  store.set(CHANGE_DRAFTS, Object.fromEntries(changeDrafts));
+}
+
+const changeKey = (c) => `${c.id}:${c.market_hash_name}`;
+
+/** Put back what was chosen / typed on each row before the list was redrawn. */
+function restoreChangeDrafts(box, pending, currency) {
+  const keys = new Set(pending.map(changeKey));
+  for (const key of [...changeDrafts.keys()]) if (!keys.has(key)) changeDrafts.delete(key);   // dealt with
+  store.set(CHANGE_DRAFTS, Object.fromEntries(changeDrafts));
+  for (const row of box.querySelectorAll('[data-change]')) {
+    const draft = changeDrafts.get(row.dataset.key);
+    if (!draft) continue;
+    const select = row.querySelector('select');
+    if (select && draft.choice !== null && [...select.options].some((o) => o.value === draft.choice)) select.value = draft.choice;
+    const box2 = row.querySelector('.change-price');
+    if (select) {
+      box2.hidden = !['gone', 'keep'].includes(select.value);
+      box2.querySelector('input').placeholder = `${select.value === 'keep' ? 'Paid' : 'Sold for'} each (${currency})`;
+    }
+    box2.querySelector('input').value = draft.price || '';
+  }
+}
 
 export const ICONS = {
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
@@ -121,6 +156,11 @@ export class ContainersView {
       box.hidden = !priced;
       box.querySelector('input').placeholder = `${event.target.value === 'keep' ? 'Paid' : 'Sold for'} each (${this.changes.currency || state.currency})`;
       if (priced) box.querySelector('input').focus();
+      saveChangeDraft(row);
+    });
+    root.querySelector('#ct-changes').addEventListener('input', (event) => {
+      const row = event.target.closest('[data-change]');
+      if (row && event.target.matches('.change-price input')) saveChangeDraft(row);
     });
     root.querySelector('#ct-changes').addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && event.target.matches('.change-price input')) {
@@ -156,8 +196,6 @@ export class ContainersView {
     alert.textContent = changes.length ? String(changes.length) : '';
     alert.title = changes.length ? `${changes.length} change${changes.length === 1 ? '' : 's'} from Steam to review` : '';
     if (!changes.length) { box.innerHTML = ''; return; }
-    const suggested = changes.filter((c) => c.suggestion).length;
-    const all = suggested === changes.length ? 'all ' : `${number(suggested)} `;
     box.innerHTML = `<section class="card changes-card" aria-labelledby="changes-title">
       <div class="card-head">
         <div>
@@ -167,22 +205,22 @@ export class ContainersView {
             picked: the storage unit already holding the same item) or what it sold for, and what new items cost. Prices
             are optional and go on the Profit &amp; Loss tab. Nothing changes until you confirm, and × dismisses one for good.</p>
         </div>
-        ${suggested ? `<button type="button" class="btn btn-primary" data-act="changes-all">Confirm ${all}suggestion${suggested === 1 ? '' : 's'}</button>` : ''}
+        <button type="button" class="btn btn-primary" data-act="changes-all" title="Confirms each row as it's set now; rows with nothing chosen (and new items without a price) are left for you">Confirm all as set</button>
       </div>
       <ul class="change-list">${changes.map((c) => changeRowHtml(c, units, this.changes.currency || state.currency)).join('')}</ul>
     </section>`;
+    restoreChangeDrafts(box, changes, this.changes.currency || state.currency);
   }
 
   async applyChange(row) {
-    const choice = (row.querySelector('select') || row.querySelector('input[type="hidden"]')).value;
-    if (!choice) throw new Error('Choose what happened first.');
-    const [action, unit] = choice.split(':');
-    const box = row.querySelector('.change-price');
-    const raw = box.hidden ? '' : box.querySelector('input').value.trim();
-    const price = raw === '' ? null : Number(raw);
-    if (price !== null && !(price >= 0)) throw new Error('Prices must be a number (or leave it empty).');
+    const body = rowChoice(row);
+    if (!body) throw new Error('Choose what happened first.');
+    const { action, price } = body;
+    const unit = body.container_id ? String(body.container_id) : '';
     const change = this.changes.changes.find((c) => String(c.id) === row.dataset.change);
-    await api(`/changes/${row.dataset.change}`, { method: 'POST', body: { action, container_id: unit ? Number(unit) : null, price } });
+    await api(`/changes/${row.dataset.change}`, { method: 'POST', body });
+    forgetChangeDraft(row.dataset.key);
+    await leave(row);
     const label = this.changes.units.find((u) => String(u.id) === unit)?.label;
     const what = `${number(change.quantity)} × ${change.name}`;
     const cur = this.changes.currency || state.currency;
@@ -200,14 +238,28 @@ export class ContainersView {
 
   async dismissChange(row) {
     await api(`/changes/${row.dataset.change}`, { method: 'POST', body: { action: 'dismiss' } });
+    forgetChangeDraft(row.dataset.key);
+    await leave(row);
     await afterChange();
   }
 
+  /** Confirm every row as it's set on screen (your choices and prices, not just the suggestions). */
   async applyAllChanges() {
-    const result = await api('/changes/apply-suggested', { method: 'POST' });
-    const left = result.pending ? ` ${number(result.pending)} still need you to choose.` : '';
-    toast(`Confirmed ${number(result.applied)} change${result.applied === 1 ? '' : 's'}.${left}`, 'ok');
-    for (const problem of result.problems || []) toast(problem, 'warn', 9000);
+    const rows = [...this.root.querySelectorAll('#ct-changes [data-change]')];
+    let done = 0;
+    for (const row of rows) {
+      const body = rowChoice(row, { needPriceForNew: true });
+      if (!body) continue;
+      try {
+        await api(`/changes/${row.dataset.change}`, { method: 'POST', body });
+        forgetChangeDraft(row.dataset.key);
+        done += 1;
+      } catch (error) {
+        toast(error.message, 'warn', 9000);
+      }
+    }
+    const left = rows.length - done;
+    toast(`Confirmed ${number(done)} change${done === 1 ? '' : 's'}.${left ? ` ${number(left)} still need you to choose.` : ''}`, 'ok');
     await afterChange();
   }
 
@@ -267,6 +319,28 @@ export class ContainersView {
   }
 }
 
+/** What a change row is set to, as the request to confirm it (null: nothing chosen yet). */
+function rowChoice(row, { needPriceForNew = false } = {}) {
+  const choice = (row.querySelector('select') || row.querySelector('input[type="hidden"]')).value;
+  if (!choice) return null;
+  const [action, unit] = choice.split(':');
+  const box = row.querySelector('.change-price');
+  const raw = box.hidden ? '' : box.querySelector('input').value.trim();
+  const price = raw === '' ? null : Number(raw);
+  if (price !== null && !(price >= 0)) throw new Error('Prices must be a number (or leave it empty).');
+  if (needPriceForNew && action === 'bought' && price === null) return null;   // a new item: only with a price
+  return { action, container_id: unit ? Number(unit) : null, price };
+}
+
+/** A confirmed / dismissed row slides out before the list is redrawn. */
+function leave(row) {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve();
+  row.style.height = `${row.offsetHeight}px`;
+  void row.offsetHeight;                     // (start from its real height)
+  row.classList.add('leaving');
+  return new Promise((resolve) => setTimeout(resolve, 200));
+}
+
 function changeRowHtml(c, units, currency) {
   const meta = [
     c.exterior ? esc(c.exterior) : '',
@@ -313,7 +387,7 @@ function changeRowHtml(c, units, currency) {
     ? ' <span class="badge" title="A best guess from what your storage units hold - check it">best guess</span>' : '';
   const paid = c.kind === 'left' && c.purchase_price !== null && c.purchase_price !== undefined
     ? ` · you paid ${money(c.purchase_price, c.purchase_currency || currency)} each` : '';
-  return `<li class="change-row" data-change="${c.id}" data-kind="${c.kind}">
+  return `<li class="change-row" data-change="${c.id}" data-key="${esc(changeKey(c))}" data-kind="${c.kind}">
     ${thumbHtml({ icon: c.icon, category: 'other' })}
     <div class="change-main">
       <div><strong>${number(c.quantity)} × ${esc(c.name)}</strong>${guess}${meta ? ` <span class="muted small">${meta}</span>` : ''}</div>

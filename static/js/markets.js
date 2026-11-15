@@ -6,7 +6,8 @@
 
 import { api } from './api.js';
 import * as dialogs from './dialogs.js';
-import { MarketFilter, noCashLabel } from './market-filter.js';
+import { MarketFilter, asideText, noCashLabel } from './market-filter.js';
+import { steady } from './motion.js';
 import { applySort } from './sortable.js';
 import {
   debounce, esc, longDate, money, number, relTime, safeUrl, state, store, thumbHtml, toast,
@@ -52,11 +53,19 @@ export class MarketsView {
       this.render();
     });
     this.el.search.addEventListener('input', debounce(() => this.render(), 200));
+    this.el.table.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && event.target.matches('tbody tr[data-name]')) dialogs.openItemByName(event.target.dataset.name);
+    });
     root.querySelector('#mk-add-quote').addEventListener('click', () => dialogs.addQuote());
 
     this.el.table.addEventListener('click', async (event) => {
       const remove = event.target.closest('button[data-remove]');
-      if (!remove) return;
+      if (!remove) {
+        // Anywhere else on a row (except its links) opens the item's detail view.
+        const row = event.target.closest('tbody tr[data-name]');
+        if (row && !event.target.closest('a')) dialogs.openItemByName(row.dataset.name);
+        return;
+      }
       event.stopPropagation();
       try {
         await api('/quotes', { method: 'DELETE', body: { market: remove.dataset.remove, market_hash_name: remove.dataset.name } });
@@ -125,6 +134,7 @@ export class MarketsView {
     const rows = this.computeRows(markets);
     this.renderFx();
     this.renderDeals(rows, markets);
+    steady(this.el.deals);
 
     const head = markets.map((m) => `<th class="num" data-sort="num" data-key="m:${esc(m.key)}"
       ${selling && !m.cash_out ? `title="${esc(noCashLabel(m.key))}"` : ''}>${esc(m.label)}${selling && !m.cash_out ? ` <span class="muted">(${esc(noCashLabel(m.key, true))})</span>` : ''}</th>`).join('');
@@ -137,11 +147,20 @@ export class MarketsView {
     this.el.legend.innerHTML = `<span>${selling ? 'Best places to sell, after fees' : 'Cheapest places to buy'}:</span>
       ${MEDALS.map((label, i) => `<span><span class="medal m${i + 1}">${i + 1}</span>${label}</span>`).join('')}
       ${selling ? '<span class="muted">Steam is ranked too, but its money goes to your Steam Wallet and cannot be withdrawn. These are plain listing prices; your Total Portfolio also counts custom prices and sticker values.</span>' : ''}`;
+    steady(this.el.legend);
 
     this.el.table.querySelector('tbody').innerHTML = rows.map((row, index) => {
       const cells = markets.map((m) => {
         const quote = row.prices[m.key];
-        if (!quote) return '<td class="num price-cell" data-v=""><span class="muted">—</span></td>';
+        const ignored = row.ignored?.[m.key];
+        if (!quote && ignored) {
+          const why = esc(`Ignored: ${asideText(ignored, currency)}`);
+          const href = safeUrl(ignored.url);
+          const text = href ? `<a class="ignored-cell" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${why}">ignored</a>`
+            : `<span class="ignored-cell" title="${why}">ignored</span>`;
+          return `<td class="num price-cell" data-v="">${text}</td>`;
+        }
+        if (!quote) return '<td class="num price-cell" data-v=""><span class="muted" title="Not listed there right now">—</span></td>';
         const shown = selling ? quote.net : quote.price_base;
         const url = safeUrl(quote.url);
         const value = `<span class="val">${money(shown, currency)}</span>`;
@@ -170,7 +189,7 @@ export class MarketsView {
           : '<span class="muted">—</span>';
         last = `<td class="num" data-v="${row.saving ?? ''}">${saving}</td>`;
       }
-      return `<tr data-i="${index}">
+      return `<tr class="row" data-i="${index}" data-name="${esc(row.market_hash_name)}" tabindex="0" title="Show details">
         <td>${thumbHtml(row)}</td>
         <td data-v="${esc(row.market_hash_name)}"><div class="item-name">${esc(row.market_hash_name)}</div></td>
         <td class="num" data-v="${row.quantity}">${number(row.quantity)}</td>${cells}

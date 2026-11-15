@@ -203,6 +203,7 @@ class Valuator:
         for name in sorted(groups, key=lambda n: n.startswith(sanity.SLAB_PREFIX)):  # stickers before slabs
             group = groups[name]
             listings = {m: float(p) for m, p in zip(group["market"], group["price_base"])}
+            urls = dict(zip(group["market"], group["url"]))
             inner_name = sanity.sticker_inside(name)
             inner = reference.get(inner_name) if inner_name else None
             sold = self.sales.get(name, {}).get("price")
@@ -212,7 +213,8 @@ class Valuator:
             reference[name] = trusted or (statistics.median(kept.values()) if kept else None)
             for market, verdict in aside.items():
                 drop += list(group.index[group["market"] == market])
-                self.set_aside.setdefault(name, []).append({"market": market, "price": listings[market], **verdict})
+                self.set_aside.setdefault(name, []).append({"market": market, "price": listings[market],
+                                                            "url": urls.get(market), **verdict})
         return df.drop(index=drop)
 
     def _valuation_prices(self) -> dict[str, float]:

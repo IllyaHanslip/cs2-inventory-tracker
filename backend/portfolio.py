@@ -520,6 +520,10 @@ def market_comparison(valuator, scope: str = "total") -> dict[str, Any]:
             "best_price": _py(best_price.get(name)) if name in best_price.index else None,
             "spread_pct": _py(spread.get(name)) if name in spread.index else None,
             "steam_saving": _py(steam_saving.get(name)) if name in steam_saving.index else None,
+            # Listings left out as unrealistic (sanity.py): shown as "ignored", not as "not listed".
+            "ignored": {a["market"]: {"price": a["price"], "reason": a["reason"], "reference": a["reference"],
+                                      "url": a.get("url")}
+                        for a in valuator.set_aside.get(name, []) if a["market"] not in prices},
         })
     return {"currency": valuator.base, "markets": markets, "rows": rows, "fx": fx_info}
 

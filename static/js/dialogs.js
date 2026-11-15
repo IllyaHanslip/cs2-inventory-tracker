@@ -5,7 +5,8 @@ import { api } from './api.js';
 import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
 import * as containers from './containers.js';
 import { initDialogs, markClean, protectForm } from './guard.js';
-import { MarketFilter, bulkText, noCashLabel } from './market-filter.js';
+import { MarketFilter, asideText, bulkText, marketLink, noCashLabel } from './market-filter.js';
+import { steady } from './motion.js';
 import { applySortWithin } from './sortable.js';
 import {
   CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, isStorage, longDate, money, number, relTime, safeUrl,
@@ -155,6 +156,19 @@ export function confirmDialog({ title, message, buttons, quantity = null, select
 // ---------------------------------------------------------------------------
 // Item details
 // ---------------------------------------------------------------------------
+/** The detail view for an item known only by name (Market Comparison, Sell Planner): your first copy of it. */
+export async function openItemByName(name) {
+  try {
+    const { items } = await api('/items', { params: { scope: 'total' } });
+    const item = items.find((i) => i.market_hash_name === name && !i.is_storage)
+      || items.find((i) => i.market_hash_name === name);
+    if (item) await openItem(item);
+    else toast(`${name} isn't in your inventory any more.`, 'warn');
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
 export async function openItem(item) {
   const dialog = $('#item-dialog');
   if (itemChart) { itemChart.destroy(); itemChart = null; }
@@ -252,6 +266,13 @@ function kv(label, value, cls = '') {
 const pctText = (rate) => `${+(rate * 100).toFixed(2)}%`;
 
 /** One market's fees as text, e.g. "2% sale + 2.5% withdrawal" or "15% on top (Steam)". */
+/** The fee breakdown on (at most) two lines: the selling fee, then the withdrawal fee. */
+function feeLines(q) {
+  const sale = q.mode === 'on_top' ? `${pctText(q.sale_rate)} on top` : `${pctText(q.sale_rate)} sale`;
+  const lines = q.withdraw_rate ? [sale, `${pctText(q.withdraw_rate)} withdrawal`] : [sale];
+  return lines.map((line) => `<span class="line">${esc(line)}</span>`).join('');
+}
+
 function feeText(q) {
   const sale = q.mode === 'on_top' ? `${pctText(q.sale_rate)} on top` : `${pctText(q.sale_rate)} sale`;
   return q.withdraw_rate ? `${sale} + ${pctText(q.withdraw_rate)} withdrawal` : sale;
@@ -330,12 +351,6 @@ function bulkHtml(item, cur) {
     <ul>${plan.map((s) => `<li>${number(s.units)} on ${esc(s.label)} at ${money(s.net, cur)} = ${money(s.units * s.net, cur)}
       <span class="muted">(${esc(why(s))})</span></li>`).join('')}</ul></div>`;
 }
-
-const ASIDE_REASONS = {
-  sales: (ref) => `more than 3 times its recent sales (${money(ref)})`,
-  markets: (ref) => `more than 3 times its price on the other markets (${money(ref)})`,
-  sticker_inside: (ref) => `far above the sticker inside it (${money(ref)})`,
-};
 
 function itemBodyHtml(item) {
   const badges = [
@@ -469,7 +484,9 @@ async function loadItemQuotes(item) {
     const raw = new Map(data.quotes.map((q) => [q.market, q]));
     const rows = item.sell_quotes.map((q) => ({ ...q, raw: raw.get(q.market) }));
     const listed = new Set(rows.map((q) => q.market));
-    const missing = (data.missing || []).filter((m) => !listed.has(m.market));
+    const aside = new Map(item.set_aside.map((a) => [a.market, a]));
+    const missing = (data.missing || []).filter((m) => !listed.has(m.market) && !aside.has(m.market));
+    const asideOnly = item.set_aside.filter((a) => !listed.has(a.market));
     const whole = item.price_source === 'custom' || item.price_source === 'evidence';
     const premium = !whole && item.sticker_premium > 0 ? item.sticker_premium : 0;
     const cur = data.currency;
@@ -477,7 +494,7 @@ async function loadItemQuotes(item) {
     renderStickerMatch(data);
     let render = () => {};
     const filter = new MarketFilter($('#item-market-chips'), 'item-quotes', () => render());
-    filter.setMarkets([...rows, ...missing].map((q) => ({ key: q.market, label: q.label })));
+    filter.setMarkets([...rows, ...missing, ...asideOnly].map((q) => ({ key: q.market, label: q.label })));
     render = () => {
       const shown = rows.filter((q) => filter.includes(q.market));
       const absent = missing.filter((m) => filter.includes(m.market));
@@ -486,6 +503,7 @@ async function loadItemQuotes(item) {
         ? `<div class="cheapest-strip"><span class="filter-label">Best 3 to sell (after fees)</span>${top.map((q, i) => `<span class="cheap-pill${i === 0 ? ' first' : ''}">
             <span class="rank">${i + 1}</span> ${money(q.net, cur)} <span class="mkt">${esc(q.label)}${q.wallet ? ` · ${esc(noCashLabel(q.market, true))}` : ''}</span></span>`).join('')}</div>`
         : '';
+      steady($('#item-cheapest'));
       if (!shown.length && !absent.length) {
         box.innerHTML = '<p class="muted">No markets selected.</p>';
         return;
@@ -504,11 +522,14 @@ async function loadItemQuotes(item) {
         const speed = q.capacity === null || q.capacity === undefined ? ''
           : q.capacity === 0 ? '<div class="sub">no sales in 90 days</div>'
             : `<div class="sub">sells ~${number(q.capacity)} / 30 days</div>`;
-        return `<tr data-i="${i}"><td class="num" data-v="${i + 1}">${i + 1}</td><td data-v="${esc(q.label)}">${name}${best}</td>
+        // Priced another way (recent sales) while its listing was ignored: say so in the same row.
+        const ignored = aside.has(q.market)
+          ? `<div class="sub warn-text">listing ignored: ${esc(asideText(aside.get(q.market), cur))}</div>` : '';
+        return `<tr data-i="${i}"><td class="num" data-v="${i + 1}">${i + 1}</td><td data-v="${esc(q.label)}">${name}${best}${ignored}</td>
           <td class="num strong" data-v="${q.net}">${money(q.net, cur)}${q.wallet ? `<div class="sub">${esc(noCashLabel(q.market))}</div>` : ''}</td>
           <td class="num" data-v="${q.net * qty}">${money(q.net * qty, cur)}</td>
           <td class="num" data-v="${q.gross}">${money(q.gross, cur)}${grossNote}</td>
-          <td class="num" data-v="${fee}" title="${esc(q.raw?.fee_note || '')}">−${money(fee, cur)}<div class="sub">${esc(feeText(q))}</div></td>
+          <td class="num" data-v="${fee}" title="${esc(q.raw?.fee_note || '')}">−${money(fee, cur)}<div class="sub fee-lines">${feeLines(q)}</div></td>
           <td class="num" data-v="${listing ?? ''}">${listing !== null ? money(listing, cur) : '<span class="muted">—</span>'}${original}</td>
           <td class="num" data-v="${q.raw?.volume ?? ''}">${q.raw && q.raw.volume !== null ? number(q.raw.volume) : '—'}${speed}</td>
           <td class="muted small" data-v="${esc(q.raw?.fetched_at || '')}">${q.raw ? esc(relTime(q.raw.fetched_at)) : '—'}</td></tr>`;
@@ -516,9 +537,9 @@ async function loadItemQuotes(item) {
       const unpriced = absent.map((m, j) => `<tr data-i="${shown.length + j}" class="dim">
           <td class="num" data-v=""></td><td data-v="${esc(m.label)}">${esc(m.label)}</td>
           <td colspan="7" class="muted small" data-v="">${esc(m.status)}</td></tr>`);
-      const aside = item.set_aside.filter((a) => filter.includes(a.market)).map((a, j) => `<tr data-i="${shown.length + absent.length + j}" class="dim">
-          <td class="num" data-v=""></td><td data-v="${esc(a.label)}">${esc(a.label)}</td>
-          <td colspan="7" class="small warn-text" data-v="">Ignored: listed at ${money(a.price, cur)}, ${esc((ASIDE_REASONS[a.reason] || (() => 'unrealistic'))(a.reference))}</td></tr>`);
+      const ignoredRows = asideOnly.filter((a) => filter.includes(a.market)).map((a, j) => `<tr data-i="${shown.length + absent.length + j}" class="dim">
+          <td class="num" data-v=""></td><td data-v="${esc(a.label)}">${marketLink(a.label, a.url)}</td>
+          <td colspan="7" class="small warn-text" data-v="">Ignored: ${esc(asideText(a, cur))}, so it isn't a realistic price to sell at</td></tr>`);
       const basis = whole
         ? `${item.price_source === 'custom' ? 'your custom price' : 'the value from CSFloat comparables'}, sold on each market`
         : `each market's cheapest listing of this skin${premium ? ', plus the sticker value counted for this item' : ''}`;
@@ -531,7 +552,7 @@ async function loadItemQuotes(item) {
           <th class="num" data-sort="num" data-key="listing">Listing (${esc(cur)})</th>
           <th class="num" data-sort="num" data-key="volume">Listings / volume</th>
           <th data-sort="text" data-key="updated">Updated</th></tr></thead>
-        <tbody>${priced.concat(unpriced, aside).join('')}</tbody></table></div>
+        <tbody>${priced.concat(unpriced, ignoredRows).join('')}</tbody></table></div>
         ${bulkHtml(item, cur)}
         <p class="hint">"You'd receive" is the selling price minus that market's selling and withdrawal fees (change fees in Settings).
           The selling price here is ${basis}. "Total" assumes that market would take all ${number(qty)} at that price.

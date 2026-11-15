@@ -49,3 +49,12 @@ def test_manual_quotes_can_have_a_link(client):
         r = client.post("/api/quotes", json={"market_hash_name": "Recoil Case", "market_label": "Buff163", "price": 2,
                                              "currency": "CNY", "url": bad}, headers=HEADERS)
         assert r.status_code == 400, bad
+
+
+def test_market_comparison_says_which_listings_were_ignored(client):
+    client.post("/api/items", json={"market_hash_name": "Recoil Case"}, headers=HEADERS)
+    for market, price in (("steam", 1.0), ("csfloat", 1.0), ("skinport", 50.0)):   # Skinport's is unrealistic
+        add_quote("Recoil Case", market, price)
+    row = client.get("/api/market-comparison?scope=total").get_json()["rows"][0]
+    assert "skinport" not in row["prices"]
+    assert row["ignored"]["skinport"]["reason"] == "markets" and row["ignored"]["skinport"]["price"] > 40

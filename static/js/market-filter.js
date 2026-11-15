@@ -109,6 +109,19 @@ export function sellHtml(top, currency) {
     <span class="mkt">${marketLink(q.label, q.url)}${q.wallet ? ` <span class="wallet-tag" title="${esc(noCashLabel(q.market))}">${esc(noCashLabel(q.market, true))}</span>` : ''}</span></li>`).join('')}</ol>`;
 }
 
+const ASIDE_REASONS = {
+  sales: (ref, cur) => `more than 3 times what it has recently sold for (${money(ref, cur)})`,
+  markets: (ref, cur) => `more than 3 times its price on the other markets (${money(ref, cur)})`,
+  sticker_inside: (ref, cur) => `far above the value of the sticker inside it (${money(ref, cur)})`,
+};
+
+/** Why a market's listing was left out, e.g. "its lowest listing (£0.78) is more than 3 times
+ *  what it has recently sold for (£0.0076)". */
+export function asideText(aside, currency) {
+  const why = ASIDE_REASONS[aside.reason] ? ASIDE_REASONS[aside.reason](aside.reference, currency) : 'unrealistic';
+  return `its lowest listing (${money(aside.price, currency)}) is ${why}`;
+}
+
 /** A market's name, linking to the item's page on that market when there is one. */
 export function marketLink(label, url) {
   const href = safeUrl(url);

@@ -4,6 +4,7 @@
 import { api } from './api.js';
 import * as dialogs from './dialogs.js';
 import { marketLink, noCashLabel } from './market-filter.js';
+import { steady } from './motion.js';
 import { applySort } from './sortable.js';
 import { debounce, esc, money, number, store, thumbHtml, toast } from './util.js';
 
@@ -62,14 +63,8 @@ export class PlannerView {
     store.set('planner', { target: Number(this.el.target.value) || 0, wallet: this.el.wallet.checked, keep: [...this.keep] });
   }
 
-  async view(name) {
-    try {
-      const { items } = await api('/items', { params: { scope: 'total' } });
-      const item = items.find((i) => i.market_hash_name === name);
-      if (item) dialogs.openItem(item);
-    } catch (error) {
-      toast(error.message, 'error');
-    }
+  view(name) {
+    return dialogs.openItemByName(name);
   }
 
   async reload() {
@@ -111,6 +106,8 @@ export class PlannerView {
       tile('Markets', number(d.by_market.length), `<span>${d.by_market.map((m) => esc(m.label)).join(', ') || '—'}</span>`),
     ].join('') : '';
 
+    steady(this.el.limit);
+    steady(this.el.stats);
     const body = this.el.table.querySelector('tbody');
     body.innerHTML = d.steps.map((s, i) => `<tr class="row" data-i="${i}" data-view="${esc(s.name)}" tabindex="0" title="Show details">
         <td>${thumbHtml({ icon: s.icon, category: 'other' })}</td>

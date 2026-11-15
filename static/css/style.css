@@ -167,7 +167,7 @@ select.input { padding-right: 28px; }
   border-radius: 0 0 6px 6px; box-shadow: 0 6px 12px -8px rgba(0, 0, 0, 0.8);
 }
 .float-head table { table-layout: fixed; border-collapse: collapse; }
-.float-head table.data th { position: static; }
+.float-head table.data th { position: relative; }
 .tabs::-webkit-scrollbar { display: none; }
 .tabs button {
   padding: 10px 16px; border: 0; background: transparent; color: var(--text-secondary);
@@ -229,10 +229,23 @@ table.data th {
 .dialog, .data-table-wrap { --head-top: 0px; }   /* inside scrolling boxes, stick to their top */
 table.data th[data-sort] { cursor: pointer; user-select: none; }
 table.data th[data-sort]:hover { color: var(--text-primary); }
-table.data th[aria-sort="ascending"]::after { content: " ▲"; font-size: 9px; color: var(--accent-hover); }
-table.data th[aria-sort="descending"]::after { content: " ▼"; font-size: 9px; color: var(--accent-hover); }
+/* Hovering a header: a highlight that reaches a little into the neighbouring headers' padding.
+   Nothing moves, nothing re-wraps, and no text is covered (it stays inside their 12px margins). */
+table.data th[data-sort]::before {
+  content: ""; position: absolute; inset: 4px -5px; border-radius: 6px; background: var(--surface-3);
+  opacity: 0; transform: scaleX(0.92); transition: opacity .14s ease, transform .14s ease;
+  z-index: -1; pointer-events: none;
+}
+table.data th[data-sort]:hover { z-index: 4; }
+table.data th[data-sort]:hover::before { opacity: 1; transform: none; }
+/* Sort arrows sit in the header's edge, outside the text, so they never change a column's width. */
+table.data th[aria-sort="ascending"]::after { content: "▲"; font-size: 9px; color: var(--accent-hover); }
+table.data th[aria-sort="descending"]::after { content: "▼"; font-size: 9px; color: var(--accent-hover); }
+table.data th.sortable:not([aria-sort]):hover::after { content: "↕"; font-size: 10px; opacity: 0.6; }
+table.data th[aria-sort]::after, table.data th.sortable:hover::after {
+  position: absolute; right: 2px; top: 50%; transform: translateY(-50%); line-height: 1;
+}
 table.data th[aria-sort] { color: var(--text-primary); }
-table.data th.sortable:not([aria-sort]):hover::after { content: " ↕"; font-size: 10px; opacity: 0.6; }
 table.data th.sortable:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: -2px; }
 
 /* Market chips & "3 cheapest" */
@@ -686,3 +699,59 @@ tbody.group-body.collapsed tr.row { display: none; }
 .market-link { color: #8fbaf0; text-decoration: none; }
 .market-link:hover, .market-link:focus-visible { color: var(--accent-hover); text-decoration: underline; }
 .market-link span { font-size: 0.85em; }
+
+/* ---------- Motion (quick, and off when the system asks for reduced motion) ---------- */
+/* Toggles: a highlight slides to the chosen option (motion.js). */
+.segmented { position: relative; isolation: isolate; }
+.segmented button { transition: color .15s; }
+.seg-thumb {
+  position: absolute; top: 2px; bottom: 2px; left: 0; width: 0; border-radius: 6px;
+  background: var(--surface-3); z-index: -1; pointer-events: none; opacity: 0;
+}
+.seg-thumb.ready { transition: transform .2s cubic-bezier(.3, .8, .3, 1), width .2s cubic-bezier(.3, .8, .3, 1), opacity .15s; }
+.segmented[data-thumb] button.active { background: transparent; }
+/* Main tabs: one underline that slides to the selected tab. */
+.tab-ink { position: absolute; left: 0; bottom: 0; width: 0; height: 2px; background: var(--accent); border-radius: 2px 2px 0 0; pointer-events: none; }
+.tab-ink.ready { transition: transform .22s cubic-bezier(.3, .8, .3, 1), width .22s cubic-bezier(.3, .8, .3, 1); }
+.tabs.has-ink button[aria-selected="true"] { border-bottom-color: transparent; }
+.tabs button { transition: color .15s; }
+/* Switching tab: the new one fades in. */
+.tab-panel:not([hidden]) { animation: panel-in .18s ease-out; }
+@keyframes panel-in { from { opacity: 0; transform: translateY(4px); } }
+/* Pop-ups open with a quick fade and lift; the page behind dims in. */
+.dialog[open]:not(.nudge) { animation: dialog-in .17s cubic-bezier(.2, .8, .3, 1); }
+.dialog[open]::backdrop { animation: backdrop-in .17s ease-out; }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+@keyframes backdrop-in { from { opacity: 0; } }
+/* Filters, buttons and rows respond smoothly. */
+.chip { transition: background-color .15s, border-color .15s, color .15s, transform .1s; }
+.chip:active { transform: scale(.96); }
+.btn { transition: background .15s, border-color .15s, transform .1s; }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+table.data tbody td { transition: background-color .12s; }
+.mover, .set-item, .container-card { transition: background-color .12s, border-color .15s; }
+/* "Show data table" and similar: the content fades in. */
+details[open] > :not(summary) { animation: fade-in .18s ease-out; }
+@keyframes fade-in { from { opacity: 0; } }
+/* Changes from Steam syncs: a confirmed row slides away; a price box fades in. */
+.change-row.leaving {
+  opacity: 0; transform: translateX(16px); height: 0 !important; padding-top: 0; padding-bottom: 0;
+  overflow: hidden; transition: opacity .18s, transform .18s, height .2s .05s, padding .2s .05s;
+}
+.change-price:not([hidden]) input { animation: fade-in .15s ease-out; }
+/* Cards that are loading fade a little rather than snapping. */
+.card, .table-card { transition: opacity .2s; }
+
+/* ---------- Item detail: the market table's number columns share the width evenly ---------- */
+#item-quotes table.data { table-layout: fixed; min-width: 860px; }
+#item-quotes table.data th { white-space: normal; }
+#item-quotes table.data th:nth-child(1) { width: 40px; }          /* # */
+#item-quotes table.data th:nth-child(2) { width: 17%; }           /* Market */
+#item-quotes table.data th:nth-child(9) { width: 10%; }           /* Updated */
+#item-quotes table.data th, #item-quotes table.data td { padding-left: 8px; padding-right: 8px; }
+#item-quotes table.data td .sub { white-space: normal; }
+#item-quotes .fee-lines .line { display: block; white-space: nowrap; }
+
+/* Market comparison: a listing left out as unrealistic (hover for why; it links to the listing). */
+.ignored-cell { color: var(--warning); font-size: 12px; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+a.ignored-cell { cursor: pointer; }
