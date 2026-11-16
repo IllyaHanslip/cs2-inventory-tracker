@@ -149,8 +149,11 @@ export class InventoryView {
     });
     r.movers.addEventListener('click', (event) => {
       const row = event.target.closest('[data-name]');
-      const item = row && this.items.find((i) => i.market_hash_name === row.dataset.name);
+      if (!row) return;
+      // The list below may be filtered (a category, a search): the movers aren't, so fetch it if needed.
+      const item = this.items.find((i) => i.market_hash_name === row.dataset.name);
       if (item) dialogs.openItem(item);
+      else dialogs.openItemByName(row.dataset.name, { scope: this.scope });
     });
     r.mixDetails.addEventListener('toggle', () => this.renderMixTable());
 
@@ -349,9 +352,11 @@ export class InventoryView {
     if (f) meta.push(`Float ${esc(f)}`);
     if (item.paint_seed !== null) meta.push(`Seed ${esc(item.paint_seed)}`);
     if (item.name_tag) meta.push(`“${esc(item.name_tag)}”`);
+    // "In Long Holds" rather than "In Storage Unit “Long Holds”": short enough to keep the column narrow.
+    const box = item.container_name ? item.container_name.replace(/^Storage Unit “(.+)”$/, '$1') : '';
     const stored = item.container_name
       ? ` <button type="button" class="badge badge-stored link-badge" data-action="open-container"
-          title="Open this container">In ${esc(item.container_name)}</button>`
+          title="In ${esc(item.container_name)} - open this container">In ${esc(box)}</button>`
       : '';
     const stickers = item.stickers.length
       ? `<div class="sticker-list">${item.stickers.map((s) => `<span class="sticker-chip" title="${esc(

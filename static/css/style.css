@@ -167,7 +167,20 @@ select.input { padding-right: 28px; }
   border-radius: 0 0 6px 6px; box-shadow: 0 6px 12px -8px rgba(0, 0, 0, 0.8);
 }
 .float-head table { table-layout: fixed; border-collapse: collapse; }
-.float-head table.data th { position: relative; }
+/* A table too wide for the window: its sideways scrollbar, pinned to the bottom of the window. */
+.float-scroll {
+  position: fixed; bottom: 0; z-index: 11; display: none; height: 16px; overflow-x: auto; overflow-y: hidden;
+  background: rgba(15, 17, 21, 0.9); border-top: 1px solid var(--border);
+}
+.float-scroll > div { height: 1px; }
+/* A table that scrolls sideways can't have sticky headers (they'd stick to its own box and slide
+   down over the rows): the floating copy above stands in for them on the page. */
+.table-scroll.is-scrollable > table.data th { position: relative; top: auto; }
+/* In a window, a table that must scroll sideways scrolls in its own box (both scrollbars in view). */
+.dialog .table-scroll.is-scrollable { max-height: 65vh; overflow: auto; }
+.dialog .table-scroll.is-scrollable > table.data th { position: sticky; top: 0; }
+.th-sub { display: block; font-size: 10.5px; letter-spacing: 0; text-transform: none; }
+.float-head table.data th { position: relative; top: auto; }   /* (not the page's sticky offset) */
 .tabs::-webkit-scrollbar { display: none; }
 .tabs button {
   padding: 10px 16px; border: 0; background: transparent; color: var(--text-secondary);
@@ -256,8 +269,11 @@ table.data th.sortable:focus-visible { outline: 2px solid var(--accent-hover); o
 }
 .panel .market-chips { margin-bottom: 10px; }
 .sort-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-ol.cheapest { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; min-width: 150px; }
-ol.cheapest li { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; }
+ol.cheapest { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; min-width: 0; }
+/* Each line stays on one line when there's room; in a narrow table the market name goes under the price
+   (so tables fit their box instead of scrolling sideways). */
+ol.cheapest li { display: flex; flex-wrap: wrap; column-gap: 6px; row-gap: 0; align-items: baseline; }
+ol.cheapest .val { white-space: nowrap; }
 ol.cheapest .val { font-weight: 600; color: var(--text-primary); }
 ol.cheapest li.first .val { color: var(--good-text); }
 ol.cheapest .mkt, .rank-cell .mkt { color: var(--text-muted); font-size: 12px; }
@@ -284,6 +300,7 @@ td.col-cat { white-space: nowrap; }
 .col-actions { width: 1%; }
 .strong { font-weight: 650; }
 .sub { color: var(--text-muted); font-size: 12px; font-weight: 400; }
+table.data td .sub { white-space: normal; }   /* notes under a figure may wrap; the figure itself doesn't */
 .empty { padding: 40px 24px; text-align: center; color: var(--text-muted); }
 .empty strong { color: var(--text-primary); display: block; margin-bottom: 6px; font-size: 15px; }
 
@@ -591,7 +608,8 @@ tbody.group-body.collapsed tr.row { display: none; }
   width: 100%; display: grid; grid-template-columns: 40px 1fr auto; align-items: center; gap: 8px;
   padding: 4px 6px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
 }
-.mover:hover { background: var(--surface-2); }
+button.mover:hover { background: var(--surface-2); }   /* (Profit & Loss lists aren't clickable) */
+div.mover { cursor: default; }
 .mover .thumb { width: 40px; height: 30px; }
 .mover-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mover-change { text-align: right; font-size: 13px; white-space: nowrap; }
@@ -743,7 +761,7 @@ details[open] > :not(summary) { animation: fade-in .18s ease-out; }
 .card, .table-card { transition: opacity .2s; }
 
 /* ---------- Item detail: the market table's number columns share the width evenly ---------- */
-#item-quotes table.data { table-layout: fixed; min-width: 860px; }
+#item-quotes table.data { table-layout: fixed; min-width: 700px; }
 #item-quotes table.data th { white-space: normal; }
 #item-quotes table.data th:nth-child(1) { width: 40px; }          /* # */
 #item-quotes table.data th:nth-child(2) { width: 17%; }           /* Market */
@@ -755,6 +773,10 @@ details[open] > :not(summary) { animation: fade-in .18s ease-out; }
 /* Market comparison: a listing left out as unrealistic (hover for why; it links to the listing). */
 .ignored-cell { color: var(--warning); font-size: 12px; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
 a.ignored-cell { cursor: pointer; }
+
+/* [ and ] at either end of the tabs: previous / next tab. */
+.tab-step { display: inline-flex; align-items: center; padding: 0 6px; cursor: pointer; opacity: .6; }
+.tab-step:hover { opacity: 1; }
 
 /* ---------- "Values from": all markets, or cash-out markets only ---------- */
 .basis-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -854,3 +876,15 @@ table.data tbody tr.ticked td { background: var(--accent-soft); }
 .alert-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .alert-form .input[name="price"] { width: 120px; }
 .alert-form select { width: auto; }
+
+/* Narrower windows: tighter cells, and categories may wrap, so tables still fit. */
+@media (max-width: 1240px) {   /* (last, so it wins over the rules above) */
+  table.data th, table.data td { padding-left: 8px; padding-right: 8px; }
+  td.col-cat { white-space: normal; }
+}
+@media (max-width: 1100px) {
+  table.data th, table.data td { padding-left: 6px; padding-right: 6px; }
+  .col-icon { width: 52px; }
+  table.data .thumb { width: 44px; height: 33px; }
+  #item-quotes .fee-lines .line { white-space: normal; }
+}

@@ -61,12 +61,14 @@
   <p class="status-line" id="status-line"></p>
 
   <nav class="tabs" role="tablist" aria-label="Views">
+    <span class="tab-step" data-step="-1" aria-hidden="true" title="Previous tab (Shortcut: [)"><kbd class="kbd">[</kbd></span>
     <button role="tab" id="tab-public" aria-controls="panel-public" data-tab="public" data-shortcut="1">Public Inventory</button>
     <button role="tab" id="tab-total" aria-controls="panel-total" data-tab="total" data-shortcut="2">Total Portfolio</button>
     <button role="tab" id="tab-containers" aria-controls="panel-containers" data-tab="containers" data-shortcut="3">Containers <span class="tab-count" id="tab-containers-count"></span><span class="tab-alert" id="tab-containers-alert" hidden></span></button>
     <button role="tab" id="tab-markets" aria-controls="panel-markets" data-tab="markets" data-shortcut="4">Market Comparison &amp; Best Deals</button>
     <button role="tab" id="tab-planner" aria-controls="panel-planner" data-tab="planner" data-shortcut="5">Sell Planner</button>
     <button role="tab" id="tab-pnl" aria-controls="panel-pnl" data-tab="pnl" data-shortcut="6">Profit &amp; Loss</button>
+    <span class="tab-step" data-step="1" aria-hidden="true" title="Next tab (Shortcut: ])"><kbd class="kbd">]</kbd></span>
   </nav>
 
   <section class="tab-panel" id="panel-public" role="tabpanel" aria-labelledby="tab-public" hidden></section>

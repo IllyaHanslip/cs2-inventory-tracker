@@ -44,6 +44,42 @@ const sizes = new ResizeObserver((entries) => {
 // Clicking it sorts the real table.
 // ---------------------------------------------------------------------------
 const floats = new Map();
+// ...and a copy of its sideways scrollbar pinned to the bottom of the window, while the table's own
+// scrollbar (at the end of the table) is out of sight.
+const bars = new Map();
+
+function positionBar(wrap) {
+  const bar = bars.get(wrap);
+  if (!bar) return;
+  const area = wrap.getBoundingClientRect();
+  const bottom = window.innerHeight;
+  const show = !wrap.closest('[hidden]') && area.top < bottom - 60 && area.bottom > bottom;
+  bar.style.display = show ? 'block' : 'none';
+  if (!show) return;
+  bar.style.left = `${area.left}px`;
+  bar.style.width = `${wrap.clientWidth}px`;
+  bar.firstElementChild.style.width = `${wrap.scrollWidth}px`;
+  if (bar.scrollLeft !== wrap.scrollLeft) bar.scrollLeft = wrap.scrollLeft;
+}
+
+function syncBar(wrap, needed) {
+  let bar = bars.get(wrap);
+  if (!needed) {
+    if (bar) { bar.remove(); bars.delete(wrap); }
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'float-scroll';
+    bar.setAttribute('aria-hidden', 'true');
+    bar.innerHTML = '<div></div>';
+    bar.addEventListener('scroll', () => { if (wrap.scrollLeft !== bar.scrollLeft) wrap.scrollLeft = bar.scrollLeft; }, { passive: true });
+    wrap.addEventListener('scroll', () => { if (bar.scrollLeft !== wrap.scrollLeft) bar.scrollLeft = wrap.scrollLeft; }, { passive: true });
+    document.body.append(bar);
+    bars.set(wrap, bar);
+  }
+  positionBar(wrap);
+}
 
 function headTop() {
   return parseFloat(getComputedStyle(root).getPropertyValue('--head-top')) || 0;
@@ -70,6 +106,7 @@ function syncFloat(wrap) {
   const needed = wrap.isConnected && wrap.classList.contains('is-scrollable') && table && table.tHead
     && !wrap.closest('dialog, .data-table-wrap');
   let float = floats.get(wrap);
+  syncBar(wrap, needed);
   if (!needed) {
     if (float) { float.remove(); floats.delete(wrap); }
     return;
@@ -99,6 +136,9 @@ function syncFloat(wrap) {
 function positionFloats() {
   for (const [wrap, float] of floats) {
     if (!wrap.isConnected) { float.remove(); floats.delete(wrap); } else positionFloat(wrap);
+  }
+  for (const [wrap, bar] of bars) {
+    if (!wrap.isConnected) { bar.remove(); bars.delete(wrap); } else positionBar(wrap);
   }
 }
 
@@ -132,7 +172,7 @@ export function initLayout() {
   let pending = false;
   const insideFloat = (record) => {
     const el = record.target.nodeType === 1 ? record.target : record.target.parentElement;
-    return Boolean(el && el.closest('.float-head'));
+    return Boolean(el && el.closest('.float-head, .float-scroll'));
   };
   new MutationObserver((records) => {
     // Ignore our own floating-header rebuilds, or they'd trigger themselves forever.

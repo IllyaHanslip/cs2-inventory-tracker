@@ -158,10 +158,11 @@ export function confirmDialog({ title, message, buttons, quantity = null, select
 // ---------------------------------------------------------------------------
 // Item details
 // ---------------------------------------------------------------------------
-/** The detail view for an item known only by name (Market Comparison, Sell Planner): your first copy of it. */
-export async function openItemByName(name) {
+/** The detail view for an item known only by name (Market Comparison, Sell Planner, movers, alerts):
+ *  your first copy of it - in the public inventory if ``scope`` is "public". Filters don't matter. */
+export async function openItemByName(name, { scope = 'total' } = {}) {
   try {
-    const { items } = await api('/items', { params: { scope: 'total' } });
+    const { items } = await api('/items', { params: { scope } });
     const item = items.find((i) => i.market_hash_name === name && !i.is_storage)
       || items.find((i) => i.market_hash_name === name);
     if (item) await openItem(item);

@@ -2,7 +2,20 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.5.0
+### What's new in v1.5.1
+
+- **Tables fit the window**: a container's contents (and the inventory, Market Comparison and item
+  details) no longer need sideways scrolling - long notes and market names wrap instead, and cells
+  tighten up in narrower windows. If a window is too narrow for a table anyway, its sideways scrollbar
+  stays pinned to the bottom of the window, so you don't have to scroll down to the end to reach it.
+- Column headers no longer slide over the rows of a table that scrolls sideways, and the header copy
+  that stays under the tabs as you scroll down now actually shows.
+- **Biggest movers** open an item's details even when a filter or search hides it in the list below.
+- **[ and ]** at either end of the tabs (the previous / next tab keys) - click them too.
+- Items in containers say "In Long Holds" rather than "In Storage Unit “Long Holds”".
+- Profit & Loss's best / worst sales no longer look clickable.
+
+### v1.5.0
 
 - **Values from: All markets / Cash-out markets only.** A switch above the figures (or press W). Steam
   often pays most, but into your Steam Wallet, which can't be withdrawn. With "Cash-out markets only",

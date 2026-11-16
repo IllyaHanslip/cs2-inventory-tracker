@@ -140,7 +140,7 @@ export class MarketsView {
 
     const out = (m) => selling && cashOnly() && !m.cash_out;   // doesn't count: "Cash-out markets only"
     const head = markets.map((m) => `<th class="num${out(m) ? ' not-counted' : ''}" data-sort="num" data-key="m:${esc(m.key)}"
-      ${selling && !m.cash_out ? `title="${esc(out(m) ? NOT_COUNTED_WHY : noCashLabel(m.key))}"` : ''}>${esc(m.label)}${selling && !m.cash_out ? ` <span class="muted">(${esc(noCashLabel(m.key, true))}${out(m) ? ' · not counted' : ''})</span>` : ''}</th>`).join('');
+      ${selling && !m.cash_out ? `title="${esc(out(m) ? NOT_COUNTED_WHY : noCashLabel(m.key))}"` : ''}>${esc(m.label)}${selling && !m.cash_out ? `<span class="muted th-sub">${esc(noCashLabel(m.key, true))}${out(m) ? ' · not counted' : ''}</span>` : ''}</th>`).join('');
     const lastHead = selling
       ? '<th class="num" data-sort="num" data-key="payout" title="Best price after fees x quantity, at plain listing prices">You\'d receive</th>'
       : '<th class="num" data-sort="num" data-key="saving">Save vs Steam</th>';

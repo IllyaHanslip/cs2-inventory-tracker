@@ -209,6 +209,11 @@ const app = {
         activate(tabs[(i + step + tabs.length) % tabs.length].dataset.tab, true);
       });
     });
+    // The [ and ] at either end of the tabs: previous / next tab, like the keys.
+    document.querySelectorAll('.tabs .tab-step').forEach((step) => step.addEventListener('click', () => {
+      const i = TAB_ORDER.indexOf(this.activeTab);
+      activate(TAB_ORDER[(i + Number(step.dataset.step) + TAB_ORDER.length) % TAB_ORDER.length]);
+    }));
     const fromHash = window.location.hash.slice(1);
     const saved = tabs.some((t) => t.dataset.tab === fromHash) ? fromHash : store.get('tab', 'public');
     activate(tabs.some((t) => t.dataset.tab === saved) ? saved : 'public');
