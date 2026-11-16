@@ -65,16 +65,19 @@ def take_snapshot(valuator=None) -> dict[str, Any]:
     # and how many sell at a good price depends on how many there are.
     public = portfolio.build_frame(v, "public", with_changes=False)
     for scope, subset in (("public", public), ("total", frame)):
-        value = float(subset["total_value"].fillna(0).sum()) if not subset.empty else 0.0  # after fees
+        # After fees, both ways: every market counted (Steam Wallet money too), and cash-out markets only.
+        value = float(subset["any_value"].fillna(0).sum()) if not subset.empty else 0.0
+        cash = float(subset["payout_value"].fillna(0).sum()) if not subset.empty else 0.0
         market = float(subset["market_total_value"].fillna(0).sum()) if not subset.empty else 0.0
         count = int(subset["quantity"].sum()) if not subset.empty else 0
-        totals[scope] = value
+        totals[scope] = cash if v.cash_only else value
         db.execute(
             "INSERT INTO portfolio_snapshots (snapshot_date, scope, total_value, item_count, currency, market_value, "
-            "basis, screened) VALUES (?, ?, ?, ?, ?, ?, 'after_fees', 1) ON CONFLICT(snapshot_date, scope) DO UPDATE SET "
-            "total_value = excluded.total_value, item_count = excluded.item_count, currency = excluded.currency, "
-            "market_value = excluded.market_value, basis = excluded.basis, screened = 1",
-            (day, scope, value, count, v.base, market),
+            "basis, screened, cash_value) VALUES (?, ?, ?, ?, ?, ?, 'after_fees', 1, ?) ON CONFLICT(snapshot_date, scope) "
+            "DO UPDATE SET total_value = excluded.total_value, item_count = excluded.item_count, "
+            "currency = excluded.currency, market_value = excluded.market_value, basis = excluded.basis, screened = 1, "
+            "cash_value = excluded.cash_value",
+            (day, scope, value, count, v.base, market, cash),
         )
     settings.set_value("last_snapshot", db.utcnow_iso())
     return {"date": day, "prices": len(rows), "totals": totals, "currency": v.base}
@@ -149,9 +152,13 @@ def _after_fees(rows: list[dict], valuator, screen: bool = True) -> pd.DataFrame
     return hist[hist["value"] > 0]
 
 
-def best_after_fees(names: list[str], valuator, since: str | None = None, screen: bool = True) -> pd.DataFrame:
-    """Per item and day: the most you'd have received for a plain copy on any market, after fees."""
+def best_after_fees(names: list[str], valuator, since: str | None = None, screen: bool = True,
+                    cash_only: bool | None = None) -> pd.DataFrame:
+    """Per item and day: the most you'd have received for a plain copy after fees, on any market
+    that counts (``cash_only``: only markets whose money you can withdraw; default: the switch)."""
     hist = _after_fees(_snapshot_rows(names, since, valuation=False), valuator, screen)
+    if valuator.cash_only if cash_only is None else cash_only:
+        hist = hist[[valuator.cash_out(m) for m in hist["market"]]] if not hist.empty else hist
     if hist.empty:
         return pd.DataFrame(columns=["market_hash_name", "date", "value"])
     return hist.groupby(["market_hash_name", "date"], as_index=False)["value"].max()
@@ -190,12 +197,18 @@ def chained_change(points: list[tuple[float | None, int | None]]) -> float | Non
     return (growth - 1) * 100 if used else None
 
 
+def _value_column(cash_only: bool) -> str:
+    """The saved daily total to use: with "Cash-out markets only", the cash-out figure (estimated
+    for days saved before it was kept, see ``fill_cash_values``)."""
+    return "COALESCE(cash_value, total_value) AS total_value" if cash_only else "total_value"
+
+
 def portfolio_changes(scope: str, current_total: float, fx: FxConverter, base: str,
-                      current_count: int | None = None) -> dict[str, float | None]:
+                      current_count: int | None = None, cash_only: bool = False) -> dict[str, float | None]:
     """How the portfolio's value moved over each window, from the saved daily totals to the value
     now. Steps where items were added or removed are left out (see ``chained_change``)."""
     rows = db.query(
-        "SELECT snapshot_date AS date, total_value, item_count, currency FROM portfolio_snapshots "
+        f"SELECT snapshot_date AS date, {_value_column(cash_only)}, item_count, currency FROM portfolio_snapshots "
         "WHERE scope = ? AND snapshot_date >= ? AND snapshot_date < ? ORDER BY snapshot_date",
         (scope, _days_ago(max(d + s for d, s in CHANGE_WINDOWS.values())), today()),
     )
@@ -224,9 +237,10 @@ def _cutoff(range_key: str) -> str | None:
     return _days_ago(days) if days else None
 
 
-def portfolio_history(scope: str, range_key: str, fx: FxConverter, base: str) -> dict[str, Any]:
+def portfolio_history(scope: str, range_key: str, fx: FxConverter, base: str, cash_only: bool = False) -> dict[str, Any]:
     cutoff = _cutoff(range_key)
-    sql = "SELECT snapshot_date AS date, total_value, item_count, currency FROM portfolio_snapshots WHERE scope = ?"
+    sql = (f"SELECT snapshot_date AS date, {_value_column(cash_only)}, item_count, currency FROM portfolio_snapshots "
+           "WHERE scope = ?")
     params: list[Any] = [scope]
     if cutoff:
         sql += " AND snapshot_date >= ?"
@@ -251,24 +265,71 @@ def portfolio_history(scope: str, range_key: str, fx: FxConverter, base: str) ->
 
 def item_history(market_hash_name: str, range_key: str, valuator) -> dict[str, Any]:
     """What you'd have received each day on each market after its fees, plus the best of them
-    (the "valuation" line). Plain copies only: stickers aren't part of market price history."""
+    (the "valuation" line) and which market that was each day. Markets that don't count under
+    the "Values from" switch are still listed (``counted: false``) but aren't in the best line.
+    Plain copies only: stickers aren't part of market price history."""
     base = valuator.base
     hist = _after_fees(_snapshot_rows([market_hash_name], _cutoff(range_key), valuation=False), valuator)
     if hist.empty:
-        return {"labels": [], "series": [], "currency": base}
+        return {"labels": [], "series": [], "best_markets": [], "currency": base, "cash_only": valuator.cash_only}
     wide = hist.pivot_table(index="date", columns="market", values="value", aggfunc="last")
     wide.index = pd.to_datetime(wide.index)
     wide = wide.asfreq("D").ffill(limit=7)  # bridge short gaps only
-    wide.insert(0, "valuation", wide.max(axis=1, skipna=True))
+    counted = [c for c in wide.columns if valuator.counts(c)]
+    best = wide[counted].max(axis=1, skipna=True) if counted else pd.Series(float("nan"), index=wide.index)
+    leader = [row.idxmax() if counted and row.notna().any() else None for _, row in wide[counted].iterrows()] \
+        if counted else [None] * len(wide)
+    wide.insert(0, "valuation", best)
     series = [
         {
             "market": col,
             "label": "Best after fees" if col == "valuation" else market_label(col),
             "values": [round(v, 4) if pd.notna(v) else None for v in wide[col]],
+            "counted": col == "valuation" or valuator.counts(col),
+            "wallet": col != "valuation" and not valuator.cash_out(col),
         }
         for col in ["valuation"] + sorted(c for c in wide.columns if c != "valuation")
     ]
-    return {"labels": [d.strftime("%Y-%m-%d") for d in wide.index], "series": series, "currency": base}
+    return {"labels": [d.strftime("%Y-%m-%d") for d in wide.index], "series": series,
+            "best_markets": leader, "currency": base, "cash_only": valuator.cash_only}
+
+
+def fill_cash_values(valuator=None) -> int:
+    """Days saved before the cash-out total was kept get an estimate: that day's total times the
+    share it would have come to counting only markets you can withdraw from, from each market's
+    saved prices that day for what you hold now. (Before Steam prices arrived the two are the
+    same.) Returns how many rows were filled."""
+    rows = db.query("SELECT snapshot_date AS date, scope, total_value FROM portfolio_snapshots WHERE cash_value IS NULL")
+    if not rows:
+        return 0
+    from . import portfolio  # local import to avoid a circular dependency
+    from .valuation import Valuator
+
+    v = valuator or Valuator()
+    frame = portfolio.build_frame(v, "total", with_changes=False)
+    ratio = pd.Series(dtype="float64")
+    if not frame.empty:
+        held = frame[frame["any_value"].notna()].groupby("market_hash_name")["quantity"].sum()
+        names = held.index.tolist()
+        since = min(r["date"] for r in rows)
+        every = best_after_fees(names, v, since, cash_only=False)
+        cash = best_after_fees(names, v, since, cash_only=True)
+        if not every.empty:
+            every["worth"] = every["value"] * every["market_hash_name"].map(held)
+            totals = every.groupby("date")["worth"].sum()
+            if not cash.empty:
+                cash["worth"] = cash["value"] * cash["market_hash_name"].map(held)
+                cash_totals = cash.groupby("date")["worth"].sum().reindex(totals.index).fillna(0.0)
+            else:
+                cash_totals = pd.Series(0.0, index=totals.index)
+            ratio = (cash_totals / totals).where(totals > 0).dropna().clip(0, 1).sort_index()
+    filled = []
+    for row in rows:
+        known = ratio[ratio.index <= row["date"]]
+        share = float(known.iloc[-1]) if not known.empty else (float(ratio.iloc[0]) if not ratio.empty else 1.0)
+        filled.append((round(row["total_value"] * share, 2), row["date"], row["scope"]))
+    db.executemany("UPDATE portfolio_snapshots SET cash_value = ? WHERE snapshot_date = ? AND scope = ?", filled)
+    return len(filled)
 
 
 # ---------------------------------------------------------------------------

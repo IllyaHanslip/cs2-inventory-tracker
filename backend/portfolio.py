@@ -162,8 +162,13 @@ def build_frame(valuator, scope: str = "total", with_changes: bool = True) -> pd
         for option in options:
             option["label"] = market_label(option["market"])
         sell_lists.append(options)
-    best = [options[0] if options else None for options in sell_lists]
+    # The best market that counts. With "Cash-out markets only", an item priced only on Steam (or
+    # another market you can't withdraw from) has no value: it's "wallet only", shown greyed.
+    best = [next((o for o in options if o["counted"]), None) for options in sell_lists]
     cash = [next((o for o in options if not o["wallet"]), None) for options in sell_lists]
+    items["wallet_only"] = [bool(options) and b is None for options, b in zip(sell_lists, best)]
+    items["wallet_unit"] = pd.Series([options[0]["net"] if options and b is None else None
+                                      for options, b in zip(sell_lists, best)], index=items.index, dtype="float64")
     items["sell_quotes"] = sell_lists
     items["unit_value"] = pd.Series([b["net"] if b else None for b in best], index=items.index, dtype="float64")
     items["sell_market"] = [b["market"] if b else None for b in best]
@@ -183,7 +188,7 @@ def build_frame(valuator, scope: str = "total", with_changes: bool = True) -> pd
         if not inner:
             return None
         options = valuator.sell_options(quotes_for(inner))
-        best_inner = options[0] if options else None
+        best_inner = next((o for o in options if o["counted"]), None)   # the best market that counts
         return {"name": inner, "market_value": valuator.price(inner),
                 "value": best_inner["net"] if best_inner else None,
                 "market": market_label(best_inner["market"]) if best_inner else None,
@@ -211,19 +216,26 @@ def build_frame(valuator, scope: str = "total", with_changes: bool = True) -> pd
              for s, p in zip(items["price_source"], items["sticker_premium"])]
     pooled = items[plain].groupby("market_hash_name")["quantity"].sum()
     plans: dict[Any, tuple] = {}
-    realised, cash_realised, bulk_plans, bulk_units = [], [], [], []
+    realised, cash_realised, any_realised, bulk_plans, bulk_units = [], [], [], [], []
     for row, options, is_plain in zip(items.itertuples(index=False), sell_lists, plain):
         units = int(pooled[row.market_hash_name]) if is_plain else int(row.quantity)
         key = ("plain", row.market_hash_name) if is_plain else ("row", row.id)
         if key not in plans:
-            total, plan = valuator.bulk_plan(row.market_hash_name, options, units)
+            counted = [o for o in options if o["counted"]]
+            total, plan = valuator.bulk_plan(row.market_hash_name, counted, units)
             cash_total, cash_plan = valuator.bulk_plan(row.market_hash_name, [o for o in options if not o["wallet"]], units)
+            if valuator.cash_only:   # what it would be with every market counted (the "incl. Steam Wallet" figure)
+                any_total, any_plan = valuator.bulk_plan(row.market_hash_name, sorted(options, key=lambda o: -o["net"]), units)
+            else:
+                any_total, any_plan = total, plan
             for step in plan:
                 step["label"] = market_label(step["market"])
-            plans[key] = (total / units if plan else None, cash_total / units if cash_plan else None, plan)
-        each, cash_each, plan = plans[key]
+            plans[key] = (total / units if plan else None, cash_total / units if cash_plan else None,
+                          any_total / units if any_plan else None, plan)
+        each, cash_each, any_each, plan = plans[key]
         realised.append(each)
         cash_realised.append(cash_each)
+        any_realised.append(any_each)
         bulk_plans.append(plan)
         bulk_units.append(units)
     items["bulk_plan"] = bulk_plans
@@ -239,6 +251,8 @@ def build_frame(valuator, scope: str = "total", with_changes: bool = True) -> pd
     items["payout_unit"] = pd.Series([c["net"] if c else None for c in cash], index=items.index, dtype="float64")
     items["payout_market"] = [c["market"] if c else None for c in cash]
     items["payout_value"] = pd.Series(cash_realised, index=items.index, dtype="float64") * items["quantity"]
+    # The same with every market counted, whatever the switch says (Steam Wallet money included).
+    items["any_value"] = pd.Series(any_realised, index=items.index, dtype="float64") * items["quantity"]
 
     # Containers: roll up the value of everything stored inside them (within this scope).
     items["is_container"] = items["category"] == "container"
@@ -350,7 +364,7 @@ ITEM_FIELDS = (
     "quotes", "payout_unit", "payout_market", "payout_value", "stickers", "created_at", "updated_at",
     "market_unit_value", "market_total_value", "sell_market", "sell_quotes",
     "value_basis", "sales", "set_aside", "sticker_inside", "bulk_plan", "bulk_units", "bulk_limited",
-    "realised_unit", "tags", "steam_count",
+    "realised_unit", "tags", "steam_count", "wallet_only", "wallet_unit", "any_value",
 )
 
 
@@ -364,6 +378,7 @@ def to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
             item["steam_count"] = int(item["steam_count"])
         item["category_label"] = CATEGORIES.get(item["category"], "Other")
         item["is_storage"] = bool(item["is_storage"])
+        item["wallet_only"] = bool(item["wallet_only"])
         item["label"] = container_label(item["name"], item["name_tag"]) if item["is_container"] else item["name"]
         item["best_market_label"] = market_label(item["best_market"]) if item["best_market"] else None
         item["payout_market_label"] = market_label(item["payout_market"]) if item["payout_market"] else None
@@ -387,14 +402,17 @@ def summarize(df: pd.DataFrame, valuator, scope: str) -> dict[str, Any]:
         stats = {"item_count": 0, "unique_items": 0, "unpriced_items": 0, "sticker_premium": 0.0,
                  "containers": 0, "storage_containers": 0, "items_in_containers": 0, "value_in_containers": 0.0,
                  "purchase_value": None, "profit": None, "cash_out_value": 0.0, "cash_out_missing": 0,
-                 "market_value": 0.0}
+                 "market_value": 0.0, "all_markets_value": 0.0, "wallet_only_items": 0}
     else:
         total = float(df["total_value"].fillna(0).sum())
         purchase = df["purchase_value"].dropna()
         stats = {
             "item_count": int(df["quantity"].sum()),
             "unique_items": int(df["market_hash_name"].nunique()),
-            "unpriced_items": int((df["total_value"].isna() & ~df["is_container"]).sum()),
+            "unpriced_items": int((df["total_value"].isna() & ~df["is_container"] & ~df["wallet_only"]).sum()),
+            # "Cash-out markets only": items priced only where money can't be withdrawn, left out.
+            "wallet_only_items": int(df["wallet_only"].sum()),
+            "all_markets_value": float(df["any_value"].fillna(0).sum()),
             "sticker_premium": float((df["sticker_premium"] * df["quantity"]).sum()),
             "containers": int(df["is_container"].sum()),
             "storage_containers": int(((df["category"] == "container") & df["container_id"].isna()
@@ -406,16 +424,18 @@ def summarize(df: pd.DataFrame, valuator, scope: str) -> dict[str, Any]:
             # For reference: what everything would cost to buy at current market prices.
             "market_value": float(df["market_total_value"].fillna(0).sum()),
             # Priced items with no market you can cash out from (e.g. only a Steam price).
-            "cash_out_missing": int((df["total_value"].notna() & df["payout_value"].isna()).sum()),
+            "cash_out_missing": int((df["any_value"].notna() & df["payout_value"].isna()).sum()),
             "profit": float(df.loc[purchase.index, "profit"].fillna(0).sum()) if not purchase.empty else None,
         }
-    changes = history.portfolio_changes(scope, total, valuator.fx, valuator.base, stats["item_count"])
+    changes = history.portfolio_changes(scope, total, valuator.fx, valuator.base, stats["item_count"],
+                                        cash_only=valuator.cash_only)
     for col, value in changes.items():
         if value is None:
             # Items were added or removed at every step (say, a container filled in today), so
             # the saved totals don't compare like with like: use how your items' prices moved.
             changes[col] = held_change(df, col)
-    return {"scope": scope, "currency": valuator.base, "total_value": total, **stats, **changes}
+    return {"scope": scope, "currency": valuator.base, "total_value": total, "cash_only": valuator.cash_only,
+            **stats, **changes}
 
 
 def held_change(df: pd.DataFrame, col: str) -> float | None:

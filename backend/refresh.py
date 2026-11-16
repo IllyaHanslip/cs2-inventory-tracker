@@ -377,6 +377,7 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
 
     job.update(message="Saving today's snapshot…")
     snapshot = history.take_snapshot()
+    history.fill_cash_values()
     fired = alerts.check()
     alerts.notify_fired(fired)
     job.update(message="Prices updated.")

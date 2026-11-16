@@ -3,7 +3,7 @@
 
 import { renderItemAlerts } from './alerts.js';
 import { api } from './api.js';
-import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
+import { chartsAvailable, dataTableHtml, renderLineChart, seriesColor } from './charts.js';
 import * as containers from './containers.js';
 import { initDialogs, markClean, protectForm } from './guard.js';
 import { MarketFilter, asideText, bulkText, marketLink, noCashLabel } from './market-filter.js';
@@ -11,8 +11,8 @@ import { steady } from './motion.js';
 import { applySortWithin } from './sortable.js';
 import { doneToast } from './undo.js';
 import {
-  CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, isStorage, longDate, money, number, relTime, safeUrl,
-  state, thumbHtml, toast,
+  CATEGORY_FILTERS, NOT_COUNTED_WHY, cashOnly, debounce, deltaHtml, esc, floatText, isStorage, longDate, money, number,
+  relTime, safeUrl, state, thumbHtml, toast,
 } from './util.js';
 
 let app;
@@ -282,7 +282,13 @@ function feeText(q) {
 
 /** The selling-price breakdown: price on the best market -> fees -> what you receive. */
 function sellingSteps(item, wholeItem) {
-  const best = item.sell_quotes[0];
+  const best = item.sell_quotes.find((q) => q.counted !== false);
+  if (!best && item.wallet_only) {
+    const only = item.sell_quotes[0];
+    return [kv('Selling price', `<span class="muted small" title="${esc(NOT_COUNTED_WHY)}">only priced on ${esc(only.label)}
+      (${money(only.net)} after fees, into your Steam Wallet), so it isn't counted while "Values from" is set to
+      "Cash-out markets only"</span>`)];
+  }
   if (!best) {
     return [kv('Selling price', item.is_container && item.contents_count
       ? '<span class="muted small">the container itself has no market price</span>'
@@ -317,7 +323,7 @@ function sellingSteps(item, wholeItem) {
           : `median of ${number(item.sales.volume)} sale${item.sales.volume === 1 ? '' : 's'}`} (${esc(item.sales.period === 'recent' || !item.sales.period ? 'recent' : `last ${item.sales.period}`)})</span>`) : '',
     item.set_aside.length ? kv('Ignored', `<span class="warn-text small">${number(item.set_aside.length)} unrealistic
       listing${item.set_aside.length === 1 ? '' : 's'} - see Prices across markets</span>`) : '',
-    best.wallet ? kv('Best cash option', cash
+    best.wallet && !cashOnly() ? kv('Best cash option', cash
       ? `${money(cash.net)} each <span class="muted small">on ${esc(cash.label)} (money from ${esc(best.label)} cannot be withdrawn)</span>`
       : '<span class="muted small">none yet - no market you can cash out from has a price</span>') : '',
   ];
@@ -446,6 +452,7 @@ function itemBodyHtml(item) {
         </div></div>
       <div class="chart-wrap small"><canvas id="item-chart" role="img" aria-label="Price history by market"></canvas>
         <div class="chart-empty" id="item-chart-empty" hidden></div></div>
+      <p class="hint chart-note" id="item-chart-note" hidden></p>
       <details class="data-details" id="item-table-details"><summary>Show data table</summary>
         <div class="data-table-wrap" id="item-chart-table"></div></details>
     </div>`;
@@ -502,7 +509,7 @@ async function loadItemQuotes(item) {
     render = () => {
       const shown = rows.filter((q) => filter.includes(q.market));
       const absent = missing.filter((m) => filter.includes(m.market));
-      const top = shown.slice(0, 3);
+      const top = shown.filter((q) => q.counted !== false).slice(0, 3);
       $('#item-cheapest').innerHTML = top.length
         ? `<div class="cheapest-strip"><span class="filter-label">Best 3 to sell (after fees)</span>${top.map((q, i) => `<span class="cheap-pill${i === 0 ? ' first' : ''}">
             <span class="rank">${i + 1}</span> ${money(q.net, cur)} <span class="mkt">${esc(q.label)}${q.wallet ? ` · ${esc(noCashLabel(q.market, true))}` : ''}</span></span>`).join('')}</div>`
@@ -512,10 +519,17 @@ async function loadItemQuotes(item) {
         box.innerHTML = '<p class="muted">No markets selected.</p>';
         return;
       }
+      const counted = shown.filter((q) => q.counted !== false);
       const priced = shown.map((q, i) => {
         const url = safeUrl(q.url || q.raw?.url);
         const name = url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(q.label)}</a>` : esc(q.label);
-        const best = i === 0 && shown.length > 1 ? ' <span class="badge badge-best">Best</span>' : '';
+        const out = q.counted === false;
+        const best = q === counted[0] && shown.length > 1 ? ' <span class="badge badge-best">Best</span>' : '';
+        // Listed last because of the "Values from" switch: say so in the row.
+        const rank = out
+          ? `<span class="moved-down" title="${esc(NOT_COUNTED_WHY)}" aria-label="Listed last: not counted"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v13M6 12l6 6 6-6M5 21h14"/></svg></span>`
+          : String(counted.indexOf(q) + 1);
+        const outNote = out ? `<div class="sub not-counted-note" title="${esc(NOT_COUNTED_WHY)}">listed last: not counted (cash-out markets only)</div>` : '';
         const listing = q.raw ? q.raw.price_base : null;
         const original = q.raw && q.raw.currency !== cur ? `<div class="sub">${money(q.raw.price, q.raw.currency)}</div>` : '';
         const fee = q.sale_fee + q.withdraw_fee;
@@ -529,7 +543,7 @@ async function loadItemQuotes(item) {
         // Priced another way (recent sales) while its listing was ignored: say so in the same row.
         const ignored = aside.has(q.market)
           ? `<div class="sub warn-text">listing ignored: ${esc(asideText(aside.get(q.market), cur))}</div>` : '';
-        return `<tr data-i="${i}"><td class="num" data-v="${i + 1}">${i + 1}</td><td data-v="${esc(q.label)}">${name}${best}${ignored}</td>
+        return `<tr data-i="${i}"${out ? ' class="not-counted"' : ''}><td class="num" data-v="${i + 1}">${rank}</td><td data-v="${esc(q.label)}">${name}${best}${ignored}${outNote}</td>
           <td class="num strong" data-v="${q.net}">${money(q.net, cur)}${q.wallet ? `<div class="sub">${esc(noCashLabel(q.market))}</div>` : ''}</td>
           <td class="num" data-v="${q.net * qty}">${money(q.net * qty, cur)}</td>
           <td class="num" data-v="${q.gross}">${money(q.gross, cur)}${grossNote}</td>
@@ -560,7 +574,8 @@ async function loadItemQuotes(item) {
         ${bulkHtml(item, cur)}
         <p class="hint">"You'd receive" is the selling price minus that market's selling and withdrawal fees (change fees in Settings).
           The selling price here is ${basis}. "Total" assumes that market would take all ${number(qty)} at that price.
-          Steam pays into your Steam Wallet, which can't be withdrawn.</p>`;
+          Steam pays into your Steam Wallet, which can't be withdrawn${cashOnly()
+            ? ': with "Values from: Cash-out markets only", markets like that are listed last (⤓) and don\u2019t count' : ''}.</p>`;
       applySortWithin(box);
     };
     render();
@@ -591,14 +606,24 @@ async function loadItemHistory(item) {
     itemHistory = await api('/history/item', { params: { name: item.market_hash_name, range: itemRange } });
     const canvas = $('#item-chart');
     if (!canvas) return;
-    const h = itemHistory;
+    const h = chartWithSwitch(itemHistory);
+    itemHistory = h;
     const manualKeys = h.series.map((s) => s.market).filter((k) => k.startsWith('manual:')).sort();
+    const labels = Object.fromEntries(h.series.map((s) => [s.market, s.label]));
     itemChart = renderLineChart(itemChart, canvas, {
       labels: h.labels,
-      series: h.series.map((s) => ({ key: s.market, label: s.label, values: s.values })),
+      series: h.series.map((s) => ({
+        key: s.market,
+        label: s.market === 'valuation' ? 'Best after fees' : `${s.label}${s.out ? ' (not counted)' : ''}`,
+        values: s.values,
+        muted: s.out,
+        leaders: s.market === 'valuation' ? h.leaders : null,
+        leaderLabels: labels,
+      })),
       currency: h.currency,
       manualKeys,
     });
+    renderChartNote(h, manualKeys);
     empty.hidden = h.labels.length > 0 && chartsAvailable();
     empty.textContent = chartsAvailable()
       ? 'No price history for this item yet. History builds up each day prices are refreshed.'
@@ -607,6 +632,47 @@ async function loadItemHistory(item) {
   } catch (error) {
     toast(error.message, 'error');
   }
+}
+
+/** The best line and which market led each day, worked out here for the "Values from" switch:
+ *  with "Cash-out markets only", markets whose money can't be withdrawn are left out of it (and
+ *  greyed). The same saved prices serve both settings. */
+function chartWithSwitch(h) {
+  const only = cashOnly();
+  const markets = h.series.filter((s) => s.market !== 'valuation')
+    .map((s) => ({ ...s, out: only && Boolean(s.wallet) }));
+  const counted = markets.filter((s) => !s.out);
+  const leaders = h.labels.map((_, i) => {
+    let lead = null;
+    for (const s of counted) {
+      const v = s.values[i];
+      if (v !== null && v !== undefined && (lead === null || v > lead.v)) lead = { m: s.market, v };
+    }
+    return lead;
+  });
+  const best = { market: 'valuation', label: 'Best after fees', values: leaders.map((l) => (l ? l.v : null)), out: false };
+  return { ...h, series: [best, ...markets], leaders: leaders.map((l) => (l ? l.m : null)) };
+}
+
+/** Under the chart: what the stripes mean, and why a line is grey. */
+function renderChartNote(h, manualKeys) {
+  const note = $('#item-chart-note');
+  if (!note) return;
+  const used = [...new Set(h.leaders.filter(Boolean))];
+  const greyed = h.series.filter((s) => s.out).map((s) => s.label);
+  const parts = [];
+  if (used.length) {
+    parts.push(`The best line is striped blue and the colour of the market paying most on that day: ${used.map((m) => {
+      const s = h.series.find((x) => x.market === m);
+      return `<span class="swatch" style="background:${seriesColor(m, manualKeys)}"></span>${esc(s ? s.label : m)}`;
+    }).join(', ')}.`);
+  }
+  if (greyed.length) {
+    parts.push(`<span title="${esc(NOT_COUNTED_WHY)}">Greyed: ${esc(greyed.join(', '))} - money there can't be withdrawn, and
+      "Values from" is set to "Cash-out markets only", so ${greyed.length === 1 ? 'it isn\u2019t' : 'they aren\u2019t'} part of the best line.</span>`);
+  }
+  note.innerHTML = parts.join(' ');
+  note.hidden = !parts.length;
 }
 
 function renderItemTable() {

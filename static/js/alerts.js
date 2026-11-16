@@ -106,7 +106,7 @@ export async function renderItemAlerts(box, item) {
   if (!box.isConnected) return;
   const cur = data.currency || state.currency;
   const mine = data.alerts.filter((a) => a.name === item.market_hash_name);
-  const now = item.sell_quotes?.[0]?.net ?? item.unit_value;
+  const now = item.sell_quotes?.find((q) => q.counted !== false)?.net ?? item.unit_value;
   box.innerHTML = `<h4>Price alert</h4>
     ${mine.length ? `<ul class="item-alerts">${mine.map((a) => `<li>Tell me when one ${esc(conditionText(a, cur))} · ${statusHtml(a, cur)}
         <button type="button" class="icon-btn danger" data-alert-delete="${a.id}" aria-label="Delete this alert" title="Delete">×</button></li>`).join('')}</ul>` : ''}

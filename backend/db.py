@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     market_value  REAL,
     basis         TEXT NOT NULL DEFAULT 'market',
     screened      INTEGER NOT NULL DEFAULT 0,   -- 1 once unrealistic listings are kept out (sanity.py)
+    cash_value    REAL,                         -- after fees, counting only markets you can withdraw from
     PRIMARY KEY (snapshot_date, scope)
 );
 
@@ -275,6 +276,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE portfolio_snapshots ADD COLUMN basis TEXT NOT NULL DEFAULT 'market'")
     if "screened" not in snapshot_columns:
         conn.execute("ALTER TABLE portfolio_snapshots ADD COLUMN screened INTEGER NOT NULL DEFAULT 0")
+    if "cash_value" not in snapshot_columns:
+        # The cash-out total (see history.fill_cash_values for days saved before it was kept).
+        conn.execute("ALTER TABLE portfolio_snapshots ADD COLUMN cash_value REAL")
 
 
 def query(sql: str, params: tuple | list = ()) -> list[dict[str, Any]]:

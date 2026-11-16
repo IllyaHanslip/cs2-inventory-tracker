@@ -23,6 +23,7 @@ export const SHORTCUTS = [
     [['N'], 'New container'],
     [['E'], 'Export this tab as a spreadsheet (inventory tabs and Profit & Loss)'],
     [['B'], 'Price alerts'],
+    [['W'], 'Values from: switch between All markets and Cash-out markets only'],
     [[','], 'Settings'],
     [[UNDO_KEY], 'Undo the last change: removing, moving, deleting, or confirming a change from a Steam sync'],
     [['?'], 'Show these shortcuts'],
@@ -106,6 +107,7 @@ export function initShortcuts(on) {
       n: on.newContainer,
       e: on.export,
       b: on.alerts,
+      w: on.basis,
       ',': on.settings,
     };
     if (/^[1-9]$/.test(key)) {

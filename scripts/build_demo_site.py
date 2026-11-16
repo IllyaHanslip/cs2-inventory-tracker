@@ -11,6 +11,11 @@ Nothing from your own data folder is touched or included.
 The demo also lets you try confirming the changes a Steam sync noticed (Containers tab). Each
 combination of confirmed changes is worked out here, on its own copy of the database, and only
 the answers that differ are saved (data/states/<ids>/), listed in data/states.json.
+
+The "Values from: Cash-out markets only" switch works there too: the answers that depend on it
+(values, totals, history, movers...) are saved again with it on, in data/cash/ (and
+data/cash/states/<ids>/). Everything else - market prices, item price histories, quotes - is the
+same either way; the page works out which markets count from each market's cash-out flag.
 """
 from __future__ import annotations
 
@@ -42,9 +47,16 @@ def dump(data) -> bytes:
     return json.dumps(data, separators=(",", ":")).encode("utf-8")
 
 
-def answers(client, item_index: dict[str, int]) -> dict[str, bytes]:
+def set_cash_only(on: bool) -> None:
+    from backend import settings
+
+    settings.set_value("cash_only", on)
+
+
+def answers(client, item_index: dict[str, int], switch_only: bool = False) -> dict[str, bytes]:
     """Every answer the dashboard can ask for (item price histories only for names not in
-    ``item_index`` yet - they don't depend on what you hold). New names are added to it."""
+    ``item_index`` yet - they don't depend on what you hold). New names are added to it.
+    ``switch_only``: just the answers that depend on the "Values from" switch."""
     files: dict[str, bytes] = {}
 
     def get(path: str):
@@ -57,13 +69,15 @@ def answers(client, item_index: dict[str, int]) -> dict[str, bytes]:
         files[name] = dump(data)
 
     save("status.json", get("/api/status"))
-    save("changes.json", get("/api/changes"))
     save("ledger.json", get("/api/ledger"))
     save("alerts.json", get("/api/alerts"))
-    files["export-ledger.csv"] = client.get("/api/ledger.csv").get_data()
+    if not switch_only:
+        save("changes.json", get("/api/changes"))
+        files["export-ledger.csv"] = client.get("/api/ledger.csv").get_data()
     for scope in ("public", "total"):
         save(f"items-{scope}.json", get(f"/api/items?scope={scope}"))
-        save(f"market-{scope}.json", get(f"/api/market-comparison?scope={scope}"))
+        if not switch_only:
+            save(f"market-{scope}.json", get(f"/api/market-comparison?scope={scope}"))
         files[f"export-{scope}.csv"] = client.get(f"/api/export.csv?scope={scope}").get_data()
         for range_key in RANGES:
             save(f"history-{scope}-{range_key}.json", get(f"/api/history/portfolio?scope={scope}&range={range_key}"))
@@ -73,6 +87,8 @@ def answers(client, item_index: dict[str, int]) -> dict[str, bytes]:
     save("containers.json", containers)
     for container in containers["containers"]:
         save(f"container-{container['id']}.json", get(f"/api/containers/{container['id']}"))
+    if switch_only:
+        return files
 
     items = get("/api/items?scope=total")["items"]
     for name in sorted({i["market_hash_name"] for i in items}):
@@ -142,6 +158,10 @@ def main() -> None:
     item_index: dict[str, int] = {}
     base = answers(client, item_index)
     base.update(event_sets(client) if not args.offline else {"sets.json": dump({"sets": []})})
+    set_cash_only(True)
+    cash = answers(client, item_index, switch_only=True)
+    set_cash_only(False)
+    cash_states: dict[str, list[str]] = {}
 
     # Confirming changes in the demo: every combination of the ones that change what you hold.
     changes = json.loads(base["changes.json"])["changes"]
@@ -169,11 +189,22 @@ def main() -> None:
             for name, data in different.items():
                 write(name, data, out / "data" / "states" / key)
             states[key] = sorted(different)
+            # The same state with "Cash-out markets only" on.
+            set_cash_only(True)
+            found = answers(client, item_index, switch_only=True)
+            set_cash_only(False)
+            different = {name: data for name, data in found.items() if cash.get(name) != data}
+            for name, data in different.items():
+                write(name, data, out / "data" / "cash" / "states" / key)
+            cash_states[key] = sorted(different)
     Config.DATABASE_PATH = base_db
     base["item-index.json"] = dump(item_index)   # includes names only some states have
     for name, data in {**base, **shared}.items():
         write(name, data, out / "data")
-    write("states.json", dump({"changes": [c["id"] for c in doing], "states": states}), out / "data")
+    for name, data in cash.items():
+        write(name, data, out / "data" / "cash")
+    write("states.json", dump({"changes": [c["id"] for c in doing], "states": states,
+                               "cash_files": sorted(cash), "cash_states": cash_states}), out / "data")
 
     # The page itself: relative links (the site lives under /<repo>/), the demo switch and the CSP.
     html = client.get("/").get_data(as_text=True)

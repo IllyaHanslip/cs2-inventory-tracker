@@ -66,6 +66,12 @@ def create_app(*, demo: bool = False, reset_demo: bool = False) -> Flask:
         convert_market_snapshots()  # history saved before values were after fees (one-off)
     except Exception:  # noqa: BLE001 - never stop the app starting over this
         logging.getLogger(__name__).exception("Couldn't convert older portfolio history to after-fee values")
+    try:
+        from backend.history import fill_cash_values
+
+        fill_cash_values()  # cash-out totals for days saved before they were kept (one-off)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("Couldn't estimate cash-out totals for older history")
 
     # Templates and static files: next to app.py, or unpacked from the Windows app (PyInstaller).
     app = Flask(__name__, root_path=getattr(sys, "_MEIPASS", None) or str(BASE_DIR))

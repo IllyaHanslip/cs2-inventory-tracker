@@ -10,7 +10,7 @@ import { MarketFilter, asideText, noCashLabel } from './market-filter.js';
 import { steady } from './motion.js';
 import { applySort } from './sortable.js';
 import {
-  debounce, esc, longDate, money, number, relTime, safeUrl, state, store, thumbHtml, toast,
+  NOT_COUNTED_WHY, cashOnly, debounce, esc, longDate, money, number, relTime, safeUrl, state, store, thumbHtml, toast,
 } from './util.js';
 
 const MEDALS = ['Gold', 'Silver', 'Bronze'];
@@ -101,25 +101,27 @@ export class MarketsView {
     return this.data.rows
       .filter((row) => terms.every((t) => row.market_hash_name.toLowerCase().includes(t)))
       .map((row) => {
+        const only = selling && cashOnly();
         const quotes = Object.entries(row.prices)
           .filter(([key]) => keys.has(key))
           .map(([key, q]) => ({
             market: key, label: labels[key] || key, url: q.url, cash_out: q.cash_out,
-            value: selling ? q.net : q.price_base,
+            value: selling ? q.net : q.price_base, counted: !only || q.cash_out,
           }))
           .filter((q) => q.value !== null && q.value !== undefined);
-        quotes.sort((a, b) => (selling ? b.value - a.value : a.value - b.value));
+        quotes.sort((a, b) => (Number(b.counted) - Number(a.counted)) || (selling ? b.value - a.value : a.value - b.value));
+        const ranked = quotes.filter((q) => q.counted);
         const values = quotes.map((q) => q.value);
         const low = values.length ? Math.min(...values) : null;
         const high = values.length ? Math.max(...values) : null;
         const steam = !selling && keys.has('steam') ? row.prices.steam?.price_base ?? null : null;
         return {
           ...row,
-          top: quotes.slice(0, 3),
-          count: quotes.length,
+          top: ranked.slice(0, 3),
+          count: ranked.length,
           spread: quotes.length >= 2 && low > 0 ? ((high - low) / low) * 100 : null,
           saving: steam !== null && quotes.length ? steam - quotes[0].value : null,
-          payout: selling && quotes.length ? quotes[0].value * row.quantity : null,
+          payout: selling && ranked.length ? ranked[0].value * row.quantity : null,
         };
       })
       .filter((row) => !this.el.multi.checked || row.count >= 2);
@@ -136,8 +138,9 @@ export class MarketsView {
     this.renderDeals(rows, markets);
     steady(this.el.deals);
 
-    const head = markets.map((m) => `<th class="num" data-sort="num" data-key="m:${esc(m.key)}"
-      ${selling && !m.cash_out ? `title="${esc(noCashLabel(m.key))}"` : ''}>${esc(m.label)}${selling && !m.cash_out ? ` <span class="muted">(${esc(noCashLabel(m.key, true))})</span>` : ''}</th>`).join('');
+    const out = (m) => selling && cashOnly() && !m.cash_out;   // doesn't count: "Cash-out markets only"
+    const head = markets.map((m) => `<th class="num${out(m) ? ' not-counted' : ''}" data-sort="num" data-key="m:${esc(m.key)}"
+      ${selling && !m.cash_out ? `title="${esc(out(m) ? NOT_COUNTED_WHY : noCashLabel(m.key))}"` : ''}>${esc(m.label)}${selling && !m.cash_out ? ` <span class="muted">(${esc(noCashLabel(m.key, true))}${out(m) ? ' · not counted' : ''})</span>` : ''}</th>`).join('');
     const lastHead = selling
       ? '<th class="num" data-sort="num" data-key="payout" title="Best price after fees x quantity, at plain listing prices">You\'d receive</th>'
       : '<th class="num" data-sort="num" data-key="saving">Save vs Steam</th>';
@@ -146,7 +149,9 @@ export class MarketsView {
       <th class="num" data-sort="num" data-key="spread">Spread</th>${lastHead}</tr>`;
     this.el.legend.innerHTML = `<span>${selling ? 'Best places to sell, after fees' : 'Cheapest places to buy'}:</span>
       ${MEDALS.map((label, i) => `<span><span class="medal m${i + 1}">${i + 1}</span>${label}</span>`).join('')}
-      ${selling ? '<span class="muted">Steam is ranked too, but its money goes to your Steam Wallet and cannot be withdrawn. These are plain listing prices; your Total Portfolio also counts custom prices and sticker values.</span>' : ''}`;
+      ${selling ? `<span class="muted">${cashOnly()
+        ? 'Steam is shown greyed and not ranked: its money goes to your Steam Wallet, and "Values from" is set to "Cash-out markets only".'
+        : 'Steam is ranked too, but its money goes to your Steam Wallet and cannot be withdrawn.'} These are plain listing prices; your Total Portfolio also counts custom prices and sticker values.</span>` : ''}`;
     steady(this.el.legend);
 
     this.el.table.querySelector('tbody').innerHTML = rows.map((row, index) => {
@@ -177,7 +182,8 @@ export class MarketsView {
         const medal = rank >= 0 ? ` medal-${rank + 1}` : '';
         const badge = rank >= 0 ? `<span class="medal m${rank + 1}" title="${MEDALS[rank]}: ${['cheapest', '2nd cheapest', '3rd cheapest'][rank]}">${rank + 1}</span>` : '';
         const rankTitle = rank >= 0 ? `${MEDALS[rank]} · ` : '';
-        return `<td class="num price-cell${medal}" data-v="${shown ?? ''}" title="${esc(rankTitle + title)}">${badge}${inner}${remove}${sub}</td>`;
+        const greyed = out(m) ? ' not-counted' : '';
+        return `<td class="num price-cell${medal}${greyed}" data-v="${shown ?? ''}" title="${esc(rankTitle + title)}">${badge}${inner}${remove}${sub}</td>`;
       }).join('');
       const spread = row.spread !== null ? `${row.spread.toFixed(1)}%` : '<span class="muted">—</span>';
       let last;

@@ -13,7 +13,7 @@ import { initMotion } from './motion.js';
 import { PlannerView } from './planner.js';
 import { PnlView } from './pnl.js';
 import { onUndone, undoLast } from './undo.js';
-import { deltaHtml, esc, money, number, relTime, state, store, toast } from './util.js';
+import { cashOnly, deltaHtml, esc, money, number, relTime, state, store, toast } from './util.js';
 
 const TAB_ORDER = ['public', 'total', 'containers', 'markets', 'planner', 'pnl'];
 
@@ -80,7 +80,7 @@ const app = {
       `Prices updated: ${s.prices_updated ? relTime(s.prices_updated) : 'never'}`,
       `Daily update: ${s.last_daily_update ? relTime(s.last_daily_update) : 'not yet'} (automatic from ${s.daily_update_time})`,
       `Last snapshot: ${s.last_snapshot ? relTime(s.last_snapshot) : 'none yet'}`,
-      'Values: after selling fees',
+      `Values: after selling fees${cashOnly() ? ', cash-out markets only' : ''}`,
       `Markets: ${s.markets.filter((m) => m.enabled && m.available).map((m) => m.label).join(', ') || 'none'}`,
     ];
     if (s.fx.date) parts.push(`FX: ${s.fx.source || 'stored rates'}`);
@@ -89,6 +89,41 @@ const app = {
     alert.hidden = !s.pending_changes;
     alert.textContent = s.pending_changes ? String(s.pending_changes) : '';
     updateBell(s.alerts_unseen || 0);
+    this.renderBasis();
+  },
+
+  /** The "Values from" switch: all markets, or only markets whose money you can withdraw. */
+  renderBasis() {
+    const on = cashOnly();
+    document.querySelectorAll('#basis-switch button').forEach((b) => {
+      const chosen = (b.dataset.cash === '1') === on;
+      b.classList.toggle('active', chosen);
+      b.setAttribute('aria-pressed', String(chosen));
+    });
+    document.getElementById('basis-note').textContent = on
+      ? 'Steam (and anything else you can\u2019t withdraw from) is shown greyed and listed last, and left out of values.'
+      : 'Steam counts too: it pays into your Steam Wallet, which can\u2019t be withdrawn.';
+  },
+
+  async setBasis(on) {
+    if (on === cashOnly() || this.switchingBasis) return;   // (one switch at a time: they'd race)
+    this.switchingBasis = true;
+    const buttons = document.querySelectorAll('#basis-switch button');
+    buttons.forEach((b) => { b.disabled = true; });
+    try {
+      await api('/settings', { method: 'PUT', body: { cash_only: on } });
+      state.status.settings.cash_only = on;
+      this.renderBasis();
+      this.summaries = {};      // (the old figures don't match the new labels: show … until they arrive)
+      this.renderStats();
+      toast(on ? 'Values now count only markets you can withdraw money from.' : 'Values now count every market, Steam included.', 'ok', 4000);
+      await this.refreshAll();
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      buttons.forEach((b) => { b.disabled = false; });
+      this.switchingBasis = false;
+    }
   },
 
   bindTopbar() {
@@ -107,6 +142,10 @@ const app = {
     });
     document.getElementById('settings-btn').addEventListener('click', () => dialogs.openSettings());
     document.getElementById('keys-btn').addEventListener('click', () => openShortcuts());
+    document.getElementById('basis-switch').addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-cash]');
+      if (button) this.setBasis(button.dataset.cash === '1');
+    });
     document.getElementById('job-cancel').addEventListener('click', async () => {
       try {
         await api('/jobs/cancel', { method: 'POST' });
@@ -234,6 +273,7 @@ const app = {
       settings: () => dialogs.openSettings(),
       undo: () => undoLast(),
       help: () => openShortcuts(),
+      basis: () => this.setBasis(!cashOnly()),
     });
   },
 
@@ -248,27 +288,37 @@ const app = {
     const cur = state.currency;
     const tile = (label, value, foot, title = '') => `<div class="stat"${title ? ` title="${esc(title)}"` : ''}><div class="stat-label">${esc(label)}</div>
       <div class="stat-value">${value}</div><div class="stat-foot">${foot}</div></div>`;
-    const afterFees = (summary) => `What you'd receive selling everything where it pays most, after each market's fees. `
+    const only = cashOnly();
+    const basis = only ? 'cash-out markets only' : 'after fees';
+    const afterFees = (summary) => `What you'd receive selling everything where it pays most${only ? ' (only on markets you can withdraw money from)' : ''}, after each market's fees. `
       + `At buying prices (market value) it would be ${money(summary.market_value, cur)}.`;
+    const steamOnly = (summary) => (only && summary.wallet_only_items ? ` · ${number(summary.wallet_only_items)} Steam-only left out` : '');
     const tiles = [];
     tiles.push(tile('Public inventory', pub ? money(pub.total_value, cur) : '…',
-      pub ? `${deltaHtml(pub.change_24h)} <span>24h · ${number(pub.item_count)} items · after fees</span>` : '',
+      pub ? `${deltaHtml(pub.change_24h)} <span>24h · ${number(pub.item_count)} items · ${basis}${steamOnly(pub)}</span>` : '',
       pub ? afterFees(pub) : ''));
     tiles.push(tile('Total portfolio', total ? money(total.total_value, cur) : '…',
-      total ? `${deltaHtml(total.change_24h)} <span>24h · after fees · incl. manual &amp; containers</span>` : '',
+      total ? `${deltaHtml(total.change_24h)} <span>24h · ${basis} · incl. manual &amp; containers${steamOnly(total)}</span>` : '',
       total ? afterFees(total) : ''));
-    tiles.push(tile('Cash-out value', total ? money(total.cash_out_value, cur) : '…',
-      total ? `<span>money you could withdraw · Steam Wallet sales left out${total.cash_out_missing ? ` · ${number(total.cash_out_missing)} Steam-only` : ''}</span>` : '',
-      'Like Total portfolio, but each item is sold on the best market whose money you can withdraw. Steam pays into your Steam Wallet, and some markets (such as BUFF163) only pay out to certain accounts, so those are left out here.'));
+    if (only) {
+      // Total portfolio already counts only cash-out markets: show the figure with Steam Wallet sales too.
+      tiles.push(tile('Incl. Steam Wallet', total ? money(total.all_markets_value, cur) : '…',
+        '<span>if Steam Wallet sales counted too (that money can\u2019t be withdrawn)</span>',
+        'Like Total portfolio, but every market counts, Steam included. Switch "Values from" to "All markets" to see everything this way.'));
+    } else {
+      tiles.push(tile('Cash-out value', total ? money(total.cash_out_value, cur) : '…',
+        total ? `<span>money you could withdraw · Steam Wallet sales left out${total.cash_out_missing ? ` · ${number(total.cash_out_missing)} Steam-only` : ''}</span>` : '',
+        'Like Total portfolio, but each item is sold on the best market whose money you can withdraw. Steam pays into your Steam Wallet, and some markets (such as BUFF163) only pay out to certain accounts, so those are left out here. Switch "Values from" to "Cash-out markets only" to see everything this way.'));
+    }
     tiles.push(tile('7-week change', total ? deltaHtml(total.change_7w) : '…',
       '<span>total portfolio vs. 49 days ago</span>'));
     tiles.push(tile('Items tracked', total ? number(total.item_count) : '…',
       total ? `<span>${number(total.unique_items)} unique${total.unpriced_items ? ` · ${number(total.unpriced_items)} unpriced` : ''}</span>` : ''));
     tiles.push(tile('In containers', total ? money(total.value_in_containers, cur) : '…',
-      total ? `<span>${number(total.items_in_containers)} items in ${number(total.storage_containers)} container${total.storage_containers === 1 ? '' : 's'} · after fees</span>` : ''));
+      total ? `<span>${number(total.items_in_containers)} items in ${number(total.storage_containers)} container${total.storage_containers === 1 ? '' : 's'} · ${basis}</span>` : ''));
     if (total && total.purchase_value) {
       const pct = (total.profit / total.purchase_value) * 100;
-      tiles.push(tile('Profit / loss', money(total.profit, cur), `${deltaHtml(pct)} <span>if sold now, after fees · items with a purchase price</span>`));
+      tiles.push(tile('Profit / loss', money(total.profit, cur), `${deltaHtml(pct)} <span>if sold now, ${basis} · items with a purchase price</span>`));
     }
     document.getElementById('stats').innerHTML = tiles.join('');
   },

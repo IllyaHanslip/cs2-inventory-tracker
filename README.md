@@ -52,8 +52,11 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
   worth more than the skin, the item is valued from real CSFloat listings and sales of the same skin with the
   same stickers.
 - **What you'd really get**: every price and value is what you'd receive selling, after each market's selling
-  and withdrawal fees. The item view breaks it down step by step (listing price, sticker value, each fee). A
-  separate *Cash-out value* counts only money you can withdraw, since Steam Wallet money can't be.
+  and withdrawal fees. The item view breaks it down step by step (listing price, sticker value, each fee).
+- **Values from: all markets, or cash-out markets only**: Steam often pays most, but into your Steam Wallet,
+  which can't be withdrawn. One switch above the figures (or W) makes every value, total, chart, mover and alert
+  count only markets you can withdraw money from. Steam is still shown everywhere, greyed and listed last, and
+  items only Steam has a price for are left out of totals. The other figure is always shown in its own tile.
 - **No silly prices**: rarely traded items often have one listing priced far above what they sell for (say a
   Sticker Slab listed at £1,500 that sells for 62p). Those listings are spotted and ignored automatically, using
   recent sales, the other markets and, for slabs, the sticker inside. The item view shows what was ignored and why.
@@ -66,7 +69,7 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
 - **Biggest movers and portfolio mix**: what rose and fell the most, and how your value splits across knives,
   skins, stickers, slabs and cases, now and over time.
 - **History**: a daily snapshot builds 7-day to all-time charts of your portfolio and of each item on every
-  market, after fees. It can update in the background on days you don't open it, with a Windows notification
+  market, after fees. An item's best-price line is striped with the colour of whichever market paid most that day. It can update in the background on days you don't open it, with a Windows notification
   saying what changed.
 - **Easy to explore**: sort any column, choose which columns to show, filter by category or market, see the 3
   best markets to sell every item on, compare buying prices too, and export your inventory or Profit & Loss to
@@ -165,6 +168,7 @@ Every button with a shortcut shows its key, and **?** lists them all. They never
 | **A** / **N** | Add an item / new container |
 | **E** | Export this tab to CSV (inventory tabs and Profit & Loss) |
 | **B** | Price alerts |
+| **W** | Values from: all markets / cash-out markets only |
 | **,** | Settings |
 | **Ctrl+Z** | Undo the last change |
 | **Esc** | Close a window, leave a search box, or untick the items ticked in a container |
@@ -233,8 +237,8 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
     instead: recent sales and listings of the same skin with the same valuable stickers. Comparables carrying
     other valuable stickers are set aside, and asking prices are discounted. This is re-checked daily, and the
     item view shows the evidence.
-- **Fees** (defaults as of November 2026, editable in Settings). The **Cash-out value** tile sells each item on
-  the best market you can withdraw from:
+- **Fees** (defaults as of November 2026, editable in Settings). With **Values from: Cash-out markets only**
+  (or in the **Cash-out value** tile), each item is sold on the best market you can withdraw from:
 
   | Market | Selling fee | Withdrawal fee | Counts as cash? |
   |---|---|---|---|

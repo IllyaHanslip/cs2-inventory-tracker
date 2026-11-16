@@ -5,6 +5,16 @@ export const state = {
   currency: 'USD',   // base currency
 };
 
+/** "Values from: Cash-out markets only" is on: markets whose money can't be withdrawn (Steam
+ *  Wallet) are still shown, greyed and listed last, but don't set any price or value. */
+export function cashOnly() {
+  return Boolean(state.status?.settings?.cash_only);
+}
+
+/** Why a market doesn't count right now (for tooltips). */
+export const NOT_COUNTED_WHY = `Its money goes to your Steam Wallet (or can't be withdrawn), and "Values from" is set to `
+  + `"Cash-out markets only", so it's listed last and doesn't count towards any value.`;
+
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 /** Escape any value for safe use inside HTML text or a quoted attribute. */

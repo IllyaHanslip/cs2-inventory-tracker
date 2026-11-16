@@ -756,6 +756,22 @@ details[open] > :not(summary) { animation: fade-in .18s ease-out; }
 .ignored-cell { color: var(--warning); font-size: 12px; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
 a.ignored-cell { cursor: pointer; }
 
+/* ---------- "Values from": all markets, or cash-out markets only ---------- */
+.basis-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.basis-bar .key-hint { margin-left: -4px; }
+/* A market that doesn't count while "Cash-out markets only" is on: greyed, listed last. */
+tr.not-counted td { color: var(--text-muted); }
+tr.not-counted td a, tr.not-counted td strong { color: var(--text-muted); }
+.moved-down { display: inline-flex; color: var(--text-muted); cursor: help; }
+.not-counted-note { color: var(--text-muted); }
+.cheapest li.not-counted, .cheapest li.not-counted .val, .cheapest li.not-counted a { color: var(--text-muted); }
+.not-counted-val { text-decoration: line-through; text-decoration-color: rgba(255, 255, 255, 0.25); }
+.price-cell.not-counted, th.not-counted { opacity: .55; }
+.chart-note { margin-top: 8px; }
+.chart-note .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px -1px 2px; }
+/* In a window, table headers don't stick (they'd cover the rows while you scroll). */
+.dialog .table-scroll > table.data th { position: relative; top: auto; }
+
 /* ---------- Keyboard shortcuts: each control shows its key ---------- */
 .kbd {
   display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;

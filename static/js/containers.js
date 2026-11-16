@@ -5,7 +5,7 @@ import { api } from './api.js';
 import { columnChooser } from './columns.js';
 import { confirmDialog, editItem, openItem, suggestNames } from './dialogs.js';
 import { markClean, protect, protectForm } from './guard.js';
-import { MarketFilter, availableMarkets, bestToSell, bulkNote, sellHtml } from './market-filter.js';
+import { MarketFilter, availableMarkets, bestToSell, bulkNote, sellHtml, walletOnlyHtml } from './market-filter.js';
 import { applySortWithin, cycleSort, getSort, sortItems } from './sortable.js';
 import { openEventPicker } from './event-picker.js';
 import { markKeys } from './keys.js';
@@ -663,9 +663,10 @@ function renderContents(contents, currency, animate = false) {
             item.stickers.length ? `${item.stickers.length} sticker${item.stickers.length > 1 ? 's' : ''}` : '',
           ].filter(Boolean).join(' · ')}</div>` : ''}</td>
         <td class="num strong" data-v="${item.quantity}">${number(item.quantity)}</td>
-        <td class="num" data-v="${item.unit_value ?? ''}">${money(item.unit_value, currency)}</td>
+        <td class="num" data-v="${item.unit_value ?? ''}">${item.wallet_only ? walletOnlyHtml(item, currency) : money(item.unit_value, currency)}</td>
         <td data-v="${top[0]?.net ?? ''}">${sellHtml(top, currency)}</td>
-        <td class="num strong" data-v="${item.total_value ?? ''}">${money(item.total_value, currency)}${bulkNote(item, currency)}</td>
+        <td class="num strong" data-v="${item.total_value ?? ''}">${item.wallet_only ? '<span class="muted">—</span><div class="sub">not counted</div>'
+          : `${money(item.total_value, currency)}${bulkNote(item, currency)}`}</td>
         <td><div class="row-actions-cell">
           <button type="button" class="icon-btn" data-act="edit" data-id="${item.id}" aria-label="Edit ${esc(item.name)}" title="Edit">${ICONS.edit}</button>
           <button type="button" class="icon-btn" data-act="move" data-id="${item.id}" aria-label="Move ${esc(item.name)}" title="Move">${ICONS.move}</button>

@@ -1,7 +1,7 @@
 // Market filter chips ("compare on specific markets") and the "best 3 to sell" / "3 cheapest"
 // helpers shared by every price list.
 
-import { esc, money, number, safeUrl, store } from './util.js';
+import { NOT_COUNTED_WHY, esc, money, number, safeUrl, store } from './util.js';
 
 /** Markets to offer: the enabled automatic sources plus any manual-quote markets seen in the data. */
 export function availableMarkets(status, quoteLists = []) {
@@ -102,11 +102,26 @@ export function noCashLabel(market, short = false) {
   return short ? 'no cash-out' : 'no cash-out for most accounts';
 }
 
-/** Compact "£4.12 CSFloat" lines for the best-3-to-sell column; money you can't withdraw is tagged. */
+/** Compact "£4.12 CSFloat" lines for the best-3-to-sell column; money you can't withdraw is tagged,
+ *  and greyed when it doesn't count ("Values from: Cash-out markets only"). */
 export function sellHtml(top, currency) {
   if (!top.length) return '<span class="muted">—</span>';
-  return `<ol class="cheapest">${top.map((q, i) => `<li class="${i === 0 ? 'first' : ''}"><span class="val">${money(q.net, currency)}</span>
-    <span class="mkt">${marketLink(q.label, q.url)}${q.wallet ? ` <span class="wallet-tag" title="${esc(noCashLabel(q.market))}">${esc(noCashLabel(q.market, true))}</span>` : ''}</span></li>`).join('')}</ol>`;
+  return `<ol class="cheapest">${top.map((q, i) => {
+    const out = q.counted === false;
+    const cls = [i === 0 && !out ? 'first' : '', out ? 'not-counted' : ''].filter(Boolean).join(' ');
+    const tag = q.wallet ? ` <span class="wallet-tag" title="${esc(out ? NOT_COUNTED_WHY : noCashLabel(q.market))}">${esc(noCashLabel(q.market, true))}${out ? ' · not counted' : ''}</span>` : '';
+    return `<li class="${cls}"><span class="val">${money(q.net, currency)}</span>
+    <span class="mkt">${marketLink(q.label, q.url)}${tag}</span></li>`;
+  }).join('')}</ol>`;
+}
+
+/** An item priced only where money can't be withdrawn, with "Cash-out markets only" on: left out
+ *  of every total, its price shown greyed. */
+export function walletOnlyHtml(item, currency) {
+  const market = item.sell_quotes?.[0];
+  const where = market ? market.label : 'Steam';
+  return `<span class="muted not-counted-val" title="${esc(NOT_COUNTED_WHY)}">${money(item.wallet_unit, currency)}</span>
+    <div class="sub" title="${esc(NOT_COUNTED_WHY)}">${esc(where)} only · not counted</div>`;
 }
 
 const ASIDE_REASONS = {

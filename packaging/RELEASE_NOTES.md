@@ -2,7 +2,19 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.4.0
+### What's new in v1.5.0
+
+- **Values from: All markets / Cash-out markets only.** A switch above the figures (or press W). Steam
+  often pays most, but into your Steam Wallet, which can't be withdrawn. With "Cash-out markets only",
+  every value, total, chart, 24h / 7-week change, mover and price alert counts only markets you can
+  withdraw money from. Steam is still shown: in an item's details it's listed last (marked ⤓) and its
+  price line is greyed; in the tables it's greyed with "not counted". Items only Steam has a price for
+  are left out of totals. The tiles always show the other figure too. It starts on "All markets".
+- **Striped best-price line** in an item's details: blue, striped with the colour of the market paying
+  most on each day, so you can see when a different market took over.
+- Table headers in an item's details no longer float over the rows when you scroll down.
+
+### v1.4.0
 
 - **Steam prices without asking Steam.** Steam Market prices now come from CSGOTrader's free daily price
   file (what each item sold for on average over the last day, or week/month for items that sell rarely),

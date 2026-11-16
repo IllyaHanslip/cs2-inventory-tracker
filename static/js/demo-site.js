@@ -13,9 +13,12 @@ import { toast } from './util.js';
 export const DEMO_SITE = document.documentElement.dataset.demoSite === '1';
 
 const files = new Map();
-const demo = { applied: new Set(), dismissed: new Set(), key: '', states: {}, undo: null, alertsSeen: false };
+// cash: "Values from: Cash-out markets only" is on (its answers were saved too, under data/cash/).
+const demo = { applied: new Set(), dismissed: new Set(), key: '', states: {}, undo: null, alertsSeen: false, cash: false, meta: null };
 const PAGE_LOADED = new Date().toISOString();   // the demo "restarts" when you reload the page
 
+/** A saved answer. Each caller gets its own copy, like a fresh answer from the app, so changing
+ *  what came back (the page does) can never change the saved one. */
 function load(name) {
   if (!files.has(name)) {
     files.set(name, fetch(`data/${name}`).then((response) => {
@@ -23,11 +26,17 @@ function load(name) {
       return response.json();
     }));
   }
-  return files.get(name);
+  return files.get(name).then((data) => structuredClone(data));
 }
 
-/** The answer for the changes confirmed so far (falls back to the starting one when it's the same). */
+/** The answer for the changes confirmed so far (falls back to the starting one when it's the same),
+ *  with "Cash-out markets only" if that's on. */
 async function loadState(name) {
+  demo.meta = demo.meta || await load('states.json');
+  if (demo.cash && (demo.meta.cash_files || []).includes(name)) {
+    if (demo.applied.size && (demo.meta.cash_states?.[demo.key] || []).includes(name)) return load(`cash/states/${demo.key}/${name}`);
+    return load(`cash/${name}`);
+  }
   if (demo.applied.size) {
     const { states } = await load('states.json');
     const key = [...demo.applied].sort((a, b) => a - b).join('-');
@@ -116,6 +125,11 @@ async function demoWrite(path, body = {}) {
     demo.undo = null;
     setKey();
     return { undone: 'Change' };
+  }
+  if (path === '/settings' && body && Object.keys(body).length === 1 && typeof body.cash_only === 'boolean') {
+    demo.cash = body.cash_only;          // the one setting the demo can switch
+    const status = await loadState('status.json');
+    return { settings: status.settings, job: null };
   }
   if (path === '/alerts/seen') {
     demo.alertsSeen = true;
@@ -214,6 +228,9 @@ export async function demoApi(path, { method = 'GET', params = {}, body } = {}) 
 /** The export link in the demo: the saved CSV for the changes confirmed so far. */
 export function demoExportPath(scope) {
   const name = `export-${scope}.csv`;
+  if (demo.cash && (demo.meta?.cash_files || []).includes(name)) {
+    return demo.key && demo.meta.cash_states?.[demo.key]?.includes(name) ? `data/cash/states/${demo.key}/${name}` : `data/cash/${name}`;
+  }
   return demo.key && demo.states[demo.key]?.includes(name) ? `data/states/${demo.key}/${name}` : `data/${name}`;
 }
 
@@ -222,7 +239,7 @@ export function showDemoBanner() {
   const banner = document.createElement('div');
   banner.className = 'demo-banner';
   banner.innerHTML = 'Live demo with a <strong>made-up inventory</strong> and synthetic prices - on the Containers tab you can '
-    + 'try confirming the changes (and undoing them), but nothing else changes. '
+    + 'try confirming the changes (and undoing them) and the "Values from" switch, but nothing else changes. '
     + '<a href="https://github.com/IllyaHanslip/cs2-inventory-tracker" rel="noopener">Get the app on GitHub</a> to track your own items.';
   document.body.prepend(banner);
 }

@@ -40,6 +40,9 @@ class Valuator:
         self.prefs = prefs or app_settings.get_all()
         self.base: str = self.prefs["base_currency"]
         self.strategy: str = self.prefs["valuation_strategy"]
+        # "Values from: Cash-out markets only": markets whose money can't be withdrawn (Steam
+        # Wallet) are still shown, but don't set any price or value.
+        self.cash_only: bool = bool(self.prefs.get("cash_only", False))
         self.sales = self._load_sales()
         # Listings that can't be right are set aside (see sanity.py): name -> [{market, price, reason, reference}]
         self.set_aside: dict[str, list[dict[str, Any]]] = {}
@@ -71,6 +74,10 @@ class Valuator:
 
     def cash_out(self, market: str) -> bool:
         return bool(fees.profile(market, self.fee_overrides)["cash_out"])
+
+    def counts(self, market: str) -> bool:
+        """Whether a market's price can be an item's value under the "Values from" switch."""
+        return not self.cash_only or self.cash_out(market)
 
     # ------------------------------------------------------------- selling speed
     def sell_capacity(self, name: str, market: str) -> int | None:
@@ -111,10 +118,13 @@ class Valuator:
 
     @property
     def best_net(self) -> dict[str, float]:
-        """Per item name: the most you'd receive for a plain copy (no stickers) on any market, after fees."""
+        """Per item name: the most you'd receive for a plain copy (no stickers) after fees, on any market
+        that counts (see ``counts``)."""
         if self._best_net is None:
             nets: dict[str, float] = {}
             for name, market, price in zip(self.quotes["market_hash_name"], self.quotes["market"], self.quotes["price_base"]):
+                if not self.counts(market):
+                    continue
                 value = self.net(market, float(price))
                 if value is not None and value > nets.get(name, 0.0):
                     nets[name] = value
@@ -139,8 +149,10 @@ class Valuator:
             steps = self.fee_steps(market, price)
             if steps is None:
                 continue
-            options.append({"market": market, "url": url, "wallet": not steps["cash_out"], "basis": basis, **steps})
-        options.sort(key=lambda o: -o["net"])
+            options.append({"market": market, "url": url, "wallet": not steps["cash_out"], "basis": basis,
+                            "counted": self.counts(market), **steps})
+        # Best first; with "Cash-out markets only", markets that don't count go to the bottom.
+        options.sort(key=lambda o: (not o["counted"], -o["net"]))
         return options
 
     # ------------------------------------------------------------------ quotes

@@ -838,7 +838,8 @@ def _range() -> str:
 @bp.get("/history/portfolio")
 def portfolio_history():
     prefs = settings.get_all()
-    return jsonify(history.portfolio_history(_scope(), _range(), FxConverter.load(), prefs["base_currency"]))
+    return jsonify(history.portfolio_history(_scope(), _range(), FxConverter.load(), prefs["base_currency"],
+                                             cash_only=bool(prefs.get("cash_only"))))
 
 
 @bp.get("/sell-plan")

@@ -1,7 +1,7 @@
 """Price alerts: "tell me when this sells for above / below X".
 
 The price watched is the one in the Price column: what you'd receive for one plain copy, selling
-where it pays most, after that market's fees. Alerts are checked after every price refresh; one
+where it pays most, after that market's fees (following the "Values from" switch). Alerts are checked after every price refresh; one
 that's set off shows in the dashboard and as a Windows notification, then waits until you turn it
 back on (so it doesn't go off again every refresh).
 """
@@ -27,8 +27,8 @@ def current_value(valuator, name: str) -> float | None:
     """What one plain copy of ``name`` would bring in now, after fees (base currency)."""
     value = valuator.best_net.get(name)
     if value is None:   # no usable listing: priced from recent sales (or the sticker inside), as the tables are
-        options = valuator.sell_options(valuator.fallback_quotes(name))
-        value = options[0]["net"] if options else None
+        best = next((o for o in valuator.sell_options(valuator.fallback_quotes(name)) if o["counted"]), None)
+        value = best["net"] if best else None
     return value
 
 

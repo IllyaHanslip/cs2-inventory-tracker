@@ -49,7 +49,10 @@ def keep_score(weekly: float | None, stack: int, unit_value: float) -> float:
 
 
 def plan(target: float, valuator, *, include_wallet: bool = False, keep: set[int] | None = None) -> dict[str, Any]:
+    """Which items to sell, how many and where. ``include_wallet`` is the planner's own "Count
+    Steam Wallet sales" choice, so it decides which markets count here (not the "Values from" switch)."""
     keep = keep or set()
+    valuator.cash_only = not include_wallet
     frame = portfolio.build_frame(valuator, "total")
     out: dict[str, Any] = {"currency": valuator.base, "target": target, "steps": [], "by_market": [],
                            "achieved": 0.0, "max": 0.0, "excluded": {"kept": 0, "locked": 0, "no_price": 0}}
@@ -68,7 +71,7 @@ def plan(target: float, valuator, *, include_wallet: bool = False, keep: set[int
         if row.source == "steam" and not row.tradable:
             out["excluded"]["locked"] += 1
             continue
-        options = [o for o in row.sell_quotes if include_wallet or not o["wallet"]]
+        options = sorted((o for o in row.sell_quotes if include_wallet or not o["wallet"]), key=lambda o: -o["net"])
         if not options:
             out["excluded"]["no_price"] += 1
             continue

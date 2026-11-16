@@ -23,6 +23,7 @@ EDITABLE_KEYS = (
     "sticker_premium_cap",
     "sticker_evidence",
     "selling_fees",
+    "cash_only",
 )
 
 
@@ -38,6 +39,9 @@ def _defaults() -> dict[str, Any]:
         "sticker_premium_cap": Config.STICKER_PREMIUM_CAP,
         "sticker_evidence": True,   # value items with valuable stickers from CSFloat comparables
         "selling_fees": {},         # your overrides of the default fees in fees.py
+        # "Values from": False = all markets (Steam Wallet money counts), True = only markets
+        # whose money you can withdraw set prices and values.
+        "cash_only": False,
     }
 
 
@@ -125,9 +129,9 @@ def validate(changes: dict[str, Any], *, known_currencies: set[str] | None = Non
             clean[key] = round(cap, 4)
         elif key == "steam_id":
             clean[key] = str(value or "").strip()
-        elif key == "sticker_evidence":
+        elif key in ("sticker_evidence", "cash_only"):
             if not isinstance(value, bool):
-                raise ValueError("sticker_evidence must be true or false")
+                raise ValueError(f"{key} must be true or false")
             clean[key] = value
         elif key == "selling_fees":
             from .fees import validate as validate_fees

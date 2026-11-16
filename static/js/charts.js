@@ -10,6 +10,8 @@ const PALETTE = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#9085e9
 const FIXED_SLOTS = { valuation: 0, steam: 1, skinport: 2, csfloat: 3, marketcsgo: 4, waxpeer: 5 };
 const FIRST_MANUAL_SLOT = 6;
 const FOLD_COLOR = '#8a919c';
+// A market that doesn't count under "Values from: Cash-out markets only" (Steam Wallet money).
+const MUTED_COLOR = '#4d535e';
 
 /** Stable colour per market key. Manual quote markets take the remaining slots in name order. */
 export function seriesColor(key, manualKeys = []) {
@@ -49,8 +51,11 @@ export function chartsAvailable() {
  * Render (or re-render) a line chart.
  * @param {Chart|null} existing  previous instance to destroy
  * @param {HTMLCanvasElement} canvas
- * @param {{labels: string[], series: {key: string, label: string, values: (number|null)[], fill?: boolean}[],
+ * @param {{labels: string[], series: {key: string, label: string, values: (number|null)[], fill?: boolean,
+ *          muted?: boolean, leaders?: (string|null)[], leaderLabels?: object}[],
  *          currency: string, manualKeys?: string[]}} config
+ *  muted: drawn grey (a market that doesn't count). leaders: for the best line, which market was
+ *  best at each point - the line is then striped blue and that market's colour.
  */
 export function renderLineChart(existing, canvas, { labels, series, currency, manualKeys = [] }) {
   if (existing) existing.destroy();
@@ -60,9 +65,9 @@ export function renderLineChart(existing, canvas, { labels, series, currency, ma
   const multi = series.length > 1;
   const peak = Math.max(0, ...series.flatMap((s) => s.values.filter((v) => v !== null)));
   const tickFormat = axisFormatter(currency, peak);
-  const datasets = series.map((s) => {
-    const color = seriesColor(s.key, manualKeys);
-    return {
+  const datasets = series.flatMap((s) => {
+    const color = s.muted ? MUTED_COLOR : seriesColor(s.key, manualKeys);
+    const line = {
       label: s.label,
       data: s.values,
       borderColor: color,
@@ -86,7 +91,32 @@ export function renderLineChart(existing, canvas, { labels, series, currency, ma
       pointHoverBackgroundColor: color,
       tension: 0.2,
       spanGaps: true,
+      borderDash: s.muted ? [4, 4] : [],
+      leaders: s.leaders || null,
+      leaderLabels: s.leaderLabels || {},
     };
+    if (!s.leaders) return [line];
+    // Stripes: the same line drawn again on top, dashed, each dash in the colour of the market
+    // that was best at that point (so where the best market changes, the stripes change colour).
+    const stripes = {
+      ...line,
+      backgroundColor: 'transparent',
+      fill: false,
+      borderColor: color,
+      borderDash: [7, 7],
+      segment: {
+        borderColor: (ctx) => {
+          const market = s.leaders[ctx.p0DataIndex];
+          return market ? seriesColor(market, manualKeys) : 'rgba(0,0,0,0)';
+        },
+      },
+      pointHitRadius: 0,
+      pointHoverRadius: 0,
+      stripeOverlay: true,
+      order: -2,          // drawn on top of everything (lower order = drawn later)
+    };
+    line.order = -1;      // the best line itself above the market lines it follows
+    return [line, stripes];
   });
 
   return new window.Chart(canvas, {
@@ -110,6 +140,16 @@ export function renderLineChart(existing, canvas, { labels, series, currency, ma
             boxWidth: 18,
             padding: 14,
             font: { size: 12 },
+            filter: (item, data) => !data.datasets[item.datasetIndex].stripeOverlay,
+          },
+          // Clicking a line's name hides it (and the stripes drawn over it).
+          onClick: (event, item, legend) => {
+            const chart = legend.chart;
+            const shown = chart.isDatasetVisible(item.datasetIndex);
+            chart.data.datasets.forEach((d, i) => {
+              if (i === item.datasetIndex || (d.stripeOverlay && i === item.datasetIndex + 1)) chart.setDatasetVisibility(i, !shown);
+            });
+            chart.update();
           },
         },
         tooltip: {
@@ -121,9 +161,14 @@ export function renderLineChart(existing, canvas, { labels, series, currency, ma
           padding: 10,
           boxPadding: 4,
           usePointStyle: true,
+          filter: (item) => !item.dataset.stripeOverlay,
           callbacks: {
             title: (items) => longDate(items[0].label),
-            label: (ctx) => ` ${ctx.dataset.label}: ${money(ctx.parsed.y, currency)}`,
+            label: (ctx) => {
+              const leader = ctx.dataset.leaders?.[ctx.dataIndex];
+              const on = leader ? ` (${ctx.dataset.leaderLabels[leader] || leader})` : '';
+              return ` ${ctx.dataset.label}: ${money(ctx.parsed.y, currency)}${on}`;
+            },
           },
         },
       },

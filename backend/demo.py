@@ -355,15 +355,18 @@ def seed() -> None:
     from .valuation import Valuator
 
     v = Valuator()
-    live = {}
+    live, live_cash = {}, {}
     for scope in ("public", "total"):
         frame = portfolio.build_frame(v, scope, with_changes=False)
-        live[scope] = float(frame["total_value"].fillna(0).sum()) if not frame.empty else 0.0
+        live[scope] = float(frame["any_value"].fillna(0).sum()) if not frame.empty else 0.0
+        live_cash[scope] = float(frame["payout_value"].fillna(0).sum()) if not frame.empty else 0.0
     last_market = {scope: value for day, scope, value, _ in portfolio_rows if day == days[-1]}
+    # (The cash-out total - only markets you can withdraw from - is scaled the same way.)
     db.executemany(
         "INSERT OR REPLACE INTO portfolio_snapshots (snapshot_date, scope, total_value, item_count, currency, "
-        "market_value, basis, screened) VALUES (?, ?, ?, ?, 'USD', ?, 'after_fees', 1)",
-        [(day, scope, round(value * live[scope] / last_market[scope], 2), count, round(value, 2))
+        "market_value, basis, screened, cash_value) VALUES (?, ?, ?, ?, 'USD', ?, 'after_fees', 1, ?)",
+        [(day, scope, round(value * live[scope] / last_market[scope], 2), count, round(value, 2),
+          round(value * live_cash[scope] / last_market[scope], 2))
          for day, scope, value, count in portfolio_rows if last_market.get(scope)],
     )
     settings.set_value("last_snapshot", db.utcnow_iso())

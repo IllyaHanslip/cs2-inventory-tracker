@@ -5,10 +5,10 @@ import { MIX_COLORS, chartsAvailable, dataTableHtml, renderLineChart, renderStac
 import { columnChooser } from './columns.js';
 import * as containers from './containers.js';
 import * as dialogs from './dialogs.js';
-import { MarketFilter, availableMarkets, bestToSell, bulkNote, noCashLabel, sellHtml } from './market-filter.js';
+import { MarketFilter, availableMarkets, bestToSell, bulkNote, noCashLabel, sellHtml, walletOnlyHtml } from './market-filter.js';
 import { applySort, applySortWithin } from './sortable.js';
 import {
-  CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, isStorage, money, number, state, store, thumbHtml, toast,
+  CATEGORY_FILTERS, cashOnly, debounce, deltaHtml, esc, floatText, isStorage, money, number, state, store, thumbHtml, toast,
 } from './util.js';
 
 /** % change along daily values, leaving out each day the number of items changed: adding 50
@@ -374,6 +374,8 @@ export class InventoryView {
       } else {
         value = `${money(item.display_value)}<div class="sub">incl. ${number(item.contents_count)} stored inside</div>`;
       }
+    } else if (item.wallet_only) {
+      value = '<span class="muted">—</span><div class="sub">not counted</div>';
     } else {
       value += bulkNote(item);
     }
@@ -391,7 +393,7 @@ export class InventoryView {
         : '<span class="muted">—</span>';
     const top = bestToSell(item.sell_quotes, this.marketFilter);
     const v = (n) => (n === null || n === undefined ? '' : n);
-    const best = item.sell_quotes[0];
+    const best = item.sell_quotes.find((q) => q.counted !== false);
     const basisNote = { sales: ' · recent sales', sticker_inside: ' · sticker inside' }[best?.basis] || '';
     const via = best
       ? `<div class="sub"${item.set_aside.length ? ` title="${number(item.set_aside.length)} unrealistic listing(s) ignored"` : ''}>via ${esc(item.sell_market_label)}${best.wallet ? ` · ${esc(noCashLabel(best.market, true))}` : ''}${basisNote}</div>`
@@ -402,7 +404,8 @@ export class InventoryView {
         ${meta.length ? `<div class="item-meta">${meta.join(' · ')}</div>` : ''}${stickers}</td>
       <td class="col-cat">${esc(item.category_label)}</td>
       <td class="num" data-v="${item.quantity}">${qty}</td>
-      <td class="num" data-v="${v(item.unit_value)}">${money(item.unit_value)}${item.price_source === 'custom' ? '<span class="tag-custom">CUSTOM</span>' : ''}${via}</td>
+      <td class="num" data-v="${v(item.unit_value)}">${item.wallet_only ? walletOnlyHtml(item, state.currency)
+        : `${money(item.unit_value)}${item.price_source === 'custom' ? '<span class="tag-custom">CUSTOM</span>' : ''}${via}`}</td>
       <td data-v="${v(top[0]?.net)}">${sellHtml(top, state.currency)}</td>
       <td class="num" data-v="${item.sticker_premium || ''}">${stickerCell}</td>
       <td class="num strong" data-v="${v(valueNumber)}">${value}</td>
@@ -538,6 +541,7 @@ export class InventoryView {
    *  either arrives (they're fetched side by side) and whenever the items are reloaded. */
   renderChart() {
     const r = this.refs;
+    r.chartTitle.textContent = `${this.scope === 'public' ? 'Public inventory' : 'Total portfolio'} value after fees${cashOnly() ? ' · cash-out markets only' : ''}`;
     const h = this.chartSeries();
     if (!h) { this.renderHeadline(); return; }
     this.chart = renderLineChart(this.chart, r.chart, {

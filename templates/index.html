@@ -46,6 +46,17 @@
 </div>
 
 <main class="container">
+  <div class="basis-bar">
+    <span class="filter-label" id="basis-label">Values from</span>
+    <div class="segmented" id="basis-switch" role="group" aria-labelledby="basis-label">
+      <button type="button" data-cash="0" aria-keyshortcuts="W"
+        title="Every market counts, Steam included - though Steam pays into your Steam Wallet, which can't be withdrawn (Shortcut: W)">All markets</button>
+      <button type="button" data-cash="1" aria-keyshortcuts="W"
+        title="Only markets you can withdraw money from set prices and values; Steam is still shown, greyed and listed last (Shortcut: W)">Cash-out markets only</button>
+    </div>
+    <kbd class="kbd key-hint" aria-hidden="true" title="Shortcut: W">W</kbd>
+    <span class="muted small" id="basis-note"></span>
+  </div>
   <section class="stats" id="stats" aria-label="Portfolio summary"></section>
   <p class="status-line" id="status-line"></p>
 
