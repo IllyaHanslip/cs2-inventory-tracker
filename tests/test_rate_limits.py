@@ -68,8 +68,8 @@ class FakeJob:
 
 
 class FlakySource:
-    key = "steam"
-    label = "Steam Market"
+    key = "csfloat"
+    label = "CSFloat"
     bulk = False
 
     def __init__(self):
@@ -82,7 +82,7 @@ class FlakySource:
         self.calls += 1
         if self.calls == 1:
             return Quote(name, 1.0, "USD")
-        raise RateLimitError("Steam Market is rate-limiting requests from this computer (HTTP 429).")
+        raise RateLimitError("CSFloat is rate-limiting requests from this computer (HTTP 429).")
 
 
 def test_refresh_stops_politely_on_rate_limit(app):
@@ -93,7 +93,7 @@ def test_refresh_stops_politely_on_rate_limit(app):
     found, warning = refresh._run_per_item_source(source, ["A", "B", "C"], job, counter)
     assert found == 1
     assert source.calls == 2            # did not keep hammering after the 429
-    assert "rate-limiting" in warning and counter["limited"] == {"steam"}
+    assert "rate-limiting" in warning and counter["limited"] == {"csfloat"}
     from backend import db
     checked = {r["market_hash_name"] for r in db.query("SELECT market_hash_name FROM price_checks")}
     assert checked == {"A"}             # B and C stay due, so they're retried next time
@@ -101,12 +101,12 @@ def test_refresh_stops_politely_on_rate_limit(app):
 
 def test_a_market_that_asks_to_slow_down_is_left_alone_for_longer_each_time(app):
     from datetime import datetime, timezone
-    assert refresh.resting_until("steam") is None
+    assert refresh.resting_until("csfloat") is None
     hours = []
     for _ in range(6):
-        until = refresh._after_run("steam", limited=True)
+        until = refresh._after_run("csfloat", limited=True)
         hours.append(round((until - datetime.now(timezone.utc)).total_seconds() / 3600))
     assert hours == [1, 3, 6, 12, 24, 24]
-    assert refresh.resting_until("steam") is not None
-    refresh._after_run("steam", limited=False)          # a run without a 429 starts afresh
-    assert refresh.resting_until("steam") is None
+    assert refresh.resting_until("csfloat") is not None
+    refresh._after_run("csfloat", limited=False)          # a run without a 429 starts afresh
+    assert refresh.resting_until("csfloat") is None

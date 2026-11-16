@@ -59,7 +59,7 @@ def test_partial_remove_and_move(client):
     item = db.query_one("SELECT id FROM items WHERE market_hash_name = 'Recoil Case'")["id"]
 
     r = client.delete(f"/api/items/{item}?quantity=8", headers=HEADERS).get_json()
-    assert r == {"deleted": False, "remaining": 20}
+    assert r.pop("undo") and r == {"deleted": False, "remaining": 20}
     post(client, f"/api/items/{item}/move", {"container_id": b, "quantity": 5})
     assert contents(client, a) == {"Recoil Case": 15} and contents(client, b) == {"Recoil Case": 5}
     post(client, f"/api/items/{item}/move", {"container_id": b})          # the rest stacks onto B's 5
@@ -69,7 +69,8 @@ def test_partial_remove_and_move(client):
 
 def test_deleting_containers(client):
     empty = new_container(client, "Empty")
-    assert client.delete(f"/api/containers/{empty}", headers=HEADERS).get_json() == {"deleted": True}
+    r = client.delete(f"/api/containers/{empty}", headers=HEADERS).get_json()
+    assert r.pop("undo") and r == {"deleted": True}
 
     full = new_container(client, "Full")
     post(client, f"/api/containers/{full}/items", {"items": [{"market_hash_name": "Recoil Case", "quantity": 3}]})
@@ -91,7 +92,7 @@ def test_steam_storage_unit_is_emptied_not_deleted(client):
     unit = db.query_one("SELECT id FROM items WHERE asset_id = '9'")["id"]
     post(client, f"/api/containers/{unit}/items", {"items": [{"market_hash_name": "Recoil Case", "quantity": 3}]})
     r = client.delete(f"/api/containers/{unit}?contents=delete", headers=HEADERS).get_json()
-    assert r == {"deleted": False, "emptied": 3}
+    assert r.pop("undo") and r == {"deleted": False, "emptied": 3}
     assert db.query_one("SELECT COUNT(*) AS n FROM items WHERE id = ?", (unit,))["n"] == 1
 
 

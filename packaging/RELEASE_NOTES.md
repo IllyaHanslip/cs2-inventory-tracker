@@ -2,7 +2,29 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.3.0
+### What's new in v1.4.0
+
+- **Steam prices without asking Steam.** Steam Market prices now come from CSGOTrader's free daily price
+  file (what each item sold for on average over the last day, or week/month for items that sell rarely),
+  downloaded at most every few hours and only when it has changed. The app no longer sends Steam any
+  price requests, so it can't be rate-limited or blocked by Steam, and Steam prices show up straight away.
+- **Undo.** After removing or moving items, deleting a container, confirming or dismissing a change from a
+  Steam sync, or deleting a Profit & Loss entry, the message has an **Undo** button (or press Ctrl+Z).
+- **Several items at once**: tick items in a container (Shift+click ticks a run) and move or remove them
+  together.
+- **Price alerts**: from any item's details, "tell me when it sells for above / below £X" (after fees).
+  You're told in the dashboard and with a Windows notification after a price refresh; the bell at the top
+  lists your alerts and counts the ones that went off.
+- **Choose your columns** in the inventory tables and container contents (the Columns button); each table
+  remembers its own.
+- **Profit & Loss export** to CSV.
+- **Keyboard shortcuts**: 1-6 or [ and ] for tabs, / to search, R refresh, S sync, A add an item, N new
+  container, E export, B alerts, Ctrl+Z undo, Esc to close. Every button with a shortcut shows its key, and
+  ? lists them all.
+- **Each tab remembers where you'd scrolled to**, even after reloading.
+- Changes to items in an open container show up faster.
+
+### v1.3.0
 
 - **Smoother to use**: toggles have a highlight that slides to your choice, the tab underline slides
   between tabs, pop-ups and tabs fade in, confirmed changes slide away, and buttons and filters respond

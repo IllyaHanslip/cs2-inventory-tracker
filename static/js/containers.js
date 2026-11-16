@@ -2,15 +2,19 @@
 // and the shared remove / move / delete flows, each with a confirmation step.
 
 import { api } from './api.js';
+import { columnChooser } from './columns.js';
 import { confirmDialog, editItem, openItem, suggestNames } from './dialogs.js';
 import { markClean, protect, protectForm } from './guard.js';
 import { MarketFilter, availableMarkets, bestToSell, bulkNote, sellHtml } from './market-filter.js';
 import { applySortWithin, cycleSort, getSort, sortItems } from './sortable.js';
 import { openEventPicker } from './event-picker.js';
+import { markKeys } from './keys.js';
+import { doneToast } from './undo.js';
 import { esc, floatText, money, number, relTime, state, store, thumbHtml, toast } from './util.js';
 
 let app;
-const manager = { id: null, data: null, pendingRows: null, filter: null };
+// selected: ticked contents (ids), units: other places they can be moved to, lastTicked: for Shift+click.
+const manager = { id: null, data: null, pendingRows: null, filter: null, selected: new Set(), units: [], lastTicked: null };
 const $ = (selector) => document.querySelector(selector);
 // Rows typed into "Add items" are saved per container as you go, so closing the window,
 // reloading the page or restarting the app doesn't lose them.
@@ -95,11 +99,11 @@ export function reopenIfOpen() {
   return Promise.resolve();
 }
 
-/** Refresh everything after a change, keeping an open container manager up to date. */
+/** Refresh everything after a change: an open container first (it's what you're looking at), then
+ *  the rest of the dashboard. */
 async function afterChange() {
-  const work = [app.refreshAll()];
-  if ($('#container-dialog').open && manager.id) work.push(openContainer(manager.id, { animate: false }));
-  await Promise.all(work);
+  if ($('#container-dialog').open && manager.id) await openContainer(manager.id, { animate: false });
+  await app.refreshAll();
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +222,7 @@ export class ContainersView {
     const { action, price } = body;
     const unit = body.container_id ? String(body.container_id) : '';
     const change = this.changes.changes.find((c) => String(c.id) === row.dataset.change);
-    await api(`/changes/${row.dataset.change}`, { method: 'POST', body });
+    const result = await api(`/changes/${row.dataset.change}`, { method: 'POST', body });
     forgetChangeDraft(row.dataset.key);
     await leave(row);
     const label = this.changes.units.find((u) => String(u.id) === unit)?.label;
@@ -232,34 +236,41 @@ export class ContainersView {
       keep: `${what}: bought or received${each}.`,
       bought: price !== null ? `${what}: bought${each} - added to Profit & Loss.` : `${what}: saved without a price.`,
     };
-    toast(messages[action], 'ok');
+    doneToast(messages[action], result.undo);
     await afterChange();
   }
 
   async dismissChange(row) {
-    await api(`/changes/${row.dataset.change}`, { method: 'POST', body: { action: 'dismiss' } });
+    const result = await api(`/changes/${row.dataset.change}`, { method: 'POST', body: { action: 'dismiss' } });
+    const change = this.changes.changes.find((c) => String(c.id) === row.dataset.change);
     forgetChangeDraft(row.dataset.key);
     await leave(row);
+    doneToast(`Dismissed ${change ? `${number(change.quantity)} × ${change.name}` : 'that change'} - it won't be asked about again.`, result.undo);
     await afterChange();
   }
 
-  /** Confirm every row as it's set on screen (your choices and prices, not just the suggestions). */
+  /** Confirm every row as it's set on screen (your choices and prices, not just the suggestions),
+   *  in one go, so one Undo puts them all back. */
   async applyAllChanges() {
     const rows = [...this.root.querySelectorAll('#ct-changes [data-change]')];
-    let done = 0;
+    const chosen = [];
     for (const row of rows) {
-      const body = rowChoice(row, { needPriceForNew: true });
-      if (!body) continue;
       try {
-        await api(`/changes/${row.dataset.change}`, { method: 'POST', body });
-        forgetChangeDraft(row.dataset.key);
-        done += 1;
+        const body = rowChoice(row, { needPriceForNew: true });
+        if (body) chosen.push({ row, body: { id: Number(row.dataset.change), ...body } });
       } catch (error) {
-        toast(error.message, 'warn', 9000);
+        toast(`${row.querySelector('strong')?.textContent || 'A row'}: ${error.message}`, 'warn', 9000);
       }
     }
-    const left = rows.length - done;
-    toast(`Confirmed ${number(done)} change${done === 1 ? '' : 's'}.${left ? ` ${number(left)} still need you to choose.` : ''}`, 'ok');
+    if (!chosen.length) {
+      toast('Choose what happened on at least one row first.', 'warn');
+      return;
+    }
+    const result = await api('/changes/batch', { method: 'POST', body: { changes: chosen.map((c) => c.body) } });
+    for (const { row } of chosen) if (result.ids?.includes(Number(row.dataset.change))) forgetChangeDraft(row.dataset.key);
+    for (const problem of result.problems || []) toast(problem, 'warn', 9000);
+    const left = rows.length - result.applied;
+    doneToast(`Confirmed ${number(result.applied)} change${result.applied === 1 ? '' : 's'}.${left ? ` ${number(left)} still need you to choose.` : ''}`, result.undo);
     await afterChange();
   }
 
@@ -523,6 +534,7 @@ export async function openContainer(id, { focusAdd = false, animate = true } = {
   const body = $('#container-body');
   const switching = manager.id !== id;
   manager.pendingRows = dialog.open && !switching ? collectRows() : null;
+  if (switching || !dialog.open) { manager.selected.clear(); manager.lastTicked = null; }
   manager.id = id;
   if (!dialog.open) {
     body.innerHTML = `<div class="crate-stage">${crateSvg()}<p class="muted">Opening…</p></div>`;
@@ -531,11 +543,13 @@ export async function openContainer(id, { focusAdd = false, animate = true } = {
   }
   let data;
   let candidates = [];
+  let units = [];
   try {
-    [data, candidates] = await Promise.all([
+    [data, candidates, units] = await Promise.all([
       api(`/containers/${id}`),
       api('/items', { params: { scope: 'total' } }).then((r) => r.items.filter((i) => i.source === 'manual'
         && i.id !== id && i.container_id !== id && !i.is_storage && !(i.is_container && i.contents_count > 0))),
+      api('/containers').then((r) => r.containers.filter((c) => c.id !== id)).catch(() => []),
     ]);
   } catch (error) {
     toast(error.message, 'error');
@@ -543,6 +557,7 @@ export async function openContainer(id, { focusAdd = false, animate = true } = {
     return;
   }
   manager.data = data;
+  manager.units = units;
   renderManager(data, candidates, { animate: animate && switching });
   if (focusAdd) body.querySelector('#add-rows [data-f="name"]')?.focus();
 }
@@ -589,8 +604,12 @@ function renderManager({ container: c, contents, currency, capacity }, candidate
     </section>
     <section class="panel">
       <div class="card-head"><h4>Contents · ${number(contents.length)} different item${contents.length === 1 ? '' : 's'}</h4>
-        ${contents.length > 5 ? '<input type="search" class="input" id="contents-search" placeholder="Search this container…" aria-label="Search this container" style="max-width:240px">' : ''}</div>
+        <div class="contents-tools">
+          ${contents.length > 5 ? '<input type="search" class="input" id="contents-search" placeholder="Search this container…" aria-label="Search this container" data-shortcut="/">' : ''}
+          <span id="contents-columns"></span></div></div>
       ${contents.length ? '<div class="chips market-chips" id="contents-markets" role="group" aria-label="Compare prices on these markets"></div>' : ''}
+      ${contents.length > 1 ? '<p class="hint small">Tick items to move or remove several at once (Shift+click ticks a run of them).</p>' : ''}
+      <div class="bulk-bar" id="bulk-bar" role="region" aria-label="Ticked items" hidden></div>
       <div id="contents-wrap"></div>
     </section>`;
   const chips = $('#contents-markets');
@@ -599,7 +618,9 @@ function renderManager({ container: c, contents, currency, capacity }, candidate
     manager.filter = new MarketFilter(chips, 'container-contents', () => renderContents(manager.data.contents, currency));
     manager.filter.setMarkets(availableMarkets(state.status, contents.map((i) => i.quotes)));
   }
+  columnChooser($('#contents-columns'), 'container-contents', CONTENT_COLUMNS);
   renderContents(contents, currency, animate);
+  markKeys($('#container-dialog'));
 
   const removeLabel = steam ? 'Empty container' : 'Delete container';
   const canRemove = !steam || used > 0;
@@ -612,20 +633,29 @@ function renderManager({ container: c, contents, currency, capacity }, candidate
   else stage.classList.add('opened');
 }
 
+// Columns you can hide in a container's contents (1-based positions in the table).
+const CONTENT_COLUMNS = [
+  { key: 'qty', label: 'Qty', index: 4 }, { key: 'each', label: 'Each', index: 5 },
+  { key: 'best', label: 'Best 3 to sell', index: 6 }, { key: 'value', label: 'Value', index: 7 },
+];
+
 /** The contents table on its own, so changing the market chips doesn't reset the add-items rows. */
 function renderContents(contents, currency, animate = false) {
   const wrap = $('#contents-wrap');
   if (!wrap) return;
   wrap.innerHTML = contents.length ? `
-    <div class="table-scroll"><table class="data ${animate ? 'reveal-rows' : ''}" id="contents-table" data-sort-id="container-contents">
-      <thead><tr><th class="col-icon"><span class="sr-only">Image</span></th><th data-sort="text" data-key="name">Item</th>
+    <div class="table-scroll"><table class="data ${animate ? 'reveal-rows' : ''}" id="contents-table" data-sort-id="container-contents" data-cols="container-contents">
+      <thead><tr><th class="col-check"><input type="checkbox" id="contents-all" aria-label="Tick every item shown"></th>
+        <th class="col-icon"><span class="sr-only">Image</span></th><th data-sort="text" data-key="name">Item</th>
         <th class="num" data-sort="num" data-key="qty">Qty</th>
         <th class="num" data-sort="num" data-key="each" title="What you'd receive for one after fees, selling where it pays most">Each</th>
         <th data-sort="num" data-key="cheapest" title="What you'd receive on each market after its fees">Best 3 to sell</th>
         <th class="num" data-sort="num" data-key="value">Value</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>${contents.map((item, i) => {
         const top = bestToSell(item.sell_quotes, manager.filter);
-        return `<tr class="row" tabindex="0" title="Show details" data-i="${i}" data-id="${item.id}" data-name="${esc(item.name.toLowerCase())}" style="--i:${Math.min(i, 20)}">
+        const ticked = manager.selected.has(item.id);
+        return `<tr class="row${ticked ? ' ticked' : ''}" tabindex="0" title="Show details" data-i="${i}" data-id="${item.id}" data-name="${esc(item.name.toLowerCase())}" style="--i:${Math.min(i, 20)}">
+        <td class="col-check"><input type="checkbox" class="row-check" data-id="${item.id}" aria-label="Tick ${esc(item.name)}"${ticked ? ' checked' : ''}></td>
         <td>${thumbHtml(item)}</td>
         <td data-v="${esc(item.name)}"><div class="item-name">${esc(item.name)}</div>
           ${item.stickers.length || item.float_value !== null ? `<div class="item-meta">${[
@@ -646,12 +676,100 @@ function renderContents(contents, currency, animate = false) {
   applySortWithin(wrap);
   const search = $('#contents-search');
   if (search && search.value) search.dispatchEvent(new Event('input', { bubbles: true }));
+  renderBulkBar();
+}
 
+// ---------------------------------------------------------------------------
+// Several items at once: tick them, then move or remove them together (one Undo puts them back)
+// ---------------------------------------------------------------------------
+function tickedItems() {
+  return (manager.data?.contents || []).filter((i) => manager.selected.has(i.id));
+}
+
+function visibleChecks() {
+  return [...document.querySelectorAll('#contents-table tbody tr:not([hidden]) .row-check')];
+}
+
+function renderBulkBar() {
+  const bar = $('#bulk-bar');
+  if (!bar || !manager.data) return;
+  const items = tickedItems();
+  manager.selected = new Set(items.map((i) => i.id));     // (anything no longer here drops out)
+  const shown = visibleChecks();
+  const all = $('#contents-all');
+  if (all) {
+    const on = shown.filter((box) => box.checked).length;
+    all.checked = shown.length > 0 && on === shown.length;
+    all.indeterminate = on > 0 && on < shown.length;
+  }
+  document.querySelectorAll('#contents-table tbody tr').forEach((tr) => tr.classList.toggle('ticked', manager.selected.has(Number(tr.dataset.id))));
+  bar.hidden = !items.length;
+  if (!items.length) { bar.innerHTML = ''; return; }
+  const units = items.reduce((sum, i) => sum + i.quantity, 0);
+  const value = items.reduce((sum, i) => sum + (i.total_value || 0), 0);
+  const { capacity } = manager.data;
+  const options = [{ value: '', label: 'Main inventory (not in a container)' }].concat(manager.units.map((u) => ({
+    value: String(u.id), label: `${u.label} (${number(u.contents_count)} / ${number(capacity)})`,
+    full: u.contents_count + units > capacity,
+  })));
+  const target = options.some((o) => o.value === manager.bulkTarget) ? manager.bulkTarget : '';
+  bar.innerHTML = `<span><strong>${number(items.length)} ticked</strong> <span class="muted small">${number(units)} item${units === 1 ? '' : 's'} · ${money(value, manager.data.currency)}</span></span>
+    <span class="spacer"></span>
+    <label class="bulk-move"><span class="muted small">Move to</span>
+      <select class="input select-small" id="bulk-target">${options.map((o) => `<option value="${esc(o.value)}"${o.value === target ? ' selected' : ''}${o.full ? ' disabled' : ''}>${esc(o.label)}${o.full ? ' - not enough room' : ''}</option>`).join('')}</select></label>
+    <button type="button" class="btn btn-small btn-primary" data-act="bulk-move">Move</button>
+    <button type="button" class="btn btn-small btn-danger" data-act="bulk-remove">Remove</button>
+    <button type="button" class="btn btn-small" data-act="bulk-clear" data-shortcut="Esc" title="Untick them all">Untick all</button>`;
+  markKeys(bar);
+}
+
+function clearTicks() {
+  manager.selected.clear();
+  manager.lastTicked = null;
+  document.querySelectorAll('#contents-table .row-check').forEach((box) => { box.checked = false; });
+  renderBulkBar();
+}
+
+async function bulkMove() {
+  const items = tickedItems();
+  if (!items.length) return;
+  const target = $('#bulk-target').value;
+  const where = target ? manager.units.find((u) => String(u.id) === target)?.label : 'your main inventory';
+  const result = await api('/items/bulk', { method: 'POST', body: { ids: items.map((i) => i.id), action: 'move', container_id: target ? Number(target) : null } });
+  manager.selected.clear();
+  doneToast(`Moved ${number(result.done)} item${result.done === 1 ? '' : 's'} (${number(result.units)} in all) to ${where}.`, result.undo);
+  await afterChange();
+}
+
+async function bulkRemove() {
+  const items = tickedItems();
+  if (!items.length) return;
+  const units = items.reduce((sum, i) => sum + i.quantity, 0);
+  const ok = await confirmDialog({
+    title: `Remove ${number(items.length)} item${items.length === 1 ? '' : 's'}?`,
+    message: `${number(units)} in all, from ${manager.data.container.label}: ${items.slice(0, 4).map((i) => i.name).join(', ')}${items.length > 4 ? ` and ${number(items.length - 4)} more` : ''}. You can undo this straight after.`,
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Remove them', value: true, kind: 'danger' }],
+  });
+  if (!ok) return;
+  const result = await api('/items/bulk', { method: 'POST', body: { ids: items.map((i) => i.id), action: 'remove' } });
+  manager.selected.clear();
+  doneToast(`Removed ${number(result.done)} item${result.done === 1 ? '' : 's'} (${number(result.units)} in all).`, result.undo);
+  await afterChange();
 }
 
 function setupManagerEvents() {
   const dialog = $('#container-dialog');
   dialog.addEventListener('click', async (event) => {
+    // The tick box's cell ticks it too (an easier target than the box itself).
+    const cell = event.target.closest('#contents-table td.col-check');
+    if (cell && !event.target.matches('input')) {
+      cell.querySelector('input').click();
+      return;
+    }
+    if (event.target.matches('#contents-table .row-check')) {
+      tick(event.target, event.shiftKey);
+      return;
+    }
     // Anywhere on a stored item's row (except its buttons) opens its detail view.
     const row = event.target.closest('#contents-table tbody tr');
     if (row && manager.data && !event.target.closest('button, a, input, select')) {
@@ -682,17 +800,31 @@ function setupManagerEvents() {
       else if (act === 'move-in') {
         const id = $('#move-candidate').value;
         if (!id) return;
-        await api(`/items/${id}/move`, { method: 'POST', body: { container_id: manager.id } });
-        toast('Moved into the container', 'ok');
+        const result = await api(`/items/${id}/move`, { method: 'POST', body: { container_id: manager.id } });
+        doneToast(`Moved into ${manager.data.container.label}`, result.undo);
         await afterChange();
       } else if (act === 'edit' && item) editItem(item);
       else if (act === 'move' && item) await moveItem(item);
       else if (act === 'remove' && item) await removeItem(item);
+      else if (act === 'bulk-move') await bulkMove();
+      else if (act === 'bulk-remove') await bulkRemove();
+      else if (act === 'bulk-clear') clearTicks();
       else if (act === 'delete-container') {
         if (await deleteContainer(manager.data.container) && manager.data.container.source !== 'steam') dialog.close();
       }
     } catch (error) {
       toast(error.message, 'error');
+    }
+  });
+  dialog.addEventListener('change', (event) => {
+    if (event.target.id === 'contents-all') {
+      for (const box of visibleChecks()) {
+        box.checked = event.target.checked;
+        if (box.checked) manager.selected.add(Number(box.dataset.id)); else manager.selected.delete(Number(box.dataset.id));
+      }
+      renderBulkBar();
+    } else if (event.target.id === 'bulk-target') {
+      manager.bulkTarget = event.target.value;
     }
   });
   dialog.addEventListener('input', (event) => {
@@ -701,9 +833,16 @@ function setupManagerEvents() {
     if (event.target.id === 'contents-search') {
       const q = event.target.value.trim().toLowerCase();
       document.querySelectorAll('#contents-table tbody tr').forEach((tr) => { tr.hidden = !tr.dataset.name.includes(q); });
+      renderBulkBar();
     }
   });
   dialog.addEventListener('keydown', (event) => {
+    // Esc unticks everything first; pressed again, it closes the window as usual.
+    if (event.key === 'Escape' && manager.selected.size && !event.target.closest('details.col-menu[open]')) {
+      event.preventDefault();
+      clearTicks();
+      return;
+    }
     if (event.key === 'Enter' && event.target.matches('#contents-table tbody tr')) {
       const stored = manager.data?.contents.find((i) => String(i.id) === event.target.dataset.id);
       if (stored) openItem(stored);
@@ -715,6 +854,20 @@ function setupManagerEvents() {
     }
   });
   dialog.addEventListener('close', () => { manager.pendingRows = null; });
+}
+
+/** Tick / untick one row; with Shift, every row shown between it and the last one ticked too. */
+function tick(box, range) {
+  const boxes = visibleChecks();
+  const at = boxes.indexOf(box);
+  const from = range && manager.lastTicked !== null ? boxes.findIndex((b) => b.dataset.id === manager.lastTicked) : -1;
+  const run = from >= 0 && at >= 0 ? boxes.slice(Math.min(from, at), Math.max(from, at) + 1) : [box];
+  for (const b of run) {
+    b.checked = box.checked;
+    if (box.checked) manager.selected.add(Number(b.dataset.id)); else manager.selected.delete(Number(b.dataset.id));
+  }
+  manager.lastTicked = box.dataset.id;
+  renderBulkBar();
 }
 
 async function submitAdd() {
@@ -734,7 +887,7 @@ async function submitAdd() {
     body: { items: rows.map((r) => ({ market_hash_name: r.name.trim(), quantity: Number(r.qty) })) },
   });
   const stacked = result.stacked ? ` (${result.stacked} stacked onto items already there)` : '';
-  toast(`Added ${number(total)} item${total === 1 ? '' : 's'}${stacked}. ${number(result.contents_count)} / ${number(capacity)} used.`, 'ok');
+  doneToast(`Added ${number(total)} item${total === 1 ? '' : 's'}${stacked}. ${number(result.contents_count)} / ${number(capacity)} used.`, result.undo);
   clearRows();
   await afterChange();
   $('#add-rows [data-f="name"]')?.focus();
@@ -758,8 +911,8 @@ export async function removeItem(item) {
   const answer = await confirmDialog({
     title: 'Remove item?',
     message: many
-      ? `You have ${number(item.quantity)} × ${item.name}${where}. How many do you want to remove? This can't be undone.`
-      : `Remove ${item.name}${where}? This can't be undone.`,
+      ? `You have ${number(item.quantity)} × ${item.name}${where}. How many do you want to remove? You can undo it straight after.`
+      : `Remove ${item.name}${where}? You can undo it straight after.`,
     quantity: many ? { max: item.quantity, value: item.quantity, label: 'Remove' } : null,
     price: { label: `Sold ${many ? 'them' : 'it'}? What for, each (${state.currency})`, placeholder: 'optional - goes on Profit & Loss' },
     buttons: [{ label: 'Cancel', value: null }, { label: 'Remove', value: true, kind: 'danger' }],
@@ -768,9 +921,9 @@ export async function removeItem(item) {
   const quantity = many ? answer.quantity : item.quantity;
   const params = quantity < item.quantity ? { quantity } : {};
   if (answer.price !== null) params.sold_price = answer.price;
-  await api(`/items/${item.id}`, { method: 'DELETE', params });
+  const result = await api(`/items/${item.id}`, { method: 'DELETE', params });
   const sold = answer.price !== null ? ` - sold for ${money(answer.price)} each, added to Profit & Loss` : '';
-  toast(`${quantity < item.quantity ? `Removed ${number(quantity)} × ${item.name}` : `Removed ${item.name}`}${sold}`, 'ok');
+  doneToast(`${quantity < item.quantity ? `Removed ${number(quantity)} × ${item.name}` : `Removed ${item.name}`}${sold}`, result.undo);
   await afterChange();
   return true;
 }
@@ -797,11 +950,12 @@ export async function moveItem(item) {
     buttons: [{ label: 'Cancel', value: null }, { label: 'Move', value: true, kind: 'primary' }],
   });
   if (!answer || !answer.value) return;
-  await api(`/items/${item.id}/move`, {
+  const result = await api(`/items/${item.id}/move`, {
     method: 'POST',
     body: { container_id: answer.selected ? Number(answer.selected) : null, quantity: answer.quantity ?? null },
   });
-  toast(`Moved ${answer.quantity && answer.quantity < item.quantity ? `${number(answer.quantity)} × ` : ''}${item.name}`, 'ok');
+  const to = options.find((o) => o.value === (answer.selected || ''))?.label.replace(/ \(.*\)$/, '') || 'there';
+  doneToast(`Moved ${answer.quantity && answer.quantity < item.quantity ? `${number(answer.quantity)} × ` : ''}${item.name} to ${to}`, result.undo);
   await afterChange();
 }
 
@@ -812,9 +966,9 @@ export async function deleteContainer(container) {
   const count = container.contents_count || 0;
   if (!count) {
     if (steam) return false;
-    await api(`/containers/${container.id}`, { method: 'DELETE' });
+    const result = await api(`/containers/${container.id}`, { method: 'DELETE' });
     store.remove(draftKey(container.id));
-    toast(`Deleted ${label}`, 'ok');
+    doneToast(`Deleted ${label}`, result.undo);
     if ($('#container-dialog').open && manager.id === container.id) $('#container-dialog').close();
     await app.refreshAll();
     return true;
@@ -825,7 +979,7 @@ export async function deleteContainer(container) {
     message: steam
       ? `${label} holds ${number(count)} item${count === 1 ? '' : 's'}${value}. Steam containers can't be deleted here, `
         + 'but you can move everything back to your main inventory or delete the recorded items.'
-      : `${label} holds ${number(count)} item${count === 1 ? '' : 's'}${value}. What should happen to them? This can't be undone.`,
+      : `${label} holds ${number(count)} item${count === 1 ? '' : 's'}${value}. What should happen to them? You can undo it straight after.`,
     buttons: [
       { label: 'Cancel', value: null },
       { label: 'Keep the items (move to main inventory)', value: 'keep', kind: 'primary' },
@@ -833,9 +987,9 @@ export async function deleteContainer(container) {
     ],
   });
   if (!choice) return false;
-  await api(`/containers/${container.id}`, { method: 'DELETE', params: { contents: choice } });
+  const result = await api(`/containers/${container.id}`, { method: 'DELETE', params: { contents: choice } });
   if (!steam) store.remove(draftKey(container.id));
-  toast(steam ? `Emptied ${label}` : `Deleted ${label}${choice === 'keep' ? ' and moved its items to your main inventory' : ''}`, 'ok');
+  doneToast(steam ? `Emptied ${label}` : `Deleted ${label}${choice === 'keep' ? ' and moved its items to your main inventory' : ''}`, result.undo);
   if (!steam && $('#container-dialog').open && manager.id === container.id) $('#container-dialog').close();
   await afterChange();
   return true;

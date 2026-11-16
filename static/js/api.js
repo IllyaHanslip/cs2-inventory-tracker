@@ -9,9 +9,10 @@ export class ApiError extends Error {
   }
 }
 
-/** Where "Export CSV" downloads from. */
+/** Where "Export CSV" downloads from (scope: public / total, or ledger for Profit & Loss). */
 export function exportUrl(scope) {
-  return DEMO_SITE ? demoExportPath(scope) : `/api/export.csv?scope=${scope}`;
+  if (DEMO_SITE) return demoExportPath(scope);
+  return scope === 'ledger' ? '/api/ledger.csv' : `/api/export.csv?scope=${scope}`;
 }
 
 export async function api(path, { method = 'GET', body, params } = {}) {

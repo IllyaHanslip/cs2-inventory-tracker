@@ -2,6 +2,7 @@
 
 import { api, exportUrl } from './api.js';
 import { MIX_COLORS, chartsAvailable, dataTableHtml, renderLineChart, renderStackedBars } from './charts.js';
+import { columnChooser } from './columns.js';
 import * as containers from './containers.js';
 import * as dialogs from './dialogs.js';
 import { MarketFilter, availableMarkets, bestToSell, bulkNote, noCashLabel, sellHtml } from './market-filter.js';
@@ -27,6 +28,14 @@ export function chainedChange(values, counts = []) {
   }
   return { pct: used ? (growth - 1) * 100 : null, skipped };
 }
+
+// Columns you can hide (1-based positions in the table; the picture and name always show).
+const COLUMNS = [
+  { key: 'category', label: 'Category', index: 3 }, { key: 'qty', label: 'Qty', index: 4 },
+  { key: 'price', label: 'Price', index: 5 }, { key: 'best', label: 'Best 3 to sell', index: 6 },
+  { key: 'stickers', label: 'Stickers', index: 7 }, { key: 'value', label: 'Value', index: 8 },
+  { key: 'change_24h', label: '24h change', index: 9 }, { key: 'change_7w', label: '7-week change', index: 10 },
+];
 
 export class InventoryView {
   constructor(root, scope, app) {
@@ -66,6 +75,8 @@ export class InventoryView {
     r.chartTitle.textContent = isPublic ? 'Public inventory value after fees' : 'Total portfolio value after fees';
     r.chart.setAttribute('aria-label', `${r.chartTitle.textContent} over time`);
     r.table.dataset.sortId = `inventory-${this.scope}`;
+    r.table.dataset.cols = `inventory-${this.scope}`;
+    columnChooser(r.columns, `inventory-${this.scope}`, COLUMNS);
     if (isPublic) {
       r.addItem.remove();
       r.addContainer.remove();

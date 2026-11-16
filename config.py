@@ -97,10 +97,9 @@ class Config:
     # --- Market sources -------------------------------------------------------
     SKINPORT_CURRENCY = _env("SKINPORT_CURRENCY", "EUR").upper()
     BULK_CACHE_MINUTES = max(5.0, _float("BULK_CACHE_MINUTES", 30))  # Skinport, Market.CSGO, Waxpeer lists
-    STEAM_MARKET_MIN_INTERVAL = max(1.0, _float("STEAM_MARKET_MIN_INTERVAL", 3.5))
     CSFLOAT_MIN_INTERVAL = max(0.5, _float("CSFLOAT_MIN_INTERVAL", 1.5))
     STEAM_INVENTORY_MIN_INTERVAL = 5.0
-    PRICE_TTL_HOURS = _float("PRICE_TTL_HOURS", 12)  # per-item sources re-fetch after this
+    PRICE_TTL_HOURS = _float("PRICE_TTL_HOURS", 12)  # CSFloat (asked one item at a time) re-fetches after this
     # Selling many of one item: each market is assumed to take about what it sells in this many days.
     BULK_SELL_DAYS = max(1, _int("BULK_SELL_DAYS", 30))
 

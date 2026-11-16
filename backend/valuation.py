@@ -28,7 +28,7 @@ def soft_cap(raw: float, cap: float) -> float:
     return cap * (1 - math.exp(-raw / cap))
 
 
-# Days covered by each kind of recent-sales figure ("recent" = Steam's last 24 hours).
+# Days covered by each kind of recent-sales figure ("recent": an older Steam figure, its last 24 hours).
 PERIOD_DAYS = {"recent": 1, "24 hours": 1, "7 days": 7, "30 days": 30, "90 days": 90}
 QUOTE_COLUMNS = ["market_hash_name", "market", "price", "currency", "volume", "url", "is_manual", "fetched_at"]
 SINGLE_MARKET_STRATEGIES = app_settings.MARKET_KEYS
@@ -80,6 +80,8 @@ class Valuator:
         if info is None:
             # Skinport's sales history covers every item, so no entry means no sales there in 90 days.
             return 0 if market == "skinport" and "skinport" in self.sales_feeds else None
+        if info.get("volume") is None:   # an average price without a sale count (Steam): speed unknown
+            return None
         per_day = (info.get("volume") or 0) / PERIOD_DAYS.get(info.get("period") or "", 1)
         return max(1, round(per_day * Config.BULK_SELL_DAYS)) if per_day > 0 else 0
 
@@ -183,8 +185,10 @@ class Valuator:
                     "period": row["period"], "fetched_at": row["fetched_at"]}
             self.sales_by_source.setdefault(row["market_hash_name"], {})[row["source"]] = info
             current = out.get(row["market_hash_name"])
-            # Real sales beat an estimate (CSFloat's reference price has no volume); more sales win.
-            if current is None or (row["volume"] or -1) > (current["volume"] or -1):
+            # More sales win; real sales (even without a count, like Steam's averages) beat an estimate
+            # (CSFloat's reference price).
+            rank = ((row["volume"] or -1), not row["source"].endswith("_ref"))
+            if current is None or rank > ((current["volume"] or -1), not current["source"].endswith("_ref")):
                 out[row["market_hash_name"]] = info
         return out
 

@@ -59,6 +59,8 @@ def answers(client, item_index: dict[str, int]) -> dict[str, bytes]:
     save("status.json", get("/api/status"))
     save("changes.json", get("/api/changes"))
     save("ledger.json", get("/api/ledger"))
+    save("alerts.json", get("/api/alerts"))
+    files["export-ledger.csv"] = client.get("/api/ledger.csv").get_data()
     for scope in ("public", "total"):
         save(f"items-{scope}.json", get(f"/api/items?scope={scope}"))
         save(f"market-{scope}.json", get(f"/api/market-comparison?scope={scope}"))

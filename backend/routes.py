@@ -1,16 +1,19 @@
 """JSON API consumed by the dashboard (all routes are under /api)."""
 from __future__ import annotations
 
+import csv
 import io
 import re
+from functools import wraps
 from typing import Any
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, jsonify, make_response, request
 
 from config import Config
 
-from . import (catalogue, comparables, db, evidence, events, fees, history, images, insights, ledger, moves, planner,
-               portfolio, settings, storage)
+from . import (alerts, catalogue, comparables, db, evidence, events, fees, history, images, insights, ledger, moves,
+               planner,
+               portfolio, settings, storage, undo)
 from .classify import APPLIED_KINDS, CATEGORIES, EXTERIORS, applied_hash_name, categorize, exterior_from_float, exterior_from_name
 from .currency import FxConverter, last_source
 from .http_client import ApiError, RateLimitError
@@ -52,6 +55,28 @@ def _rate_limited(exc):
 @bp.errorhandler(ApiError)
 def _upstream(exc):
     return jsonify(error=str(exc)), 502
+
+
+def undoable(label: str):
+    """The change this route makes can be undone: tables are copied before it runs, and a
+    successful answer carries ``undo`` (a token for POST /api/undo/<token>)."""
+    def wrap(view):
+        @wraps(view)
+        def inner(*args, **kwargs):
+            snapshot = undo.capture()
+            response = make_response(view(*args, **kwargs))
+            if response.status_code < 400 and response.is_json:
+                payload = response.get_json()
+                payload["undo"] = undo.remember(snapshot, label)
+                response.set_data(jsonify(payload).get_data())
+            return response
+        return inner
+    return wrap
+
+
+@bp.post("/undo/<token>")
+def undo_last(token: str):
+    return jsonify(undone=undo.restore(token))
 
 
 def _body() -> dict[str, Any]:
@@ -106,6 +131,7 @@ def status():
         fx={"date": fx.latest_date, "source": (last_source() or {}).get("source")},
         last_steam_sync=settings.get("last_steam_sync"),
         pending_changes=moves.pending_count(),
+        alerts_unseen=alerts.unseen_count(),
         started_at=STARTED_AT,
         last_snapshot=settings.get("last_snapshot"),
         prices_updated=newest,
@@ -360,6 +386,7 @@ def create_item():
 
 
 @bp.put("/items/<int:item_id>")
+@undoable("Edit")
 def update_item(item_id: int):
     existing = _get_item(item_id)
     values, stickers = _parse_item(_body(), existing)
@@ -383,6 +410,7 @@ def update_item(item_id: int):
 
 
 @bp.delete("/items/<int:item_id>")
+@undoable("Remove")
 def delete_item(item_id: int):
     """Remove an entry, or only ``?quantity=N`` of a stack. Containers: ``?contents=keep|delete``."""
     item = _get_item(item_id)
@@ -399,6 +427,7 @@ def delete_item(item_id: int):
 
 
 @bp.post("/items/<int:item_id>/move")
+@undoable("Move")
 def move_item(item_id: int):
     """Move a whole stack, or ``quantity`` of it, into a container (``container_id: null`` = main inventory)."""
     item = _get_item(item_id)
@@ -423,6 +452,40 @@ def item_comparables(item_id: int):
     if settings.get("sticker_evidence", True) and comparables.needs_evidence(record, valuator):
         applied = comparables.save_evidence(record, result)
     return jsonify({**result, "applied": applied})
+
+
+@bp.post("/items/bulk")
+@undoable("Bulk")
+def bulk_items():
+    """Move or remove several entries at once (all or nothing): {ids: [...], action: "move" | "remove",
+    container_id} (``container_id: null`` = the main inventory)."""
+    data = _body()
+    ids = data.get("ids")
+    if not isinstance(ids, list) or not ids:
+        raise ValueError("Select at least one item.")
+    if len(ids) > 1000:
+        raise ValueError("Select at most 1,000 items at a time.")
+    ids = list(dict.fromkeys(_number(i, "Item", 1, None, integer=True) for i in ids))
+    action = data.get("action")
+    if action not in ("move", "remove"):
+        raise ValueError("Choose to move or remove them.")
+    container_id = _number(data.get("container_id"), "Container", 1, integer=True)
+    done = units = 0
+    with db.connect() as conn:
+        for item_id in ids:
+            row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+            if row is None:
+                continue                      # already merged into another selected stack
+            item = dict(row)
+            if item["source"] == "steam":
+                raise ValueError(f"{item['name']} is a Steam item: those change only when your Steam inventory does.")
+            if action == "move":
+                storage.move(conn, item, container_id)
+            else:
+                storage.remove(conn, item, None, "keep")
+            done += 1
+            units += item["quantity"]
+    return jsonify(done=done, units=units)
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +517,7 @@ def open_container(container_id: int):
 
 
 @bp.post("/containers/<int:container_id>/items")
+@undoable("Add to container")
 def add_to_container(container_id: int):
     """Add several items at once, each with a quantity. Matching entries stack (7 + 21 = 28)."""
     _get_item(container_id)
@@ -495,6 +559,7 @@ def list_changes():
 
 
 @bp.post("/changes/<int:change_id>")
+@undoable("Change")
 def resolve_change(change_id: int):
     data = _body()
     action = str(data.get("action") or "")
@@ -507,7 +572,38 @@ def resolve_change(change_id: int):
     return jsonify(result=result, pending=moves.pending_count())
 
 
+@bp.post("/changes/batch")
+@undoable("Changes")
+def resolve_changes_batch():
+    """Confirm several changes at once, each as chosen: {changes: [{id, action, container_id, price}]}.
+    One undo puts them all back."""
+    entries = _body().get("changes")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("Nothing to confirm.")
+    if len(entries) > 1000:
+        raise ValueError("Confirm at most 1,000 changes at a time.")
+    applied, problems, names = [], [], []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("Each change must be an object.")
+        change_id = _number(entry.get("id"), "Change", 1, None, integer=True)
+        action = str(entry.get("action") or "")
+        try:
+            moves.apply(change_id, action, _number(entry.get("container_id"), "Storage unit", 1, None, integer=True),
+                        _number(entry.get("price"), "Price", 0))
+            applied.append(change_id)
+            if action in ("store", "take_out"):
+                names.append(db.query_one("SELECT market_hash_name FROM inventory_changes WHERE id = ?",
+                                          (change_id,))["market_hash_name"])
+        except ValueError as error:
+            problems.append(str(error))
+    if names:
+        price_from_saved_lists(names)
+    return jsonify(applied=len(applied), ids=applied, problems=problems, pending=moves.pending_count())
+
+
 @bp.post("/changes/apply-suggested")
+@undoable("Changes")
 def resolve_suggested_changes():
     return jsonify(moves.apply_suggested())
 
@@ -554,15 +650,53 @@ def ledger_add():
 
 
 @bp.put("/ledger/<int:entry_id>")
+@undoable("Edit entry")
 def ledger_edit(entry_id: int):
     ledger.update(entry_id, _ledger_fields(_body(), creating=False))
     return jsonify(id=entry_id)
 
 
 @bp.delete("/ledger/<int:entry_id>")
+@undoable("Delete entry")
 def ledger_remove(entry_id: int):
     ledger.delete(entry_id)
     return jsonify(deleted=True)
+
+
+# ---------------------------------------------------------------------------
+# Price alerts: "tell me when this sells for above / below X"
+# ---------------------------------------------------------------------------
+@bp.get("/alerts")
+def list_alerts():
+    return jsonify(alerts.listing(Valuator()))
+
+
+@bp.post("/alerts")
+def add_alert():
+    data = _body()
+    name = catalogue.canonical(_text(data.get("name"), "Item name", 300, required=True))
+    price = _number(data.get("price"), "Price", 0)
+    alert_id = alerts.add(name, str(data.get("direction") or ""), price)
+    fired = alerts.check()   # already there? say so now rather than after the next refresh
+    return jsonify(id=alert_id, fired=[a for a in fired if a["id"] == alert_id]), 201
+
+
+@bp.post("/alerts/<int:alert_id>/rearm")
+def rearm_alert(alert_id: int):
+    alerts.rearm(alert_id)
+    return jsonify(id=alert_id)
+
+
+@bp.delete("/alerts/<int:alert_id>")
+def delete_alert(alert_id: int):
+    alerts.delete(alert_id)
+    return jsonify(deleted=True)
+
+
+@bp.post("/alerts/seen")
+def alerts_seen():
+    alerts.mark_seen()
+    return jsonify(unseen=0)
 
 
 # ---------------------------------------------------------------------------
@@ -580,6 +714,7 @@ def set_items():
 
 
 @bp.delete("/containers/<int:container_id>")
+@undoable("Delete container")
 def delete_container(container_id: int):
     """Delete a manual container (``?contents=keep`` moves its items out, ``delete`` removes them).
     Steam containers can't be deleted, so they are emptied instead."""
@@ -615,7 +750,7 @@ def list_quotes():
     quotes = valuator.quotes[valuator.quotes["market_hash_name"] == name].sort_values("price_base")
     present = set(quotes["market"])
     checked = {r["market"] for r in db.query("SELECT market FROM price_checks WHERE market_hash_name = ?", (name,))}
-    attempts = settings.get("market_attempts") or {}
+    steam_sales = valuator.sales_by_source.get(name, {}).get("steam")
     missing = []
     for key in valuator.prefs["enabled_markets"]:
         if key in present:
@@ -624,10 +759,10 @@ def list_quotes():
         usable, reason = source.available()
         if not usable:
             status = f"Not used: {reason}"
+        elif key == "steam" and key in checked:
+            status = "No Steam Market sales in the last 90 days"
         elif key in checked:
             status = "Not listed there right now"
-        elif key == "steam" and attempts.get(key):
-            status = "Not fetched yet - Steam has been rate-limiting this computer"
         else:
             status = "Not fetched yet - press Refresh prices"
         missing.append({"market": key, "label": source.label, "status": status})
@@ -651,6 +786,8 @@ def list_quotes():
             "net": valuator.net(q.market, float(q.price_base)),
             "cash_out": valuator.cash_out(q.market),
             "fee_note": fees.profile(q.market, valuator.fee_overrides)["note"],
+            # Steam's price is what it sold for on average (CSGOTrader's daily file), not a listing.
+            "note": f"average sale, last {steam_sales['period']}" if q.market == "steam" and steam_sales else None,
         }
         for q in quotes.itertuples()
     ]
@@ -748,6 +885,24 @@ def names():
     owned += [applied_hash_name(r["kind"], r["name"]) for r in db.query("SELECT DISTINCT kind, name FROM item_stickers")]
     prefix = APPLIED_KINDS.get(request.args.get("kind") or "", "")
     return jsonify(names=catalogue.search(query, owned=owned, prefix=prefix))
+
+
+@bp.get("/ledger.csv")
+def ledger_csv():
+    """Everything on the Profit & Loss tab as a spreadsheet, in your currency."""
+    base = ledger.base_currency()
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["date", "type", "item", "market_hash_name", "quantity", f"price_each_{base}", f"total_{base}",
+                     f"paid_each_{base}", f"profit_{base}", "kind_of_item", "source"])
+    rounded = lambda v: "" if v is None else round(v, 4)   # noqa: E731
+    for e in ledger.entries(base=base):
+        writer.writerow([e["happened_at"][:10], "bought" if e["kind"] == "in" else "sold", e["name"],
+                         e["market_hash_name"], e["quantity"], rounded(e["price"]), rounded(e["total"]),
+                         rounded(e["cost"]), rounded(e["profit"]), e["group"],
+                         "Steam sync" if e["source"] == "steam" else "added by hand"])
+    return Response("﻿" + buffer.getvalue(), mimetype="text/csv", headers={
+        "Content-Disposition": f"attachment; filename=cs2-profit-and-loss-{history.today()}-{base}.csv"})
 
 
 @bp.get("/export.csv")

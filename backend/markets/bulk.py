@@ -6,6 +6,8 @@ cached locally so repeated refreshes don't hit the market again.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -23,6 +25,9 @@ class BulkPriceList(MarketSource):
     url = ""
     params: dict[str, Any] = {}
     currency = "USD"
+    cache_minutes: float | None = None   # how long a downloaded list is used (default BULK_CACHE_MINUTES)
+    revalidate = False   # after that, ask whether it has changed (ETag / Last-Modified) before downloading it
+    STALE_DAYS = 3       # a list that hasn't changed for this long is reported as possibly out of date
 
     def __init__(self) -> None:
         self.client = RateLimitedClient(self.label, min_interval=30.0, base_backoff=60, max_retries=1)
@@ -38,29 +43,55 @@ class BulkPriceList(MarketSource):
         return None
 
     def load_rows(self) -> list[list]:
-        # ``stale`` is set when the market couldn't be reached and its last saved list was used.
+        # ``stale`` is set when the market couldn't be reached and its last saved list was used;
+        # ``note`` says when the list itself looks out of date.
         self.stale = False
+        self.note = None
         key = self._cache_key()
-        cached = cache.get_cached(key, Config.BULK_CACHE_MINUTES * 60)
+        cached = cache.get_cached(key, (self.cache_minutes or Config.BULK_CACHE_MINUTES) * 60)
         if cached is not None:
+            self._check_age()
             return cached
+        saved = cache.get_stale(key)
+        validators = (cache.get_stale(f"{key}:validators") or {}) if self.revalidate and saved else {}
+        headers = {name: value for name, value in (("If-None-Match", validators.get("etag")),
+                                                   ("If-Modified-Since", validators.get("last_modified"))) if value}
         try:
-            resp = self.client.get(self.url, params=self.params or None)
+            resp = self.client.get(self.url, params=self.params or None, headers=headers or None)
+            if resp.status_code == 304 and saved is not None:   # unchanged since the last download
+                cache.set_cached(key, saved)
+                self._check_age()
+                return saved
             if resp.status_code != 200:
                 raise ApiError(f"{self.label} returned HTTP {resp.status_code}", resp.status_code)
-            rows = [[*row[:3], row[3] if len(row) > 3 else None]
+            rows = [[*row[:3], row[3] if len(row) > 3 else None, *row[4:]]
                     for row in self.parse(resp.json()) if row[0] and row[1] and row[1] > 0]
             if not rows:
                 raise ApiError(f"{self.label} returned an empty price list")
         except (ApiError, ValueError, KeyError, TypeError) as exc:
-            stale = cache.get_stale(key)
-            if stale is not None:
+            if saved is not None:
                 log.warning("%s unavailable (%s); using cached prices", self.label, exc)
                 self.stale = True
-                return stale
+                return saved
             raise ApiError(f"{self.label}: {exc}") from None
         cache.set_cached(key, rows)
+        if self.revalidate:
+            cache.set_cached(f"{key}:validators", {"etag": resp.headers.get("ETag"),
+                                                   "last_modified": resp.headers.get("Last-Modified")})
+            self._check_age()
         return rows
+
+    def _check_age(self) -> None:
+        """Note it if the list hasn't changed for days (its publisher may have stopped updating it)."""
+        if not self.revalidate:
+            return
+        stamp = (cache.get_stale(f"{self._cache_key()}:validators") or {}).get("last_modified")
+        try:
+            days = (datetime.now(timezone.utc) - parsedate_to_datetime(stamp)).days
+        except (TypeError, ValueError):
+            return
+        if days >= self.STALE_DAYS:
+            self.note = (f"{self.label} prices haven't been updated for {days} days, so they may be out of date.")
 
     def _quotes(self, rows: list[list], names: set[str]) -> dict[str, Quote]:
         return {

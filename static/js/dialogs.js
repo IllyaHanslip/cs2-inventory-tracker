@@ -1,6 +1,7 @@
 // Modal dialogs: item details, add/edit, manual quotes, settings, confirm.
 // (Container management lives in containers.js.)
 
+import { renderItemAlerts } from './alerts.js';
 import { api } from './api.js';
 import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
 import * as containers from './containers.js';
@@ -8,6 +9,7 @@ import { initDialogs, markClean, protectForm } from './guard.js';
 import { MarketFilter, asideText, bulkText, marketLink, noCashLabel } from './market-filter.js';
 import { steady } from './motion.js';
 import { applySortWithin } from './sortable.js';
+import { doneToast } from './undo.js';
 import {
   CATEGORY_FILTERS, debounce, deltaHtml, esc, floatText, isStorage, longDate, money, number, relTime, safeUrl,
   state, thumbHtml, toast,
@@ -191,7 +193,7 @@ export async function openItem(item) {
     if (button.dataset.act === 'compare-refresh') loadComparables(item, true);
     if (button.dataset.act === 'use-suggestion') useSuggestion(item, Number(button.dataset.value));
   };
-  await Promise.all([loadItemQuotes(item), loadItemHistory(item)]);
+  await Promise.all([loadItemQuotes(item), loadItemHistory(item), renderItemAlerts($('#item-alerts'), item)]);
 }
 
 // ---------------------------------------------------------------------------
@@ -250,9 +252,9 @@ function comparablesHtml(data) {
 
 async function useSuggestion(item, value) {
   try {
-    await api(`/items/${item.id}`, { method: 'PUT', body: { custom_price: value, custom_price_currency: state.currency } });
+    const result = await api(`/items/${item.id}`, { method: 'PUT', body: { custom_price: value, custom_price_currency: state.currency } });
     $('#item-dialog').close();
-    toast(`Custom price set to ${money(value)}. Change or clear it any time with Edit.`, 'ok', 8000);
+    doneToast(`Custom price set to ${money(value)}. Change or clear it any time with Edit.`, result.undo);
     await app.refreshAll();
   } catch (error) {
     toast(error.message, 'error');
@@ -291,7 +293,7 @@ function sellingSteps(item, wholeItem) {
   const startLabel = {
     sales: `Recent sales on ${best.label}`,
     sticker_inside: `Sticker inside, cheapest ${best.label} listing`,
-  }[best.basis] || `Cheapest ${best.label} listing`;
+  }[best.basis] || (best.market === 'steam' ? 'Average Steam Market sale' : `Cheapest ${best.label} listing`);
   const start = wholeItem
     ? kv(item.price_source === 'custom' ? 'Your custom price' : 'Value from CSFloat comparables', money(best.gross))
     : kv(startLabel, money(best.gross - premium));
@@ -310,8 +312,9 @@ function sellingSteps(item, wholeItem) {
     item.bulk_limited ? kv('Sold on', `<span class="muted small">${esc(bulkText(item.bulk_plan))} (see Prices across markets)</span>`) : '',
     item.sales && item.sales.period === 'reference'
       ? kv('Typical sale price', `${money(item.sales.price)} <span class="muted small">${esc(item.sales.label)} (its estimate from recent sales across markets)</span>`)
-      : item.sales ? kv('Recent sales', `${money(item.sales.price)} <span class="muted small">${esc(item.sales.label)} · median of
-      ${number(item.sales.volume || 0)} sale${item.sales.volume === 1 ? '' : 's'} (${esc(item.sales.period || 'recent')})</span>`) : '',
+      : item.sales ? kv('Recent sales', `${money(item.sales.price)} <span class="muted small">${esc(item.sales.label)} · ${
+        item.sales.volume === null || item.sales.volume === undefined ? 'average'
+          : `median of ${number(item.sales.volume)} sale${item.sales.volume === 1 ? '' : 's'}`} (${esc(item.sales.period === 'recent' || !item.sales.period ? 'recent' : `last ${item.sales.period}`)})</span>`) : '',
     item.set_aside.length ? kv('Ignored', `<span class="warn-text small">${number(item.set_aside.length)} unrealistic
       listing${item.set_aside.length === 1 ? '' : 's'} - see Prices across markets</span>`) : '',
     best.wallet ? kv('Best cash option', cash
@@ -434,6 +437,7 @@ function itemBodyHtml(item) {
     <div class="panel"><h4>Prices across markets</h4>
       <div class="chips market-chips" id="item-market-chips" role="group" aria-label="Show these markets"></div>
       <div id="item-sticker-match"></div><div id="item-cheapest"></div><div id="item-quotes" class="muted">Loading…</div></div>
+    <div class="panel item-alerts-panel" id="item-alerts"></div>
     ${stickers}
     <div class="panel">
       <div class="card-head"><h4>Price history</h4>
@@ -530,7 +534,7 @@ async function loadItemQuotes(item) {
           <td class="num" data-v="${q.net * qty}">${money(q.net * qty, cur)}</td>
           <td class="num" data-v="${q.gross}">${money(q.gross, cur)}${grossNote}</td>
           <td class="num" data-v="${fee}" title="${esc(q.raw?.fee_note || '')}">−${money(fee, cur)}<div class="sub fee-lines">${feeLines(q)}</div></td>
-          <td class="num" data-v="${listing ?? ''}">${listing !== null ? money(listing, cur) : '<span class="muted">—</span>'}${original}</td>
+          <td class="num" data-v="${listing ?? ''}">${listing !== null ? money(listing, cur) : '<span class="muted">—</span>'}${original}${q.raw?.note ? `<div class="sub">${esc(q.raw.note)}</div>` : ''}</td>
           <td class="num" data-v="${q.raw?.volume ?? ''}">${q.raw && q.raw.volume !== null ? number(q.raw.volume) : '—'}${speed}</td>
           <td class="muted small" data-v="${esc(q.raw?.fetched_at || '')}">${q.raw ? esc(relTime(q.raw.fetched_at)) : '—'}</td></tr>`;
       });
@@ -542,7 +546,7 @@ async function loadItemQuotes(item) {
           <td colspan="7" class="small warn-text" data-v="">Ignored: ${esc(asideText(a, cur))}, so it isn't a realistic price to sell at</td></tr>`);
       const basis = whole
         ? `${item.price_source === 'custom' ? 'your custom price' : 'the value from CSFloat comparables'}, sold on each market`
-        : `each market's cheapest listing of this skin${premium ? ', plus the sticker value counted for this item' : ''}`;
+        : `each market's cheapest listing of this skin (Steam: what it sold for on average)${premium ? ', plus the sticker value counted for this item' : ''}`;
       box.innerHTML = `<div class="table-scroll"><table class="data" data-sort-id="item-quotes"><thead><tr>
           <th class="num" data-sort="num" data-key="rank">#</th><th data-sort="text" data-key="market">Market</th>
           <th class="num" data-sort="num" data-key="net" title="The selling price minus this market's selling and withdrawal fees">You'd receive</th>
@@ -665,7 +669,8 @@ function setupEditForm() {
       if (editing) result = await api(`/items/${editing.id}`, { method: 'PUT', body: payload });
       else result = await api('/items', { method: 'POST', body: payload });
       $('#edit-dialog').close();
-      toast(editing ? 'Item updated' : result.stacked ? `Added - stacked onto the ${result.item.name} you already had (now ${result.item.quantity})` : 'Item added', 'ok');
+      if (editing) doneToast(`Saved your changes to ${result.item.name}.`, result.undo);
+      else toast(result.stacked ? `Added - stacked onto the ${result.item.name} you already had (now ${result.item.quantity})` : 'Item added', 'ok');
       await Promise.all([app.refreshAll(), containers.reopenIfOpen()]);
     } catch (err) {
       showError(error, err.message);
@@ -871,7 +876,8 @@ export function openSettings() {
     <ul>
       ${line(keys.csfloat_api_key, 'CSFloat API key', keys.csfloat_api_key ? 'configured.' : 'not set. Get one free at csfloat.com → Profile → Developers, then set <code>CSFLOAT_API_KEY</code>.')}
       ${legacy}
-      <li><span class="ok-text">✓ Steam, Skinport, Market.CSGO, Waxpeer &amp; exchange rates</span> - no key needed.</li>
+      <li><span class="ok-text">✓ Steam, Skinport, Market.CSGO, Waxpeer &amp; exchange rates</span> - no key needed.
+        Steam Market prices come from CSGOTrader's free daily price file, so the app never asks Steam for prices.</li>
       <li><span class="missing-text">BUFF163</span> - can only be read while logged in, so it is never automated.
         Add BUFF prices with <em>+ Manual quote</em> instead.</li>
     </ul>`;

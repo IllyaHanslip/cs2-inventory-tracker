@@ -2,12 +2,13 @@
 // Three ways to look at it: actual profit (sales with both prices), money gained (everything you
 // sold for, with a price) and money spent (every purchase with a price).
 
-import { api } from './api.js';
+import { api, exportUrl } from './api.js';
 import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
 import { confirmDialog, suggestNames } from './dialogs.js';
 import { markClean, protectForm } from './guard.js';
 import { steady } from './motion.js';
 import { applySortWithin } from './sortable.js';
+import { doneToast } from './undo.js';
 import { esc, longDate, money, number, store, thumbHtml, toast } from './util.js';
 
 const MODES = {
@@ -50,6 +51,7 @@ export class PnlView {
     });
     this.el.search.addEventListener('input', () => { this.filter.q = this.el.search.value.trim().toLowerCase(); this.renderTable(); });
     this.el.details.addEventListener('toggle', () => this.renderChartTable());
+    root.querySelector('#pnl-export').href = exportUrl('ledger');
     root.querySelector('#pnl-add-in').addEventListener('click', () => openEntry({ kind: 'in' }, () => this.reload()));
     root.querySelector('#pnl-add-out').addEventListener('click', () => openEntry({ kind: 'out' }, () => this.reload()));
     this.el.table.addEventListener('click', (event) => {
@@ -217,13 +219,13 @@ export class PnlView {
   async remove(entry) {
     const ok = await confirmDialog({
       title: 'Delete this entry?',
-      message: `${entry.kind === 'in' ? 'Bought' : 'Sold'}: ${number(entry.quantity)} × ${entry.name}. Only this record goes - your items don't change.`,
+      message: `${entry.kind === 'in' ? 'Bought' : 'Sold'}: ${number(entry.quantity)} × ${entry.name}. Only this record goes - your items don't change. You can undo it straight after.`,
       buttons: [{ label: 'Cancel', value: null }, { label: 'Delete', value: true, kind: 'danger' }],
     });
     if (!ok) return;
     try {
-      await api(`/ledger/${entry.id}`, { method: 'DELETE' });
-      toast('Entry deleted.', 'ok');
+      const result = await api(`/ledger/${entry.id}`, { method: 'DELETE' });
+      doneToast(`Deleted the entry for ${number(entry.quantity)} × ${entry.name}.`, result.undo);
       await this.reload();
     } catch (error) {
       toast(error.message, 'error');
@@ -266,10 +268,10 @@ function openEntry(entry, done) {
       cost: form.elements.cost.value === '' ? null : form.elements.cost.value, date: form.elements.date.value,
     };
     try {
-      if (editing) await api(`/ledger/${entry.id}`, { method: 'PUT', body });
-      else await api('/ledger', { method: 'POST', body });
+      const result = editing ? await api(`/ledger/${entry.id}`, { method: 'PUT', body }) : await api('/ledger', { method: 'POST', body });
       dialog.close();
-      toast(editing ? 'Entry updated.' : 'Recorded.', 'ok');
+      if (editing) doneToast('Entry updated.', result.undo);
+      else toast('Recorded.', 'ok');
       await done();
     } catch (err) {
       error.textContent = err.message;

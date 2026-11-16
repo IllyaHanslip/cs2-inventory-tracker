@@ -755,3 +755,86 @@ details[open] > :not(summary) { animation: fade-in .18s ease-out; }
 /* Market comparison: a listing left out as unrealistic (hover for why; it links to the listing). */
 .ignored-cell { color: var(--warning); font-size: 12px; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
 a.ignored-cell { cursor: pointer; }
+
+/* ---------- Keyboard shortcuts: each control shows its key ---------- */
+.kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
+  border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--surface-1);
+  color: var(--text-muted); font: 600 10.5px/1 var(--font); letter-spacing: 0; vertical-align: middle; white-space: nowrap;
+}
+.btn .key-hint { margin-left: 2px; }
+.btn-primary .key-hint { background: rgba(0, 0, 0, 0.18); border-color: rgba(255, 255, 255, 0.35); color: rgba(255, 255, 255, 0.9); }
+.tabs button .key-hint { margin: -2px 7px 0 0; opacity: .65; }
+.tabs button[aria-selected="true"] .key-hint { opacity: 1; color: var(--text-secondary); }
+/* Icon buttons: the key sits on the corner. */
+.btn-icon { position: relative; }
+.btn-icon .key-hint { position: absolute; right: -5px; bottom: -6px; min-width: 15px; height: 15px; padding: 0 3px; font-size: 9.5px; margin: 0; }
+.icon-count {
+  position: absolute; top: -6px; right: -6px; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 999px;
+  background: var(--warning); color: #1b1300; font-size: 11px; font-weight: 700; line-height: 17px; text-align: center;
+}
+/* Close buttons: "Esc" just to their left. */
+.btn-close { position: relative; }
+.btn-close .key-hint { position: absolute; right: calc(100% + 2px); top: 50%; transform: translateY(-50%); font-size: 9.5px; height: 16px; }
+/* Search boxes: "/" inside the right edge until you start typing. */
+.search-wrap { position: relative; display: inline-flex; align-items: center; min-width: 0; }
+.search-wrap > .input { width: 100%; padding-right: 30px; }
+.search-wrap .key-hint { position: absolute; right: 8px; pointer-events: none; }
+.search-wrap:focus-within .key-hint, .search-wrap > input:not(:placeholder-shown) + .key-hint { display: none; }
+.toolbar .search-wrap.search { flex: 1 1 240px; max-width: 360px; }
+.pnl-filters .search-wrap { width: 220px; }
+/* The "?" window. */
+#keys-body h4 { margin: 4px 0 8px; font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .04em; }
+.keys-list { margin: 0 0 16px; display: grid; gap: 6px; }
+.keys-row { display: grid; grid-template-columns: 120px 1fr; gap: 12px; align-items: baseline; }
+.keys-row dt { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+.keys-row dd { margin: 0; color: var(--text-secondary); }
+
+/* ---------- Toasts with a button (Undo) ---------- */
+.toast { display: flex; align-items: center; gap: 12px; }
+.toast-text { flex: 1; }
+.toast-action {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 6px;
+  border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-primary); font-weight: 600; cursor: pointer;
+}
+.toast-action:hover { background: var(--accent-soft); border-color: var(--accent); }
+/* While a window is open, messages show in its bottom corner (the page behind can't be clicked). */
+.toasts.in-dialog { position: absolute; right: 14px; bottom: 14px; max-width: min(420px, calc(100% - 28px)); }
+
+/* ---------- Several items at once (container contents) ---------- */
+.col-check { width: 34px; text-align: center; }
+.col-check input { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; vertical-align: middle; }
+td.col-check { cursor: pointer; }
+table.data tbody tr.ticked td { background: var(--accent-soft); }
+.bulk-bar {
+  position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 8px; padding: 8px 12px; border: 1px solid var(--accent); border-radius: var(--radius-sm);
+  background: var(--surface-2); box-shadow: 0 6px 16px -10px rgba(0, 0, 0, 0.8); animation: fade-in .15s ease-out;
+}
+.bulk-bar .spacer { flex: 1; }
+.bulk-move { display: inline-flex; align-items: center; gap: 6px; }
+.bulk-move select { max-width: 260px; }
+.contents-tools { display: flex; gap: 8px; align-items: center; }
+.contents-tools .search-wrap { width: 240px; }
+
+/* ---------- Choosing columns ---------- */
+.col-menu { position: relative; }
+.col-menu > summary { list-style: none; }
+.col-menu > summary::-webkit-details-marker { display: none; }
+.col-menu > summary::after { content: "▾"; font-size: 10px; margin-left: 2px; color: var(--text-muted); }
+.col-menu-list {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 190px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px; background: var(--surface-2); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow);
+}
+.col-menu-list .link-btn { align-self: flex-start; }
+
+/* ---------- Price alerts ---------- */
+.alerts-table tr.fresh td { background: rgba(250, 178, 25, 0.08); }
+.alerts-table .link-btn { text-align: left; }
+.item-alerts-panel h4 { margin-bottom: 8px; }
+.item-alerts { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }
+.item-alerts li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.alert-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.alert-form .input[name="price"] { width: 120px; }
+.alert-form select { width: auto; }

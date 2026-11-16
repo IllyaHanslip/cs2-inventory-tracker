@@ -226,7 +226,7 @@ def seed() -> None:
     val_mult = {name: sorted(m.values())[len(m) // 2] for name, m in mults.items()}
     low_mult = {name: min(m.values()) for name, m in mults.items()}  # stickers use the cheapest listing
 
-    snapshot_rows, quote_rows, check_rows = [], [], []
+    snapshot_rows, quote_rows, check_rows, sale_rows = [], [], [], []
     now = db.utcnow_iso()
     for name, values in series.items():
         for day, usd in zip(days, values):
@@ -235,8 +235,11 @@ def seed() -> None:
                 snapshot_rows.append((name, market, day, round(usd * mults[name][market] * fx[(day, ccy)], 2), ccy))
         last = values[-1]
         for market, (_, _, ccy) in market_ranges.items():
-            volume = None if market == "csfloat" else rng.randint(1, 9000)
+            # Neither CSFloat nor Steam (an average of its sales, from CSGOTrader's file) reports a count.
+            volume = None if market in ("csfloat", "steam") else rng.randint(1, 9000)
             price = round(last * mults[name][market] * fx[(days[-1], ccy)], 2)
+            if market == "steam":
+                sale_rows.append((name, "steam", price, ccy, None, "24 hours", now))
             if (name, market) == UNREALISTIC_LISTING:
                 price = round(price * 60, 2)   # someone's asking far too much: the app ignores it
             quote_rows.append((name, market, price, ccy, volume, None, 0, now))
@@ -248,6 +251,8 @@ def seed() -> None:
     db.executemany("INSERT OR REPLACE INTO price_snapshots VALUES (?, ?, ?, ?, ?)", snapshot_rows)
     db.executemany("INSERT OR REPLACE INTO market_prices VALUES (?, ?, ?, ?, ?, ?, ?, ?)", quote_rows)
     db.executemany("INSERT OR REPLACE INTO price_checks VALUES (?, ?, ?)", check_rows)
+    db.executemany("INSERT OR REPLACE INTO sale_prices (market_hash_name, source, price, currency, volume, period, "
+                   "fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?)", sale_rows)
 
     # Items.
     containers: dict[str, int] = {}
@@ -362,3 +367,23 @@ def seed() -> None:
          for day, scope, value, count in portfolio_rows if last_market.get(scope)],
     )
     settings.set_value("last_snapshot", db.utcnow_iso())
+    _seed_alerts(v)
+
+
+# Price alerts: (item, above / below, threshold as a share of what it sells for now). The first is
+# already reached, so the demo shows one that has gone off.
+DEMO_ALERTS = [
+    ("AK-47 | Redline (Field-Tested)", "above", 0.92),
+    ("Kilowatt Case", "above", 1.3),
+    ("Recoil Case", "below", 0.75),
+]
+
+
+def _seed_alerts(valuator) -> None:
+    from . import alerts
+
+    for name, direction, share in DEMO_ALERTS:
+        now = alerts.current_value(valuator, name)
+        if now:
+            alerts.add(name, direction, round(now * share, 2))
+    alerts.check(valuator)

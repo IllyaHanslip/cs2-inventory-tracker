@@ -21,11 +21,18 @@
   <form id="sync-form" class="sync-form" autocomplete="off">
     <label class="sr-only" for="steam-id">SteamID64 or Steam profile URL</label>
     <input id="steam-id" name="steam_id" placeholder="SteamID64 or profile URL" spellcheck="false">
-    <button type="submit" class="btn btn-primary">Sync Steam</button>
+    <button type="submit" class="btn btn-primary" data-shortcut="S">Sync Steam</button>
   </form>
   <div class="topbar-actions">
-    <button id="refresh-btn" class="btn" type="button" title="Fetch the latest prices from every enabled market">Refresh prices</button>
-    <button id="settings-btn" class="btn btn-icon" type="button" aria-label="Settings" title="Settings">
+    <button id="refresh-btn" class="btn" type="button" data-shortcut="R" title="Fetch the latest prices from every enabled market (Shift+R: every price, even recent ones)">Refresh prices</button>
+    <button id="alerts-btn" class="btn btn-icon" type="button" data-shortcut="B" aria-label="Price alerts" title="Price alerts">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+      <span class="icon-count" id="alerts-count" hidden></span>
+    </button>
+    <button id="keys-btn" class="btn btn-icon" type="button" data-shortcut="?" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
+    </button>
+    <button id="settings-btn" class="btn btn-icon" type="button" data-shortcut="," aria-label="Settings" title="Settings">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
     </button>
   </div>
@@ -43,12 +50,12 @@
   <p class="status-line" id="status-line"></p>
 
   <nav class="tabs" role="tablist" aria-label="Views">
-    <button role="tab" id="tab-public" aria-controls="panel-public" data-tab="public">Public Inventory</button>
-    <button role="tab" id="tab-total" aria-controls="panel-total" data-tab="total">Total Portfolio</button>
-    <button role="tab" id="tab-containers" aria-controls="panel-containers" data-tab="containers">Containers <span class="tab-count" id="tab-containers-count"></span><span class="tab-alert" id="tab-containers-alert" hidden></span></button>
-    <button role="tab" id="tab-markets" aria-controls="panel-markets" data-tab="markets">Market Comparison &amp; Best Deals</button>
-    <button role="tab" id="tab-planner" aria-controls="panel-planner" data-tab="planner">Sell Planner</button>
-    <button role="tab" id="tab-pnl" aria-controls="panel-pnl" data-tab="pnl">Profit &amp; Loss</button>
+    <button role="tab" id="tab-public" aria-controls="panel-public" data-tab="public" data-shortcut="1">Public Inventory</button>
+    <button role="tab" id="tab-total" aria-controls="panel-total" data-tab="total" data-shortcut="2">Total Portfolio</button>
+    <button role="tab" id="tab-containers" aria-controls="panel-containers" data-tab="containers" data-shortcut="3">Containers <span class="tab-count" id="tab-containers-count"></span><span class="tab-alert" id="tab-containers-alert" hidden></span></button>
+    <button role="tab" id="tab-markets" aria-controls="panel-markets" data-tab="markets" data-shortcut="4">Market Comparison &amp; Best Deals</button>
+    <button role="tab" id="tab-planner" aria-controls="panel-planner" data-tab="planner" data-shortcut="5">Sell Planner</button>
+    <button role="tab" id="tab-pnl" aria-controls="panel-pnl" data-tab="pnl" data-shortcut="6">Profit &amp; Loss</button>
   </nav>
 
   <section class="tab-panel" id="panel-public" role="tabpanel" aria-labelledby="tab-public" hidden></section>
@@ -62,7 +69,7 @@
           and suggests the change for you to confirm. Stored items count towards your Total Portfolio and are listed there
           too. Each container holds up to 1,000 items.</p>
       </div>
-      <button type="button" class="btn btn-primary btn-lg" id="ct-new">+ New container</button>
+      <button type="button" class="btn btn-primary btn-lg" id="ct-new" data-shortcut="N">+ New container</button>
     </div>
     <div id="ct-changes"></div>
     <div class="stats" id="ct-stats"></div>
@@ -117,7 +124,8 @@
             <button type="button" class="chip" data-kind="in" aria-pressed="false">Bought</button>
             <button type="button" class="chip" data-kind="out" aria-pressed="false">Sold</button>
           </div>
-          <input type="search" class="input" id="pnl-search" placeholder="Search items…" aria-label="Search entries">
+          <input type="search" class="input" id="pnl-search" placeholder="Search items…" aria-label="Search entries" data-shortcut="/">
+          <a class="btn btn-small" id="pnl-export" download data-shortcut="E" title="Download everything bought and sold as a spreadsheet (CSV)">Export CSV</a>
         </div>
       </div>
       <div id="pnl-table"></div>
@@ -169,7 +177,7 @@
       </div>
     </div>
     <div class="toolbar">
-      <input type="search" id="mk-search" class="input search" placeholder="Search items…" aria-label="Search items">
+      <input type="search" id="mk-search" class="input search" placeholder="Search items…" aria-label="Search items" data-shortcut="/">
       <label class="field-inline">Items
         <select id="mk-scope" class="input">
           <option value="total">Total portfolio</option>
@@ -201,7 +209,8 @@
 </main>
 
 <footer class="footer">
-  <p>Prices: Steam Community Market, <a href="https://skinport.com" target="_blank" rel="noopener noreferrer">Skinport</a>,
+  <p>Prices: Steam Community Market (average sales, via <a href="https://csgotrader.app" target="_blank" rel="noopener noreferrer">CSGOTrader</a>'s daily price file),
+    <a href="https://skinport.com" target="_blank" rel="noopener noreferrer">Skinport</a>,
     <a href="https://csfloat.com" target="_blank" rel="noopener noreferrer">CSFloat</a>,
     <a href="https://market.csgo.com" target="_blank" rel="noopener noreferrer">Market.CSGO</a> and
     <a href="https://waxpeer.com" target="_blank" rel="noopener noreferrer">Waxpeer</a> public APIs.
@@ -265,7 +274,7 @@
   </div>
 
   <div class="toolbar">
-    <input type="search" class="input search" data-ref="search" placeholder="Search items, stickers, name tags…" aria-label="Search">
+    <input type="search" class="input search" data-ref="search" placeholder="Search items, stickers, name tags…" aria-label="Search" data-shortcut="/">
     <div class="chips" data-ref="chips" role="group" aria-label="Filter by category"></div>
     <div class="toolbar-right">
       <label class="group-by">Group by
@@ -283,9 +292,10 @@
       <select class="input select-small" data-ref="groupOnly" aria-label="Show one group" hidden></select>
       <label class="check"><input type="checkbox" data-ref="stack"> Stack duplicates</label>
       <label class="check" data-ref="contentsLabel"><input type="checkbox" data-ref="contents"> Show stored items</label>
-      <a class="btn" data-ref="export" download>Export CSV</a>
-      <button type="button" class="btn" data-ref="addContainer">+ New container</button>
-      <button type="button" class="btn btn-primary" data-ref="addItem">+ Add item</button>
+      <span data-ref="columns"></span>
+      <a class="btn" data-ref="export" download data-shortcut="E" title="Download this list as a spreadsheet (CSV)">Export CSV</a>
+      <button type="button" class="btn" data-ref="addContainer" data-shortcut="N">+ New container</button>
+      <button type="button" class="btn btn-primary" data-ref="addItem" data-shortcut="A">+ Add item</button>
     </div>
   </div>
   <div class="chips market-chips" data-ref="marketChips" role="group" aria-label="Compare prices on these markets"></div>
@@ -317,20 +327,20 @@
 
 <!-- ============================ Dialogs ============================ -->
 <dialog id="item-dialog" class="dialog dialog-wide" aria-labelledby="item-title">
-  <div class="dialog-head"><h2 id="item-title">Item</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+  <div class="dialog-head"><h2 id="item-title">Item</h2><button type="button" class="btn-close" data-close aria-label="Close" title="Close">×</button></div>
   <div class="dialog-body" id="item-body"></div>
   <div class="dialog-actions" id="item-actions"></div>
 </dialog>
 
 <dialog id="container-dialog" class="dialog dialog-wide" aria-labelledby="container-title">
-  <div class="dialog-head"><h2 id="container-title">Container</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+  <div class="dialog-head"><h2 id="container-title">Container</h2><button type="button" class="btn-close" data-close aria-label="Close" title="Close">×</button></div>
   <div class="dialog-body" id="container-body"></div>
   <div class="dialog-actions" id="container-actions"></div>
 </dialog>
 
 <dialog id="edit-dialog" class="dialog" aria-labelledby="edit-title">
   <form id="edit-form" novalidate>
-    <div class="dialog-head"><h2 id="edit-title">Add item</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+    <div class="dialog-head"><h2 id="edit-title">Add item</h2><button type="button" class="btn-close" data-close aria-label="Close" title="Close">×</button></div>
     <div class="dialog-body">
       <p class="note" id="edit-steam-note" hidden>This item is synced from Steam, so its name, wear rating and stickers
         come from Steam. You can still record float, pattern, a custom price, what you paid and notes.</p>
@@ -382,7 +392,7 @@
 
 <dialog id="quote-dialog" class="dialog" aria-labelledby="quote-title">
   <form id="quote-form" novalidate>
-    <div class="dialog-head"><h2 id="quote-title">Add manual price quote</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+    <div class="dialog-head"><h2 id="quote-title">Add manual price quote</h2><button type="button" class="btn-close" data-close aria-label="Close" title="Close">×</button></div>
     <div class="dialog-body">
       <p class="note">Record a price you have seen on another marketplace (for example Buff163 in CNY). It is converted
         to your base currency with today's exchange rate and included in comparisons and valuation.</p>
@@ -405,7 +415,7 @@
 
 <dialog id="settings-dialog" class="dialog" aria-labelledby="settings-title">
   <form id="settings-form" novalidate>
-    <div class="dialog-head"><h2 id="settings-title">Settings</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+    <div class="dialog-head"><h2 id="settings-title">Settings</h2><button type="button" class="btn-close" data-close aria-label="Close" title="Close">×</button></div>
     <div class="dialog-body">
       <div class="form-grid">
         <label>Base currency <select class="input currency-select" name="base_currency"></select></label>
@@ -468,7 +478,7 @@
 
 <dialog id="new-container-dialog" class="dialog dialog-small" aria-labelledby="new-container-title">
   <form id="new-container-form" novalidate>
-    <div class="dialog-head"><h2 id="new-container-title">New container</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+    <div class="dialog-head"><h2 id="new-container-title">New container</h2><button type="button" class="btn-close" data-close aria-label="Close" title="Close">×</button></div>
     <div class="dialog-body">
       <div class="form-grid single">
         <label>Label <span class="muted">(what you keep in it, like its in-game name tag)</span>
@@ -489,7 +499,7 @@
 </dialog>
 <dialog id="pnl-dialog" class="dialog dialog-small" aria-labelledby="pnl-title">
   <form id="pnl-form" novalidate>
-    <div class="dialog-head"><h2 id="pnl-title">Record a sale</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+    <div class="dialog-head"><h2 id="pnl-title">Record a sale</h2><button type="button" class="btn-close" data-close aria-label="Close" title="Close">×</button></div>
     <div class="dialog-body">
       <div class="form-grid single">
         <label>Item name <input class="input" name="name" list="name-suggestions" maxlength="200" autocomplete="off" required
@@ -513,7 +523,7 @@
 </dialog>
 
 <dialog id="set-dialog" class="dialog dialog-wide" aria-labelledby="set-title">
-  <div class="dialog-head"><h2 id="set-title">Add from an event</h2><button type="button" class="btn-close" data-close aria-label="Close">×</button></div>
+  <div class="dialog-head"><h2 id="set-title">Add from an event</h2><button type="button" class="btn-close" data-close aria-label="Close" title="Close">×</button></div>
   <div class="dialog-body" id="set-body"></div>
   <div class="dialog-actions">
     <span class="muted small" id="set-summary">Type how many you have next to each item.</span>
@@ -532,6 +542,16 @@
   <option value="DMarket"></option><option value="Waxpeer"></option><option value="BitSkins"></option>
   <option value="Tradeit.gg"></option><option value="Market.CSGO"></option>
 </datalist>
+
+<dialog id="alerts-dialog" class="dialog dialog-wide" aria-labelledby="alerts-title">
+  <div class="dialog-head"><h2 id="alerts-title">Price alerts</h2><button type="button" class="btn-close" data-close aria-label="Close" title="Close">×</button></div>
+  <div class="dialog-body" id="alerts-body"></div>
+</dialog>
+
+<dialog id="keys-dialog" class="dialog" aria-labelledby="keys-title">
+  <div class="dialog-head"><h2 id="keys-title">Keyboard shortcuts</h2><button type="button" class="btn-close" data-close aria-label="Close" title="Close">×</button></div>
+  <div class="dialog-body" id="keys-body"></div>
+</dialog>
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
 </body>

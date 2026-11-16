@@ -53,6 +53,7 @@ def app(tmp_path, monkeypatch):
         raise AssertionError("tests must not touch the network")
 
     monkeypatch.setattr(SOURCES["skinport"].sales_client, "get", offline)
+    monkeypatch.setattr(SOURCES["steam"].client, "get", offline)   # tests that need it fake the price file
 
     def csfloat_offline(*args, **kwargs):
         from backend.http_client import ApiError

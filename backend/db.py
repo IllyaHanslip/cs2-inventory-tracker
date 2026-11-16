@@ -197,6 +197,19 @@ CREATE TABLE IF NOT EXISTS ledger (
     created_at       TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_ledger_when ON ledger (happened_at);
+
+-- Price alerts: tell me when an item sells for above / below a price (after fees, in ``currency``).
+CREATE TABLE IF NOT EXISTS price_alerts (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    market_hash_name TEXT NOT NULL,
+    direction        TEXT NOT NULL CHECK (direction IN ('above', 'below')),
+    price            REAL NOT NULL,
+    currency         TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    triggered_at     TEXT,               -- when it went off (NULL: still waiting)
+    triggered_value  REAL,               -- what it sold for then
+    seen             INTEGER NOT NULL DEFAULT 0
+);
 """
 
 

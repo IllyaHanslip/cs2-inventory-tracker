@@ -23,8 +23,9 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
 
 - **Steam inventory sync**: paste your SteamID64 or profile link and your public CS2 inventory is imported,
   including applied stickers, name tags, and wear/pattern where Steam provides them.
-- **Five markets plus your own**: lowest listings from the Steam Community Market, Skinport, CSFloat,
-  Market.CSGO and Waxpeer, plus manual quotes for any other site (e.g. BUFF163) in any currency.
+- **Five markets plus your own**: lowest listings on Skinport, CSFloat, Market.CSGO and Waxpeer, what items sell
+  for on the Steam Community Market (from [CSGOTrader](https://csgotrader.app)'s free daily price file, so the app
+  never sends Steam a single price request), plus manual quotes for any other site (e.g. BUFF163) in any currency.
 - **One currency**: every price is converted to your base currency (GBP, USD, EUR, CNY, …) with that day's
   European Central Bank rates, so comparisons are fair.
 - **Containers and storage units**: Steam can't see inside Storage Units, so record what each one holds (up to
@@ -33,6 +34,11 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
   listed on the Containers tab with a best guess of what happened: "15 Dreams & Nightmares Cases left: put them
   in *Long Holds* (it already holds 40)?" Confirm each one (or all at once), say it was sold and for how much, or
   give what a new item cost - or dismiss it with × for good.
+- **Undo**: removing, moving, deleting a container, confirming a change from a Steam sync, deleting a Profit &
+  Loss entry: the message that says it's done has an **Undo** button (or press Ctrl+Z).
+- **Several items at once**: tick items in a container (Shift+click ticks a run) and move or remove them together.
+- **Price alerts**: "tell me when this sells for above / below £X" (after fees), set from any item's details. You're
+  told in the dashboard and with a Windows notification; the bell at the top lists them.
 - **Profit & Loss**: everything you've bought and sold, with prices only where you gave them (nobody remembers
   what they paid years ago). Switch between **actual profit** (sales where you gave both what you paid and what
   you got), **money gained** (everything you've sold for) and **money spent** (every purchase with a price),
@@ -62,8 +68,11 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
 - **History**: a daily snapshot builds 7-day to all-time charts of your portfolio and of each item on every
   market, after fees. It can update in the background on days you don't open it, with a Windows notification
   saying what changed.
-- **Easy to explore**: sort any column, filter by category or market, see the 3 best markets to sell every
-  item on, compare buying prices too, and export to CSV.
+- **Easy to explore**: sort any column, choose which columns to show, filter by category or market, see the 3
+  best markets to sell every item on, compare buying prices too, and export your inventory or Profit & Loss to
+  CSV. Each tab remembers where you'd scrolled to.
+- **Keyboard shortcuts**: 1-6 or [ and ] to change tabs, / to search, R to refresh, Ctrl+Z to undo and more (see
+  [below](#keyboard-shortcuts)). Every button with a shortcut shows its key, and ? lists them all.
 
 | Item detail | Sell planner | Movers and mix |
 |---|---|---|
@@ -127,9 +136,9 @@ on a different market, and any unrealistic listings it ignored. Clicking it open
 registers the notifications' name and the link they open, under your account only; if you set it up before
 notifications existed, run it again. Turn them off with `NOTIFICATIONS=false`.
 
-An update downloads about 5–6 MB (mostly the Skinport, Market.CSGO and Waxpeer price lists, plus Skinport's
-sales history, which is fetched at most once a day). The one-per-item CSFloat and Steam requests are small and
-spaced seconds apart, so they never hog a slow connection.
+An update downloads about 6 MB (mostly the Skinport, Market.CSGO and Waxpeer price lists, plus Skinport's sales
+history and the Steam price file, each fetched at most once a day or so). The one-per-item CSFloat requests are
+small and spaced seconds apart, so they never hog a slow connection.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install-daily-update.ps1           # add -DryRun to preview
@@ -141,6 +150,25 @@ Using the Windows app instead of Python? Add `-Exe "C:\path\to\CS2-Inventory-Int
 runs the app with `--update`, and notifications open the app.
 
 On other systems, schedule `python app.py --update` with cron or similar.
+
+## Keyboard shortcuts
+
+Every button with a shortcut shows its key, and **?** lists them all. They never fire while you're typing in a box.
+
+| Key | What it does |
+|---|---|
+| **1**–**6** | Go to a tab (1 Public Inventory … 6 Profit & Loss) |
+| **[** / **]** | Previous / next tab |
+| **/** | Search the list on this tab (or in the container you have open) |
+| **R** (**Shift+R**) | Refresh prices (every price, even ones fetched recently) |
+| **S** | Sync your Steam inventory |
+| **A** / **N** | Add an item / new container |
+| **E** | Export this tab to CSV (inventory tabs and Profit & Loss) |
+| **B** | Price alerts |
+| **,** | Settings |
+| **Ctrl+Z** | Undo the last change |
+| **Esc** | Close a window, leave a search box, or untick the items ticked in a container |
+| **?** | Show all the shortcuts |
 
 ## Configuration
 
@@ -183,12 +211,12 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
   set (or a CSFloat-comparables value) is treated as the item's full price and sold where fees are lowest.
 - **Selling many at once**: a market only buys so many of one item. When you hold several copies, each market
   (best price first) is counted for about as many as it sells in 30 days, judged from its recent sales
-  (Skinport's sales history, Steam's when available); markets without sales figures take the rest. So 531
+  (Skinport's sales history); markets without sale counts (Steam, CSFloat) take the rest. So 531
   capsules aren't all valued at the price of a market that sells 8 a week. Copies spread across several entries
   or containers are pooled. **Value** and every total use this estimate; **Price** stays the best price for
   one, and the item view shows both, with each market's total for all your copies and how the estimate splits.
 - **Price check**: a listing is ignored when it's more than 3 times (and at least $1 above) the item's recent
-  sales (Skinport's sales history, or Steam's median sale price), or without sales, its price on the other
+  sales (Skinport's sales history, or what it sold for on average on Steam), or without sales, its price on the other
   markets. A Sticker Slab with neither is compared with the sticker inside: a slab can be cracked open to get its
   sticker back, so it's worth at least that much, and is ignored above 4 times it. Cheap listings are never
   ignored. When every listing is ignored, the item is valued from its recent sales, or a slab from the sticker
@@ -229,9 +257,12 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
 
 ## Data sources and limitations
 
-- **Steam Community Market** prices come from an unofficial public endpoint that Steam rate-limits heavily.
-  The app spaces out its requests, backs off when Steam says "slow down" (HTTP 429), and doesn't try to get
-  around it. Steam prices can therefore be missing for a while; the app retries every 12 hours.
+- **Steam Community Market** prices come from [CSGOTrader](https://csgotrader.app)'s free price file: what each
+  item sold for on average over the last 24 hours (or 7, 30 or 90 days for items that sell rarely), in US dollars,
+  rebuilt once a day. The app downloads it (about 0.5 MB) at most every few hours, and only when it has changed,
+  from CSGOTrader's server. It never asks Steam itself for prices, because Steam rate-limits that heavily, so there's
+  nothing that could get your connection blocked by Steam. Being an average of real sales rather than the cheapest
+  listing right now, it can be a day behind sudden moves, and it has no sale counts.
 - **Skinport, Market.CSGO and Waxpeer** publish free price lists. They're fetched once and cached for 30
   minutes. **CSFloat** uses its official API. Skinport's public **sales history** (what items actually sold for
   over the last 7–90 days) is fetched the same way and used for the price check.
@@ -245,10 +276,10 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
 - **Storage units** aren't listed in public Steam inventories at all (Steam counts them in the inventory's
   total but doesn't show them, or what's in them), so their contents and item counts are entered by hand, or
   confirmed from what a sync noticed leaving or coming back. Only the public inventory is read, never your account.
-- **Steam Market prices** come from a strictly rate-limited endpoint. When Steam answers "too many requests",
-  the app leaves it alone for a while (1 hour, then longer each time, up to a day) instead of asking again on
-  every refresh, and then fetches your most valuable items first. The banner at the top shows each market's
-  progress and how long is left.
+- **CSFloat** prices are fetched one item at a time. If CSFloat answers "too many requests", the app leaves it
+  alone for a while (1 hour, then longer each time, up to a day) instead of asking again on every refresh, and
+  then fetches your most valuable items first. The banner at the top shows each market's progress and how long
+  is left.
 - **Estimates only**: fees change, sticker values are estimates, and none of this is financial advice.
 
 ## Privacy and security
@@ -293,9 +324,10 @@ rebuilds the live demo.
 
 ## Credits
 
-- **Price data:** Steam Community Market, [Skinport](https://skinport.com), [CSFloat](https://csfloat.com),
+- **Price data:** Steam Community Market (average sale prices from [CSGOTrader](https://csgotrader.app)'s free
+  daily price file, by the open-source CSGO Trader browser extension), [Skinport](https://skinport.com), [CSFloat](https://csfloat.com),
   [Market.CSGO](https://market.csgo.com) and [Waxpeer](https://waxpeer.com). Sales history comes from Skinport
-  and the Steam Market's median; CSFloat's reference price fills in when Steam can't be reached.
+  and those Steam averages; CSFloat's reference price fills in when neither has the item.
 - **Exchange rates:** [Frankfurter](https://frankfurter.dev) (European Central Bank), with
   [ExchangeRate-API](https://www.exchangerate-api.com) as a fallback.
 - **Item names and pictures:** CSFloat's public item schema and [ByMykel's CSGO-API](https://github.com/ByMykel/CSGO-API)

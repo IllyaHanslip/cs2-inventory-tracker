@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 from config import Config
 
-from . import cache, catalogue, comparables, currency, db, history, images, settings
+from . import alerts, cache, catalogue, comparables, currency, db, history, images, settings
 from .classify import applied_hash_name
 from .sanity import sticker_inside
 from .http_client import ApiError, AuthError, CancelledError, RateLimitError
@@ -53,7 +53,8 @@ def save_quotes(market: str, quotes: Iterable[Quote], *, manual: bool = False) -
     )
     sold = [q for q in quotes if q.sold_price]
     if sold:
-        save_sales(market, [(q.market_hash_name, q.sold_price, q.currency, q.volume, "recent") for q in sold])
+        save_sales(market, [(q.market_hash_name, q.sold_price, q.currency, q.volume, q.sold_period or "recent")
+                            for q in sold])
     # A market's own price estimate is kept apart from real sales (it says nothing about selling speed).
     estimated = [q for q in quotes if q.reference_price]
     if estimated:
@@ -63,8 +64,8 @@ def save_quotes(market: str, quotes: Iterable[Quote], *, manual: bool = False) -
 
 def price_from_saved_lists(names) -> int:
     """Price newly added items straight away from the price lists and sales already saved on this
-    PC (no download), so they don't sit unpriced until the next refresh. Per-item markets (CSFloat,
-    Steam) fill in on the next refresh. Returns how many prices were found."""
+    PC (no download), so they don't sit unpriced until the next refresh. CSFloat (asked one item at a
+    time) fills in on the next refresh. Returns how many prices were found."""
     wanted = {n for n in names if n and n not in NEVER_LISTED}
     wanted |= {inner for n in wanted if (inner := sticker_inside(n))}
     if not wanted:
@@ -109,12 +110,16 @@ def refresh_sales(names: list[str], job) -> int:
     wanted = set(names)
     found = [(r[0], r[1], source.currency, r[2], r[3]) for r in rows if r[0] in wanted]
     save_sales("skinport", found)
-    stale = sorted(wanted - {r[0] for r in found})   # no sales in 90 days any more
-    for i in range(0, len(stale), 800):
-        chunk = stale[i:i + 800]
-        db.execute(f"DELETE FROM sale_prices WHERE source = 'skinport' AND market_hash_name IN ({','.join('?' * len(chunk))})",
-                   chunk)
+    drop_sales("skinport", sorted(wanted - {r[0] for r in found}))   # no sales in 90 days any more
     return len(found)
+
+
+def drop_sales(source: str, names: list[str]) -> None:
+    """Forget recent-sales figures a source no longer has for these items."""
+    for i in range(0, len(names), 800):
+        chunk = names[i:i + 800]
+        db.execute(f"DELETE FROM sale_prices WHERE source = ? AND market_hash_name IN ({','.join('?' * len(chunk))})",
+                   (source, *chunk))
 
 
 def drop_quotes(market: str, names: list[str]) -> None:
@@ -324,8 +329,13 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
             job.warn(f"{source.label} couldn't be reached, so its last saved prices were kept.")
             unreachable.append(key)
             continue
+        if getattr(source, "note", None):
+            job.warn(source.note)
         save_quotes(key, quotes.values())
-        drop_quotes(key, [n for n in names if n not in quotes])
+        missing = [n for n in names if n not in quotes]
+        drop_quotes(key, missing)
+        if getattr(source, "sales_from_prices", False):   # its prices are sales: those went too
+            drop_sales(key, missing)
         _mark_checked(key, *names)
         found[key] = len(quotes)
         if quotes:
@@ -367,8 +377,11 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
 
     job.update(message="Saving today's snapshot…")
     snapshot = history.take_snapshot()
+    fired = alerts.check()
+    alerts.notify_fired(fired)
     job.update(message="Prices updated.")
     return {"names": len(names), "quotes": found, "sticker_evidence": sticker_evidence, "snapshot": snapshot,
+            "alerts": fired,
             "fresh": fresh, "unreachable": unreachable,
             # Complete unless nothing new arrived because markets couldn't be reached.
             "complete": bool(fresh) or not unreachable}

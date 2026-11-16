@@ -3,16 +3,17 @@
 // search run here, the same way the server applies them; anything that would change data says
 // it's a demo instead.
 //
-// One thing can be tried for real: confirming the changes a Steam sync noticed (Containers tab).
-// Every combination of them was worked out when the demo was built (data/states/), so the page
-// shows exactly what the app would. Reloading the page starts the demo afresh.
+// One thing can be tried for real: confirming the changes a Steam sync noticed (Containers tab),
+// and undoing that. Every combination of them was worked out when the demo was built
+// (data/states/), so the page shows exactly what the app would. Reloading the page starts the
+// demo afresh.
 
 import { toast } from './util.js';
 
 export const DEMO_SITE = document.documentElement.dataset.demoSite === '1';
 
 const files = new Map();
-const demo = { applied: new Set(), dismissed: new Set(), key: '', states: {} };
+const demo = { applied: new Set(), dismissed: new Set(), key: '', states: {}, undo: null, alertsSeen: false };
 const PAGE_LOADED = new Date().toISOString();   // the demo "restarts" when you reload the page
 
 function load(name) {
@@ -85,7 +86,7 @@ async function resolveChange(id, action, unit) {
     const { changes: doable } = await load('states.json');
     if (!doable.includes(id)) throw new DemoError('The demo can only try the suggested choice for this one.');
     demo.applied.add(id);
-    demo.key = [...demo.applied].sort((a, b) => a - b).join('-');
+    setKey();
     demo.states = (await load('states.json')).states;
   } else {
     demo.dismissed.add(id);
@@ -95,7 +96,47 @@ async function resolveChange(id, action, unit) {
   }
 }
 
+/** Like the app: the last change (or set of changes) can be undone, once. */
+function remember() {
+  const token = `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  demo.undo = { token, applied: new Set(demo.applied), dismissed: new Set(demo.dismissed) };
+  return token;
+}
+
+function setKey() {
+  demo.key = [...demo.applied].sort((a, b) => a - b).join('-');
+}
+
 async function demoWrite(path, body = {}) {
+  const undo = path.match(/^\/undo\/(.+)$/);
+  if (undo) {
+    if (!demo.undo || demo.undo.token !== undo[1]) throw new DemoError("That can't be undone any more: something else has changed since.");
+    demo.applied = demo.undo.applied;
+    demo.dismissed = demo.undo.dismissed;
+    demo.undo = null;
+    setKey();
+    return { undone: 'Change' };
+  }
+  if (path === '/alerts/seen') {
+    demo.alertsSeen = true;
+    return { unseen: 0 };
+  }
+  if (path === '/changes/batch') {
+    const before = remember();
+    const saved = demo.undo;
+    const ids = [];
+    const problems = [];
+    for (const entry of body.changes || []) {
+      try {
+        await resolveChange(Number(entry.id), entry.action, entry.container_id ? Number(entry.container_id) : null);
+        ids.push(Number(entry.id));
+      } catch (error) {
+        problems.push(error.message);
+      }
+    }
+    demo.undo = saved;
+    return { applied: ids.length, ids, problems, pending: (await pendingChanges()).changes.length, undo: ids.length ? before : null };
+  }
   if (path === '/changes/apply-suggested') {
     const { changes } = await pendingChanges();
     let applied = 0;
@@ -107,8 +148,18 @@ async function demoWrite(path, body = {}) {
   }
   const match = path.match(/^\/changes\/(\d+)$/);
   if (match) {
-    await resolveChange(Number(match[1]), body.action, body.container_id ? Number(body.container_id) : null);
-    return { result: { id: Number(match[1]), action: body.action }, pending: (await pendingChanges()).changes.length };
+    const saved = demo.undo;
+    const token = remember();
+    try {
+      await resolveChange(Number(match[1]), body.action, body.container_id ? Number(body.container_id) : null);
+    } catch (error) {
+      demo.undo = saved;
+      throw error;
+    }
+    return { result: { id: Number(match[1]), action: body.action }, pending: (await pendingChanges()).changes.length, undo: token };
+  }
+  if (path.startsWith('/alerts')) {
+    throw new DemoError('Price alerts can\'t be set in the read-only demo - in the app you\'re told (here and with a Windows notification) when an item reaches your price.');
   }
   throw new DemoError('This is a read-only demo with made-up items. Download the app from GitHub to try it with your own inventory.');
 }
@@ -119,7 +170,14 @@ export async function demoApi(path, { method = 'GET', params = {}, body } = {}) 
   const range = params.range || '90d';
   if (path === '/status') {
     const status = await loadState('status.json');
-    return { ...status, started_at: PAGE_LOADED, pending_changes: (await pendingChanges()).changes.length };
+    return {
+      ...status, started_at: PAGE_LOADED, pending_changes: (await pendingChanges()).changes.length,
+      alerts_unseen: demo.alertsSeen ? 0 : status.alerts_unseen,
+    };
+  }
+  if (path === '/alerts') {
+    const data = await loadState('alerts.json');
+    return demo.alertsSeen ? { ...data, unseen: 0, alerts: data.alerts.map((a) => ({ ...a, seen: true })) } : data;
   }
   if (path === '/jobs/current') return { job: null };
   if (path === '/names') return { names: [] };
@@ -164,7 +222,7 @@ export function showDemoBanner() {
   const banner = document.createElement('div');
   banner.className = 'demo-banner';
   banner.innerHTML = 'Live demo with a <strong>made-up inventory</strong> and synthetic prices - on the Containers tab you can '
-    + 'try confirming the changes, but nothing else changes. '
+    + 'try confirming the changes (and undoing them), but nothing else changes. '
     + '<a href="https://github.com/IllyaHanslip/cs2-inventory-tracker" rel="noopener">Get the app on GitHub</a> to track your own items.';
   document.body.prepend(banner);
 }

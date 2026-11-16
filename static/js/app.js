@@ -1,16 +1,21 @@
 // Dashboard bootstrap: status, tabs, stat tiles, background jobs.
 
+import { announceFired, initAlerts, openAlerts, updateBell } from './alerts.js';
 import { api } from './api.js';
 import { DEMO_SITE, showDemoBanner } from './demo-site.js';
 import * as containers from './containers.js';
 import * as dialogs from './dialogs.js';
 import { InventoryView } from './inventory.js';
+import { initShortcuts, markKeys, openShortcuts } from './keys.js';
 import { initLayout, updateStickyOffsets } from './layout.js';
 import { MarketsView } from './markets.js';
 import { initMotion } from './motion.js';
 import { PlannerView } from './planner.js';
 import { PnlView } from './pnl.js';
+import { onUndone, undoLast } from './undo.js';
 import { deltaHtml, esc, money, number, relTime, state, store, toast } from './util.js';
+
+const TAB_ORDER = ['public', 'total', 'containers', 'markets', 'planner', 'pnl'];
 
 const app = {
   views: {},
@@ -35,10 +40,20 @@ const app = {
     this.views.planner = new PlannerView(document.getElementById('panel-planner'));
     this.views.pnl = new PnlView(document.getElementById('panel-pnl'), this);
     this.bindTopbar();
+    // Every control with a keyboard shortcut shows its key (windows close with Esc).
+    document.querySelectorAll('.btn-close').forEach((button) => { button.dataset.shortcut = 'Esc'; });
+    markKeys(document);
     this.bindTabs();
+    this.bindShortcuts();
+    initAlerts({ openItem: (name) => dialogs.openItemByName(name) });
+    onUndone(async () => {
+      await containers.reopenIfOpen();   // what you're looking at first, then everything else
+      await this.refreshAll();
+    });
     initMotion();
     initLayout();
-    await Promise.all([this.views.public.reload(), this.views.total.reload(), this.views.containers.reload()]);
+    await Promise.all([this.views.public.reload(), this.views.total.reload(), this.views.containers.reload(), this.firstLoad]);
+    this.restoreScroll(this.activeTab);
     const job = state.status.job;
     if (job && job.status === 'running') this.watchJob(job);
     // The app also refreshes prices by itself (when you start it, and its hourly check): show
@@ -73,6 +88,7 @@ const app = {
     const alert = document.getElementById('tab-containers-alert');
     alert.hidden = !s.pending_changes;
     alert.textContent = s.pending_changes ? String(s.pending_changes) : '';
+    updateBell(s.alerts_unseen || 0);
   },
 
   bindTopbar() {
@@ -90,6 +106,7 @@ const app = {
       this.startJob('/prices/refresh', { force: event.shiftKey });
     });
     document.getElementById('settings-btn').addEventListener('click', () => dialogs.openSettings());
+    document.getElementById('keys-btn').addEventListener('click', () => openShortcuts());
     document.getElementById('job-cancel').addEventListener('click', async () => {
       try {
         await api('/jobs/cancel', { method: 'POST' });
@@ -101,7 +118,28 @@ const app = {
 
   bindTabs() {
     const tabs = [...document.querySelectorAll('[role="tab"]')];
+    // Each tab remembers how far down you'd scrolled (kept across reloads too).
+    try { window.history.scrollRestoration = 'manual'; } catch { /* ignore */ }
+    this.scrolls = store.get('scroll', {}) || {};
+    this.holdScroll = true;   // not recorded until the tab is back where it was
+    let saveTimer = null;
+    window.addEventListener('scroll', () => {
+      if (this.holdScroll) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        this.scrolls[this.activeTab] = Math.round(window.scrollY);
+        store.set('scroll', this.scrolls);
+      }, 150);
+    }, { passive: true });
+    let ready = false;   // (the first tab shown on load doesn't save the one before it)
     const activate = (name, focus = false) => {
+      if (ready && this.activeTab !== name) {
+        clearTimeout(saveTimer);
+        this.scrolls[this.activeTab] = Math.round(window.scrollY);
+        store.set('scroll', this.scrolls);
+      }
+      const target = this.scrolls[name] || 0;
+      if (this.activeTab !== name) this.holdScroll = true;
       this.activeTab = name;
       store.set('tab', name);
       if (window.location.hash !== `#${name}`) window.history.replaceState(null, '', `#${name}`);
@@ -112,13 +150,17 @@ const app = {
         document.getElementById(tab.getAttribute('aria-controls')).hidden = !selected;
         if (selected && focus) tab.focus();
       }
-      if (name === 'markets' && !this.views.markets.loaded) this.views.markets.reload();
-      if (name === 'planner' && !this.views.planner.loaded) this.views.planner.reload();
-      if (name === 'pnl' && !this.views.pnl.loaded) this.views.pnl.reload();
+      let loading = null;
+      if (name === 'markets' && !this.views.markets.loaded) loading = this.views.markets.reload();
+      if (name === 'planner' && !this.views.planner.loaded) loading = this.views.planner.reload();
+      if (name === 'pnl' && !this.views.pnl.loaded) loading = this.views.pnl.reload();
       // Charts drawn while hidden have no size - redraw on show.
       const view = this.views[name];
       if (view && view.chart) view.chart.resize();
+      if (view && ready) Promise.resolve(loading).then(() => this.restoreScroll(name, target));
+      if (!ready) this.firstLoad = loading;   // init() restores the scroll once this is in too
     };
+    this.activateTab = activate;
     tabs.forEach((tab, i) => {
       tab.addEventListener('click', () => activate(tab.dataset.tab));
       tab.addEventListener('keydown', (event) => {
@@ -131,9 +173,67 @@ const app = {
     const fromHash = window.location.hash.slice(1);
     const saved = tabs.some((t) => t.dataset.tab === fromHash) ? fromHash : store.get('tab', 'public');
     activate(tabs.some((t) => t.dataset.tab === saved) ? saved : 'public');
+    ready = true;
     window.addEventListener('hashchange', () => {
       const name = window.location.hash.slice(1);
       if (tabs.some((t) => t.dataset.tab === name)) activate(name);
+    });
+  },
+
+  /** Back to where you'd scrolled on this tab (once its content is there). */
+  restoreScroll(name, top = this.scrolls?.[name] || 0) {
+    if (name !== this.activeTab) return;
+    requestAnimationFrame(() => {
+      window.scrollTo({ top, behavior: 'instant' });
+      this.holdScroll = false;
+    });
+  },
+
+  bindShortcuts() {
+    const panel = () => document.getElementById(`panel-${this.activeTab}`);
+    const visibleSearch = (root) => [...root.querySelectorAll('input[type="search"]')].find((i) => i.offsetParent !== null);
+    const focusSearch = (root) => {
+      const input = root && visibleSearch(root);
+      if (!input) return false;
+      input.focus();
+      input.select();
+      return true;
+    };
+    initShortcuts({
+      tab: (n) => {
+        const name = TAB_ORDER[n - 1];
+        if (!name) return false;
+        this.activateTab(name, true);
+        return true;
+      },
+      step: (by) => {
+        const i = TAB_ORDER.indexOf(this.activeTab);
+        this.activateTab(TAB_ORDER[(i + by + TAB_ORDER.length) % TAB_ORDER.length], true);
+      },
+      search: () => {
+        if (!focusSearch(panel())) toast('This tab has nothing to search.', 'info', 2500);
+      },
+      searchIn: (dialog) => focusSearch(dialog),
+      refresh: (force) => {
+        if (document.getElementById('refresh-btn').disabled) {
+          toast('Prices are already being refreshed - see the progress at the top.', 'info', 4000);
+          return;
+        }
+        this.startJob('/prices/refresh', { force });
+      },
+      sync: () => document.getElementById('sync-form').requestSubmit(),
+      add: () => dialogs.editItem(null),
+      newContainer: () => containers.newContainer(),
+      export: () => {
+        const link = ['public', 'total'].includes(this.activeTab) ? this.views[this.activeTab].refs.export
+          : this.activeTab === 'pnl' ? document.getElementById('pnl-export') : null;
+        if (link) link.click();
+        else toast('Export works on Public Inventory, Total Portfolio and Profit & Loss.', 'info', 4000);
+      },
+      alerts: () => openAlerts(),
+      settings: () => dialogs.openSettings(),
+      undo: () => undoLast(),
+      help: () => openShortcuts(),
     });
   },
 
@@ -274,6 +374,7 @@ const app = {
       } else {
         toast(`${job.label} finished.`, 'ok');
       }
+      announceFired(r.alerts || r.prices?.alerts);
     }
     for (const warning of job.warnings || []) toast(warning, 'warn', 12000);
     await this.refreshAll();

@@ -6,8 +6,9 @@ set the item's value. This is a simple statistical check, not a trained model, s
 decision can be explained: a listing is set aside when it is far above the best evidence of
 what the item is really worth, in this order:
 
-1. recent sales - Skinport's public sales history, and Steam's median sale price when
-   Steam answers. A sale is a real transaction; a listing is only an asking price.
+1. recent sales - Skinport's public sales history, and what items sold for on average on the
+   Steam Market (CSGOTrader's daily file). A sale is a real transaction; a listing is only an
+   asking price.
    Sales are ignored if they're wildly *below* two or more listings that agree.
 2. the same item's listings on the other markets;
 3. for a Sticker Slab, the sticker inside: a slab can be cracked open to get its sticker

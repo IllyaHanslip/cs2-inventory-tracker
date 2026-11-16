@@ -132,14 +132,46 @@ export const store = {
   },
 };
 
-export function toast(message, kind = 'info', timeout = 6000) {
-  const box = document.getElementById('toasts');
+/** Where messages go: the page's corner, or - while a window is open, when nothing outside it can
+ *  be clicked - that window's corner, so a message's button (Undo) still works. */
+function toastArea() {
+  const modal = [...document.querySelectorAll('dialog[open]')].filter((d) => d.matches(':modal')).pop();
+  if (!modal) return document.getElementById('toasts');
+  let area = modal.querySelector(':scope > .toasts');
+  if (!area) {
+    area = document.createElement('div');
+    area.className = 'toasts in-dialog';
+    area.setAttribute('aria-live', 'polite');
+    modal.append(area);
+  }
+  return area;
+}
+
+/** A message in the corner. ``action`` adds a button to it ({ label, key, run }); the message
+ *  stays while the pointer is over it. Returns the message element. */
+export function toast(message, kind = 'info', timeout = 6000, { action = null } = {}) {
+  const box = toastArea();
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
   el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
-  el.textContent = message;
+  const text = document.createElement('span');
+  text.className = 'toast-text';
+  text.textContent = message;
+  el.append(text);
+  if (action) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'toast-action';
+    button.innerHTML = `${esc(action.label)}${action.key ? ` <kbd class="kbd">${esc(action.key)}</kbd>` : ''}`;
+    if (action.key) button.setAttribute('aria-keyshortcuts', action.key.replace('Ctrl+', 'Control+').replace('⌘', 'Meta+'));
+    button.addEventListener('click', () => { el.remove(); action.run(); });
+    el.append(button);
+  }
   box.append(el);
-  setTimeout(() => el.remove(), timeout);
+  let timer = setTimeout(() => el.remove(), timeout);
+  el.addEventListener('mouseenter', () => clearTimeout(timer));
+  el.addEventListener('mouseleave', () => { clearTimeout(timer); timer = setTimeout(() => el.remove(), 3000); });
+  return el;
 }
 
 const CATEGORY_ICONS = {
