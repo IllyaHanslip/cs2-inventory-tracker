@@ -16,6 +16,8 @@ import {
 } from './util.js';
 
 let app;
+let pendingName = null;   // an item being fetched by name (a newer request replaces it)
+let historyAsk = 0;
 let itemChart = null;
 let itemHistory = null;
 let itemRange = '90d';
@@ -159,24 +161,48 @@ export function confirmDialog({ title, message, buttons, quantity = null, select
 // Item details
 // ---------------------------------------------------------------------------
 /** The detail view for an item known only by name (Market Comparison, Sell Planner, movers, alerts):
- *  your first copy of it - in the public inventory if ``scope`` is "public". Filters don't matter. */
+ *  your first copy of it - in the public inventory if ``scope`` is "public". Filters don't matter.
+ *  The window opens straight away and fills in when the item arrives. */
 export async function openItemByName(name, { scope = 'total' } = {}) {
+  const dialog = $('#item-dialog');
+  showInItemWindow(name, '<p class="muted item-loading">Loading…</p>', '');
+  const asked = name;
+  pendingName = name;
   try {
-    const { items } = await api('/items', { params: { scope } });
-    const item = items.find((i) => i.market_hash_name === name && !i.is_storage)
-      || items.find((i) => i.market_hash_name === name);
-    if (item) await openItem(item);
-    else toast(`${name} isn't in your inventory any more.`, 'warn');
+    const { item } = await api('/item', { params: { name, scope } });
+    if (pendingName === asked && dialog.open) await openItem(item);
   } catch (error) {
-    toast(error.message, 'error');
+    if (pendingName === asked) dialog.close();
+    toast(error.status === 404 ? `${name} isn't in your inventory any more.` : error.message, error.status === 404 ? 'warn' : 'error');
   }
 }
 
-export async function openItem(item) {
+/** Put something else in the item window (a sale from Profit & Loss, "Loading…"): opens it at the
+ *  top, and anything the last item was still loading is dropped. Returns the window's body. */
+export function showInItemWindow(title, bodyHtml, actionsHtml) {
   const dialog = $('#item-dialog');
+  pendingName = null;
+  historyAsk += 1;
+  if (itemChart) { itemChart.destroy(); itemChart = null; }
+  $('#item-title').textContent = title;
+  $('#item-body').innerHTML = bodyHtml;
+  $('#item-body').scrollTop = 0;
+  $('#item-body').onclick = null;
+  $('#item-actions').innerHTML = actionsHtml;
+  $('#item-actions').onclick = null;
+  if (!dialog.open) dialog.showModal();
+  return $('#item-body');
+}
+
+/** An item's details. ``purchase`` (from Profit & Loss): what you paid is shown first and foremost
+ *  - { entry, history, html } where html is that panel, made by the Profit & Loss view. */
+export async function openItem(item, { purchase = null } = {}) {
+  const dialog = $('#item-dialog');
+  pendingName = null;
   if (itemChart) { itemChart.destroy(); itemChart = null; }
   $('#item-title').textContent = item.name;
-  $('#item-body').innerHTML = itemBodyHtml(item);
+  $('#item-body').innerHTML = itemBodyHtml(item, purchase);
+  $('#item-body').scrollTop = 0;          // every item starts at the top, wherever the last one was left
   renderItemActions(item);
   if (!dialog.open) dialog.showModal();
 
@@ -190,6 +216,7 @@ export async function openItem(item) {
   $('#item-body').onclick = (event) => {
     const button = event.target.closest('[data-act]');
     if (!button) return;
+    if (purchase && purchase.onAct && button.dataset.act.startsWith('entry-')) { purchase.onAct(button.dataset.act); return; }
     if (button.dataset.act === 'compare') loadComparables(item, false);
     if (button.dataset.act === 'compare-refresh') loadComparables(item, true);
     if (button.dataset.act === 'use-suggestion') useSuggestion(item, Number(button.dataset.value));
@@ -362,7 +389,7 @@ function bulkHtml(item, cur) {
       <span class="muted">(${esc(why(s))})</span></li>`).join('')}</ul></div>`;
 }
 
-function itemBodyHtml(item) {
+function itemBodyHtml(item, purchase = null) {
   const badges = [
     `<span class="badge ${item.source === 'steam' ? 'badge-steam' : ''}">${item.source === 'steam' ? 'Steam inventory' : 'Manual'}</span>`,
     `<span class="badge">${esc(item.category_label)}</span>`,
@@ -435,6 +462,7 @@ function itemBodyHtml(item) {
   return `
     <div class="detail-head">${thumbHtml(item, 'thumb-lg')}
       <div><h3>${esc(item.name)}</h3><div class="badges">${badges}</div></div></div>
+    ${purchase ? purchase.html : ''}
     ${stacked}
     <div class="detail-grid">
       <div class="panel"><h4>Selling price</h4><dl class="kv">${valuation}</dl></div>
@@ -604,7 +632,10 @@ async function loadItemHistory(item) {
   document.querySelectorAll('#item-ranges button').forEach((b) => b.classList.toggle('active', b.dataset.range === itemRange));
   const empty = $('#item-chart-empty');
   try {
-    itemHistory = await api('/history/item', { params: { name: item.market_hash_name, range: itemRange } });
+    const ask = ++historyAsk;   // switching item or range quickly: only the newest history is drawn
+    const data = await api('/history/item', { params: { name: item.market_hash_name, range: itemRange } });
+    if (ask !== historyAsk || $('#item-title').textContent !== item.name) return;
+    itemHistory = data;
     const canvas = $('#item-chart');
     if (!canvas) return;
     const h = chartWithSwitch(itemHistory);
@@ -753,8 +784,8 @@ export async function editItem(item, defaults = {}) {
   showError($('#edit-error'), '');
   populateCurrencies();
 
-  form.elements.category.innerHTML = `<option value="">Auto-detect</option>${CATEGORY_FILTERS
-    .filter(([k]) => k !== 'in_container').map(([k, label]) => `<option value="${k}">${esc(label.replace(/s$/, ''))}</option>`).join('')}`;
+  form.elements.category.innerHTML = `<option value="">Auto-detect</option>${Object.entries(state.status?.categories || {})
+    .map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join('')}`;
   form.elements.exterior.innerHTML = `<option value="">Not applicable / from float</option>${(state.status?.exteriors || [])
     .map((e) => `<option value="${esc(e)}">${esc(e)}</option>`).join('')}`;
 

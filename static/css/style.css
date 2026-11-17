@@ -31,7 +31,13 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; scrollbar-gutter: stable; }   /* (stable: no sideways jump when locked) */
+/* While a window is open the page behind it doesn't scroll, and a window's own scrolling stops at its
+   ends instead of carrying on into the page. */
+html.modal-open { overflow: hidden; }
+.dialog, .dialog-body { overscroll-behavior: contain; }
+/* (Lists inside the page or a window - movers, changes, Profit & Loss, data tables - hand scrolling on
+   to the page / window once you reach their top or bottom.) */
 body {
   margin: 0;
   background: var(--bg);
@@ -250,14 +256,25 @@ table.data th[data-sort]::before {
   z-index: -1; pointer-events: none;
 }
 table.data th[data-sort]:hover { z-index: 4; }
+/* (the first and last headers' highlights stay inside the table, or they'd make it scroll sideways) */
+table.data th[data-sort]:first-child::before { left: 0; }
+table.data th[data-sort]:last-child::before { right: 0; }
 table.data th[data-sort]:hover::before { opacity: 1; transform: none; }
-/* Sort arrows sit in the header's edge, outside the text, so they never change a column's width. */
-table.data th[aria-sort="ascending"]::after { content: "▲"; font-size: 9px; color: var(--accent-hover); }
-table.data th[aria-sort="descending"]::after { content: "▼"; font-size: 9px; color: var(--accent-hover); }
-table.data th.sortable:not([aria-sort]):hover::after { content: "↕"; font-size: 10px; opacity: 0.6; }
-table.data th[aria-sort]::after, table.data th.sortable:hover::after {
-  position: absolute; right: 2px; top: 50%; transform: translateY(-50%); line-height: 1;
+/* Sort arrows: always just after the header's text, the same gap in every header. Each sortable
+   header keeps the arrow's room at all times (invisible until sorted or hovered), so nothing moves or
+   re-wraps when it appears. (Number headers stay right-aligned with their numbers, arrow included.) */
+table.data th .th-label { position: relative; display: inline-block; }
+table.data th[data-sort] .th-label { padding-right: 15px; }
+table.data th[aria-sort="ascending"] .th-label::after { content: "▲"; font-size: 9px; color: var(--accent-hover); }
+table.data th[aria-sort="descending"] .th-label::after { content: "▼"; font-size: 9px; color: var(--accent-hover); }
+table.data th.sortable:not([aria-sort]):hover .th-label::after { content: "↕"; font-size: 10px; opacity: 0.6; }
+table.data th[aria-sort] .th-label::after, table.data th.sortable:hover .th-label::after {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 9px; text-align: center; line-height: 1;
 }
+/* ...and the whole column is lit while you hover (or tab to) its header. The tint is laid over each
+   cell, so it adds to a row's own hover / ticked colour rather than replacing it. */
+table.data td.col-hover { box-shadow: inset 0 0 0 9999px rgba(57, 135, 229, 0.07); }
+table.data th.col-hover { color: var(--text-primary); }
 table.data th[aria-sort] { color: var(--text-primary); }
 table.data th.sortable:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: -2px; }
 
@@ -599,17 +616,16 @@ table.data tbody.group-body tr.group-row th {
 tbody.group-body.collapsed tr.row { display: none; }
 
 /* ---------- Movers & portfolio mix ---------- */
-.insight-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.insight-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }   /* (minmax: long names can't widen it) */
 .insight-card .card-title .muted { font-weight: 400; margin-left: 6px; }
-.movers { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.movers { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
 .mover-list h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 0 0 6px; }
 .mover-list ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .mover {
-  width: 100%; display: grid; grid-template-columns: 40px 1fr auto; align-items: center; gap: 8px;
+  width: 100%; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 8px;
   padding: 4px 6px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
 }
-button.mover:hover { background: var(--surface-2); }   /* (Profit & Loss lists aren't clickable) */
-div.mover { cursor: default; }
+button.mover:hover { background: var(--surface-2); }
 .mover .thumb { width: 40px; height: 30px; }
 .mover-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mover-change { text-align: right; font-size: 13px; white-space: nowrap; }
@@ -624,13 +640,13 @@ div.mover { cursor: default; }
 .movers-card { display: flex; flex-direction: column; }
 .movers-card .movers { flex: 1 1 0; min-height: 280px; grid-template-rows: minmax(0, 1fr); }
 .movers-card .mover-list { display: flex; flex-direction: column; min-height: 0; }
-.movers-card .mover-list ol { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.movers-card .mover-list ol { flex: 1 1 0; min-height: 0; overflow-y: auto; padding-right: 4px; }
 @media (max-width: 1100px) {
-  .insight-grid { grid-template-columns: 1fr; }
+  .insight-grid { grid-template-columns: minmax(0, 1fr); }
   .movers-card .movers { flex: none; height: 460px; }
 }
 @media (max-width: 640px) {
-  .movers { grid-template-columns: 1fr; }
+  .movers { grid-template-columns: minmax(0, 1fr); }
   .movers-card .movers { height: auto; grid-template-rows: none; }
   .movers-card .mover-list ol { flex: none; max-height: 320px; }
 }
@@ -667,7 +683,7 @@ div.mover { cursor: default; }
 .change-main { min-width: 0; }
 .change-main strong { overflow-wrap: anywhere; }
 .change-value { color: var(--text-secondary); white-space: nowrap; }
-.change-list { max-height: 420px; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.change-list { max-height: 420px; overflow-y: auto; padding-right: 4px; }
 .change-row .change-price[hidden] { display: block; visibility: hidden; }
 .change-price .input { width: 100%; }
 .change-ask { text-align: right; }
@@ -709,7 +725,7 @@ div.mover { cursor: default; }
 .pnl-grid .movers { grid-template-columns: 1fr 1fr; }
 .pnl-filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .pnl-filters .input { width: 220px; }
-.pnl-scroll { max-height: 640px; overflow-y: auto; overscroll-behavior: contain; }
+.pnl-scroll { max-height: 640px; overflow-y: auto; }
 .pnl-scroll { --head-top: 0px; }   /* headers stick to the top of this box, not the page */
 .danger-text { color: var(--critical-text); }
 
@@ -773,6 +789,16 @@ details[open] > :not(summary) { animation: fade-in .18s ease-out; }
 /* Market comparison: a listing left out as unrealistic (hover for why; it links to the listing). */
 .ignored-cell { color: var(--warning); font-size: 12px; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
 a.ignored-cell { cursor: pointer; }
+
+/* Profit & Loss: an entry's details - what you paid / got, first and large. */
+.deal-panel { border: 1px solid var(--accent); background: linear-gradient(180deg, var(--accent-soft), transparent 70%), var(--surface-1); }
+.deal-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin: 6px 0 4px; }
+.deal-figure { display: flex; flex-direction: column; gap: 2px; }
+.deal-label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.deal-value { font-size: 22px; font-weight: 650; }
+.deal-figure.lead .deal-value { font-size: 28px; }
+.deal-sub { font-size: 12.5px; color: var(--text-secondary); }
+tr.this-entry td { background: var(--accent-soft); }
 
 /* [ and ] at either end of the tabs: previous / next tab. */
 .tab-step { display: inline-flex; align-items: center; padding: 0 6px; cursor: pointer; opacity: .6; }
@@ -884,6 +910,8 @@ table.data tbody tr.ticked td { background: var(--accent-soft); }
 }
 @media (max-width: 1100px) {
   table.data th, table.data td { padding-left: 6px; padding-right: 6px; }
+  table.data th { white-space: normal; }   /* multi-word headers may take two lines (arrow room kept) */
+  .sticker-chip { white-space: normal; }    /* long sticker names may wrap too */
   .col-icon { width: 52px; }
   table.data .thumb { width: 44px; height: 33px; }
   #item-quotes .fee-lines .line { white-space: normal; }

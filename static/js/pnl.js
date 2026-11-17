@@ -4,12 +4,12 @@
 
 import { api, exportUrl } from './api.js';
 import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
-import { confirmDialog, suggestNames } from './dialogs.js';
+import { confirmDialog, openItem, showInItemWindow, suggestNames } from './dialogs.js';
 import { markClean, protectForm } from './guard.js';
 import { steady } from './motion.js';
 import { applySortWithin } from './sortable.js';
 import { doneToast } from './undo.js';
-import { esc, longDate, money, number, store, thumbHtml, toast } from './util.js';
+import { deltaHtml, esc, longDate, money, number, store, thumbHtml, toast } from './util.js';
 
 const MODES = {
   profit: { label: 'Actual profit', chart: 'Actual profit so far' },
@@ -56,11 +56,23 @@ export class PnlView {
     root.querySelector('#pnl-add-out').addEventListener('click', () => openEntry({ kind: 'out' }, () => this.reload()));
     this.el.table.addEventListener('click', (event) => {
       const button = event.target.closest('[data-act]');
-      if (!button) return;
-      const entry = this.data.entries.find((e) => String(e.id) === button.dataset.id);
+      const row = event.target.closest('tr[data-id]');
+      const entry = this.data.entries.find((e) => String(e.id) === (button || row)?.dataset.id);
       if (!entry) return;
-      if (button.dataset.act === 'edit') openEntry(entry, () => this.reload());
-      else if (button.dataset.act === 'delete') this.remove(entry);
+      if (button?.dataset.act === 'edit') openEntry(entry, () => this.reload());
+      else if (button?.dataset.act === 'delete') this.remove(entry);
+      else if (!button && !event.target.closest('a')) this.show(entry);   // anywhere else on the row: its details
+    });
+    this.el.table.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' || !event.target.matches('tr[data-id]')) return;
+      const entry = this.data.entries.find((e) => String(e.id) === event.target.dataset.id);
+      if (entry) this.show(entry);
+    });
+    // Best and worst sales open the same view.
+    this.el.best.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-id]');
+      const entry = button && this.data.entries.find((e) => String(e.id) === button.dataset.id);
+      if (entry) this.show(entry);
     });
   }
 
@@ -174,10 +186,10 @@ export class PnlView {
   renderBest() {
     const { best, worst, currency: cur } = this.data;
     const list = (rows, title, empty) => `<div class="mover-list"><h3>${title}</h3>${rows.length ? `<ol>${rows.map((e) => `
-      <li><div class="mover">${thumbHtml({ icon: e.icon, category: 'other' })}
+      <li><button type="button" class="mover" data-id="${e.id}" title="Show details">${thumbHtml({ icon: e.icon, category: 'other' })}
         <span class="mover-name">${esc(e.name)}${e.quantity > 1 ? ` <span class="muted small">×${number(e.quantity)}</span>` : ''}</span>
         <span class="mover-change"><span class="${tone(e.profit)}">${signed(e.profit, cur)}</span>
-          <span class="sub">${money(e.cost, cur)} → ${money(e.price, cur)}</span></span></div></li>`).join('')}</ol>`
+          <span class="sub">${money(e.cost, cur)} → ${money(e.price, cur)}</span></span></button></li>`).join('')}</ol>`
       : `<p class="muted small">${empty}</p>`}</div>`;
     this.el.best.innerHTML = list(best, 'Best sales', 'No profitable sales with both prices yet.')
       + list(worst, 'Worst sales', 'No sales at a loss.');
@@ -195,7 +207,7 @@ export class PnlView {
         <th class="num" data-sort="num" data-key="qty">Qty</th><th class="num" data-sort="num" data-key="price">Price each</th>
         <th class="num" data-sort="num" data-key="total">Total</th><th class="num" data-sort="num" data-key="cost">Paid each</th>
         <th class="num" data-sort="num" data-key="profit">Profit</th><th><span class="sr-only">Actions</span></th></tr></thead>
-      <tbody>${shown.map((e) => `<tr>
+      <tbody>${shown.map((e) => `<tr class="row" tabindex="0" data-id="${e.id}" title="Show details">
         <td data-v="${esc(e.happened_at)}">${esc(longDate(e.happened_at))}</td>
         <td data-v="${e.kind}"><span class="badge ${e.kind === 'in' ? 'badge-steam' : 'badge-best'}">${e.kind === 'in' ? 'Bought' : 'Sold'}</span></td>
         <td>${thumbHtml({ icon: e.icon, category: 'other' })}</td>
@@ -216,6 +228,54 @@ export class PnlView {
     applySortWithin(this.el.table);
   }
 
+  /** An entry's details. A purchase of something you still hold opens that item's full details, with
+   *  what you paid first; a sale (or a purchase of something you no longer have) shows the deal itself,
+   *  without market prices - there's nothing left to sell. */
+  async show(entry) {
+    const history = this.data.entries.filter((e) => e.market_hash_name === entry.market_hash_name);
+    const cur = this.data.currency;
+    if (entry.kind === 'in') {
+      showInItemWindow(entry.name, '<p class="muted item-loading">Loading…</p>', '');
+      let item = null;
+      try {
+        ({ item } = await api('/item', { params: { name: entry.market_hash_name, scope: 'total', optional: 1 } }));
+      } catch (error) {
+        toast(error.message, 'error');
+        return;
+      }
+      if (item) {
+        await openItem(item, {
+          purchase: {
+            html: purchasePanelHtml(entry, item, history, cur),
+            onAct: (act) => this.entryAction(act, entry),
+          },
+        });
+        return;
+      }
+    }
+    const body = showInItemWindow(entry.name, dealHtml(entry, history, cur), `
+      <button type="button" class="btn btn-danger" data-act="entry-delete">Delete entry</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-primary" data-act="entry-edit">Edit entry</button>`);
+    applySortWithin(body);
+    const act = (event) => {
+      const button = event.target.closest('[data-act]');
+      if (button) this.entryAction(button.dataset.act, entry);
+    };
+    body.onclick = act;
+    document.getElementById('item-actions').onclick = act;
+  }
+
+  entryAction(act, entry) {
+    if (act === 'entry-edit') {
+      document.getElementById('item-dialog').close();
+      openEntry(entry, () => this.reload());
+    } else if (act === 'entry-delete') {
+      document.getElementById('item-dialog').close();
+      this.remove(entry);
+    }
+  }
+
   async remove(entry) {
     const ok = await confirmDialog({
       title: 'Delete this entry?',
@@ -231,6 +291,88 @@ export class PnlView {
       toast(error.message, 'error');
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// An entry's details
+// ---------------------------------------------------------------------------
+const figure = (label, value, sub = '', cls = '') => `<div class="deal-figure${cls ? ` ${cls}` : ''}">
+  <span class="deal-label">${label}</span><span class="deal-value">${value}</span>${sub ? `<span class="deal-sub">${sub}</span>` : ''}</div>`;
+
+function source(entry) {
+  return entry.source === 'steam' ? 'noticed by a Steam sync' : 'added by hand';
+}
+
+/** Every entry for this item, newest first (the one you opened marked). */
+function historyHtml(entry, history, cur) {
+  if (history.length < 2) return '';
+  return `<div class="panel"><h4>Your history with this item</h4>
+    <div class="table-scroll"><table class="data" data-sort-id="pnl-item-history"><thead><tr>
+      <th data-sort="text" data-key="date">Date</th><th data-sort="text" data-key="kind">What</th>
+      <th class="num" data-sort="num" data-key="qty">Qty</th><th class="num" data-sort="num" data-key="price">Price each</th>
+      <th class="num" data-sort="num" data-key="profit">Profit</th></tr></thead>
+    <tbody>${history.map((e, i) => `<tr data-i="${i}"${e.id === entry.id ? ' class="this-entry"' : ''}>
+      <td data-v="${esc(e.happened_at)}">${esc(longDate(e.happened_at))}${e.id === entry.id ? ' <span class="muted small">(this one)</span>' : ''}</td>
+      <td data-v="${e.kind}"><span class="badge ${e.kind === 'in' ? 'badge-steam' : 'badge-best'}">${e.kind === 'in' ? 'Bought' : 'Sold'}</span></td>
+      <td class="num" data-v="${e.quantity}">${number(e.quantity)}</td>
+      <td class="num" data-v="${e.price ?? ''}">${e.price === null ? '<span class="muted">—</span>' : money(e.price, cur)}</td>
+      <td class="num ${tone(e.profit ?? 0)}" data-v="${e.profit ?? ''}">${e.kind === 'out' && e.profit !== null ? signed(e.profit, cur) : ''}</td></tr>`).join('')}
+    </tbody></table></div></div>`;
+}
+
+/** A purchase of something you still hold: what you paid, what it's worth now, and the difference -
+ *  shown first in its details (the market data follows as usual). */
+function purchasePanelHtml(entry, item, history, cur) {
+  const qty = entry.quantity;
+  const paid = entry.price;
+  const now = item.wallet_only ? null : item.unit_value;
+  const diff = paid !== null && now !== null ? (now - paid) * qty : null;
+  const pct = paid ? ((now - paid) / paid) * 100 : null;
+  return `<div class="panel deal-panel">
+      <h4>Bought ${esc(longDate(entry.happened_at))} <span class="muted small">· ${esc(source(entry))}</span></h4>
+      <div class="deal-figures">
+        ${figure('You paid', paid !== null ? money(paid, cur) : '<span class="muted">not recorded</span>',
+          paid !== null ? `each${qty > 1 ? ` · ${number(qty)} for ${money(paid * qty, cur)}` : ''}` : `<button type="button" class="link-btn" data-act="entry-edit">add what you paid</button>`, 'lead')}
+        ${figure('Worth now', now !== null ? money(now, cur) : '<span class="muted">—</span>',
+          now !== null ? `each, after fees${item.sell_market_label ? ` on ${esc(item.sell_market_label)}` : ''}` : 'no price that counts yet')}
+        ${figure(qty > 1 ? `If you sold all ${number(qty)} now` : 'If you sold it now', diff !== null ? `<span class="${tone(diff)}">${signed(diff, cur)}</span>` : '<span class="muted">—</span>',
+          diff !== null ? `${deltaHtml(pct)} on what you paid` : 'needs both prices')}
+      </div>
+      <p class="hint">From Profit &amp; Loss. <button type="button" class="link-btn" data-act="entry-edit">Edit this entry</button></p>
+    </div>
+    ${historyHtml(entry, history, cur)}`;
+}
+
+/** A sale, or a purchase of something you no longer have: the deal itself, no market prices. */
+function dealHtml(entry, history, cur) {
+  const qty = entry.quantity;
+  const sold = entry.kind === 'out';
+  const badges = [
+    `<span class="badge ${sold ? 'badge-best' : 'badge-steam'}">${sold ? 'Sold' : 'Bought'}</span>`,
+    `<span class="badge">${esc(entry.group)}</span>`,
+    `<span class="badge">${esc(source(entry))}</span>`,
+  ].join('');
+  const pct = sold && entry.price !== null && entry.cost ? ((entry.price - entry.cost) / entry.cost) * 100 : null;
+  const figures = sold ? [
+    figure('Sold for', entry.price !== null ? money(entry.price, cur) : '<span class="muted">not recorded</span>',
+      entry.price !== null ? `each${qty > 1 ? ` · ${number(qty)} for ${money(entry.total, cur)}` : ''}` : '<button type="button" class="link-btn" data-act="entry-edit">add what you got</button>', 'lead'),
+    figure('You\u2019d paid', entry.cost !== null ? money(entry.cost, cur) : '<span class="muted">not recorded</span>',
+      entry.cost !== null ? `each${qty > 1 ? ` · ${money(entry.cost * qty, cur)} in all` : ''}` : '<button type="button" class="link-btn" data-act="entry-edit">add what you paid</button>'),
+    figure('Profit', entry.profit !== null ? `<span class="${tone(entry.profit)}">${signed(entry.profit, cur)}</span>` : '<span class="muted">—</span>',
+      entry.profit !== null ? `${deltaHtml(pct)} on what you paid` : 'needs both prices'),
+  ] : [
+    figure('You paid', entry.price !== null ? money(entry.price, cur) : '<span class="muted">not recorded</span>',
+      entry.price !== null ? `each${qty > 1 ? ` · ${number(qty)} for ${money(entry.total, cur)}` : ''}` : '<button type="button" class="link-btn" data-act="entry-edit">add what you paid</button>', 'lead'),
+  ];
+  return `<div class="detail-head">${thumbHtml({ icon: entry.icon, category: 'other' }, 'thumb-lg')}
+      <div><h3>${esc(entry.name)}</h3><div class="badges">${badges}</div></div></div>
+    <div class="panel deal-panel">
+      <h4>${sold ? 'Sold' : 'Bought'} ${esc(longDate(entry.happened_at))}${qty > 1 ? ` <span class="muted small">· ${number(qty)} of them</span>` : ''}</h4>
+      <div class="deal-figures">${figures.join('')}</div>
+      <p class="hint">${sold ? 'Already sold, so market prices aren\u2019t shown.'
+        : 'No longer in your inventory (it left without a recorded sale), so market prices aren\u2019t shown.'}</p>
+    </div>
+    ${historyHtml(entry, history, cur)}`;
 }
 
 // ---------------------------------------------------------------------------

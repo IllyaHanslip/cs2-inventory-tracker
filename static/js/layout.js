@@ -124,7 +124,7 @@ function syncFloat(wrap) {
     document.body.append(float);
     floats.set(wrap, float);
   }
-  float.innerHTML = `<table class="${table.className}" style="width:${table.offsetWidth}px"><thead>${table.tHead.innerHTML}</thead></table>`;
+  float.innerHTML = `<table class="${table.className}" data-float-for="${table.dataset.sortId || ''}" style="width:${table.offsetWidth}px"><thead>${table.tHead.innerHTML}</thead></table>`;
   const source = table.tHead.rows[0].cells;
   [...float.querySelector('thead tr').cells].forEach((cell, i) => {
     const width = `${source[i].getBoundingClientRect().width}px`;

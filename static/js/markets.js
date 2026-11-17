@@ -79,16 +79,19 @@ export class MarketsView {
 
   async reload() {
     const card = this.root.querySelector('.table-card');
+    const ask = (this.ask = (this.ask || 0) + 1);   // only the newest answer is shown
     card.classList.add('is-loading');
     try {
-      this.data = await api('/market-comparison', { params: { scope: this.el.scope.value } });
+      const data = await api('/market-comparison', { params: { scope: this.el.scope.value } });
+      if (ask !== this.ask) return;
+      this.data = data;
       this.filter.setMarkets(this.data.markets.map((m) => ({ key: m.key, label: m.label })));
       this.loaded = true;
       this.render();
     } catch (error) {
-      toast(error.message, 'error');
+      if (ask === this.ask) toast(error.message, 'error');
     } finally {
-      card.classList.remove('is-loading');
+      if (ask === this.ask) card.classList.remove('is-loading');
     }
   }
 

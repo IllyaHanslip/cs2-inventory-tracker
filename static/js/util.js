@@ -213,7 +213,8 @@ export const CATEGORY_FILTERS = [
   ['weapon_skin', 'Weapon Skins'],
   ['sticker', 'Stickers'],
   ['sticker_slab', 'Sticker Slabs'],
-  ['container', 'Containers'],
+  ['container', 'Cases & Capsules'],
+  ['storage', 'Storage Units'],
   ['in_container', 'Items in Containers'],
   ['other', 'Other'],
 ];

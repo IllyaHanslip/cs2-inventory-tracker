@@ -79,8 +79,26 @@ export function nudge(dialog) {
   }, 5000);
 }
 
+/** The page behind a window stays put: scrolling past the top or bottom of the window (or over the
+ *  dimmed background) no longer scrolls it. */
+function lockPage() {
+  const open = [...document.querySelectorAll('dialog')].some((d) => {
+    if (!d.open) return false;
+    try { return d.matches(':modal'); } catch { return true; }
+  });
+  document.documentElement.classList.toggle('modal-open', open);
+}
+
 export function initDialogs() {
   for (const dialog of document.querySelectorAll('dialog')) {
+    // Every time a window opens it starts at the top (not wherever it was scrolled when last closed),
+    // and while any window is open the page behind it doesn't scroll.
+    new MutationObserver(() => {
+      lockPage();
+      if (!dialog.open) return;
+      dialog.scrollTop = 0;
+      dialog.querySelectorAll('.dialog-body').forEach((body) => { body.scrollTop = 0; });
+    }).observe(dialog, { attributes: true, attributeFilter: ['open'] });
     let pressedOutside = false;
     dialog.addEventListener('pointerdown', (event) => {
       pressedOutside = event.target === dialog && isOutside(dialog, event);

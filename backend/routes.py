@@ -218,7 +218,7 @@ def list_items():
     counts: dict[str, int] = {}
     if not frame.empty:
         listed = frame if include_contents else frame[frame["container_id"].isna()]
-        counts = {k: int(v) for k, v in listed["category"].value_counts().items()}
+        counts = {k: int(v) for k, v in portfolio.filter_category(listed).value_counts().items()}
         counts["in_container"] = int(frame["container_id"].notna().sum())
     return jsonify(
         scope=scope,
@@ -486,6 +486,23 @@ def bulk_items():
             done += 1
             units += item["quantity"]
     return jsonify(done=done, units=units)
+
+
+@bp.get("/item")
+def find_item():
+    """One item by name (your first copy; a stored or Steam copy rather than a storage unit), for
+    opening its details from anywhere - lighter than fetching the whole list. ``optional=1``: not
+    holding it is an answer ({item: null}), not an error (Profit & Loss asks "do you still have it?")."""
+    name = _text(request.args.get("name"), "name", 300, required=True)
+    valuator = Valuator()
+    frame = portfolio.build_frame(valuator, _scope())
+    rows = frame[frame["market_hash_name"] == name] if not frame.empty else frame
+    if rows.empty:
+        if request.args.get("optional") == "1":
+            return jsonify(item=None)
+        raise NotFoundError(f"{name} isn't in your inventory any more.")
+    plain = rows[~rows["is_storage"].astype(bool)]
+    return jsonify(item=portfolio.to_records((plain if not plain.empty else rows).head(1))[0])
 
 
 # ---------------------------------------------------------------------------

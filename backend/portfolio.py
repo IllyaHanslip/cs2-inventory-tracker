@@ -13,7 +13,15 @@ from .classify import CATEGORIES
 from .currency import last_source
 from .markets import MANUAL_PREFIX, SOURCES, market_label
 
-CATEGORY_FILTERS = (*CATEGORIES, "in_container")
+CATEGORY_FILTERS = (*CATEGORIES, "storage", "in_container")
+STORAGE_LABEL = "Storage Unit"
+
+
+def filter_category(df: pd.DataFrame) -> pd.Series:
+    """The category used for filters and counts: storage units (anything you keep items in) are
+    their own, apart from cases, capsules and souvenir packages."""
+    storage = (df["category"] == "container") & ((df["is_storage"] == 1) | (df["contents_count"] > 0))
+    return df["category"].where(~storage, "storage")
 SORT_COLUMNS = {
     "name": "name",
     "value": "display_value",
@@ -320,7 +328,7 @@ def apply_filters(
             mask &= df["container_id"].isna()
         if categories:
             plain = [c for c in categories if c != "in_container"]
-            chosen = df["category"].isin(plain)
+            chosen = filter_category(df).isin(plain)
             if "in_container" in categories:
                 chosen |= df["container_id"].notna()
             mask &= chosen
@@ -376,7 +384,8 @@ def to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
             item["container_id"] = int(item["container_id"])
         if item["steam_count"] is not None:
             item["steam_count"] = int(item["steam_count"])
-        item["category_label"] = CATEGORIES.get(item["category"], "Other")
+        storage = item["category"] == "container" and (item["is_storage"] or (item["contents_count"] or 0) > 0)
+        item["category_label"] = STORAGE_LABEL if storage else CATEGORIES.get(item["category"], "Other")
         item["is_storage"] = bool(item["is_storage"])
         item["wallet_only"] = bool(item["wallet_only"])
         item["label"] = container_label(item["name"], item["name_tag"]) if item["is_container"] else item["name"]

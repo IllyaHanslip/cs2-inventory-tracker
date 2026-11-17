@@ -70,14 +70,17 @@ export class PlannerView {
   async reload() {
     this.persist();
     const target = Math.max(0, Number(this.el.target.value) || 0);
+    const ask = (this.ask = (this.ask || 0) + 1);   // dragging the slider asks often: show the newest plan
     try {
-      this.data = await api('/sell-plan', {
+      const data = await api('/sell-plan', {
         params: { target, wallet: this.el.wallet.checked ? 1 : 0, keep: [...this.keep].join(',') },
       });
+      if (ask !== this.ask) return;
+      this.data = data;
       this.loaded = true;
       this.render();
     } catch (error) {
-      toast(error.message, 'error');
+      if (ask === this.ask) toast(error.message, 'error');
     }
   }
 

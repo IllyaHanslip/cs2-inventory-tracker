@@ -58,6 +58,11 @@ function searchText(item) {
     .filter(Boolean).join(' ').toLowerCase();
 }
 
+/** As the server sorts items into filters: storage units apart from cases and capsules. */
+function filterCategory(item) {
+  return item.category === 'container' && (item.is_storage || item.contents_count > 0) ? 'storage' : item.category;
+}
+
 function filterItems(data, params) {
   const categories = (params.category || '').split(',').filter(Boolean);
   const search = (params.q || '').trim().toLowerCase();
@@ -65,12 +70,12 @@ function filterItems(data, params) {
   const plain = categories.filter((c) => c !== 'in_container');
   const items = data.items.filter((item) => {
     if (!showContents && !categories.includes('in_container') && !search && item.container_id !== null) return false;
-    if (categories.length && !(plain.includes(item.category) || (categories.includes('in_container') && item.container_id !== null))) return false;
+    if (categories.length && !(plain.includes(filterCategory(item)) || (categories.includes('in_container') && item.container_id !== null))) return false;
     return search.split(/\s+/).filter(Boolean).every((term) => searchText(item).includes(term));
   });
   const listed = showContents ? data.items : data.items.filter((i) => i.container_id === null);
   const counts = {};
-  for (const item of listed) counts[item.category] = (counts[item.category] || 0) + 1;
+  for (const item of listed) counts[filterCategory(item)] = (counts[filterCategory(item)] || 0) + 1;
   counts.in_container = data.items.filter((i) => i.container_id !== null).length;
   return { ...data, counts, items };
 }
@@ -205,6 +210,14 @@ export async function demoApi(path, { method = 'GET', params = {}, body } = {}) 
     return load(`set-${entry.file}.json`);
   }
   if (path === '/items') return filterItems(await loadState(`items-${scope}.json`), params);
+  if (path === '/item') {
+    const { items } = await loadState(`items-${scope}.json`);
+    const item = items.find((i) => i.market_hash_name === params.name && !i.is_storage)
+      || items.find((i) => i.market_hash_name === params.name);
+    if (!item && String(params.optional) === '1') return { item: null };
+    if (!item) throw Object.assign(new DemoError(`${params.name} isn't in your inventory any more.`), { status: 404 });
+    return { item };
+  }
   if (path === '/history/portfolio') return loadState(`history-${scope}-${range}.json`);
   if (path === '/insights') return loadState(`insights-${scope}-${range}.json`);
   if (path === '/market-comparison') return loadState(`market-${scope}.json`);

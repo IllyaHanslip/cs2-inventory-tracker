@@ -2,7 +2,36 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.5.1
+### What's new in v1.5.2
+
+- **Cases & capsules apart from storage units**: they're now separate categories ("Cases & Capsules" and
+  "Storage Units") in the filters, counts and the Category column.
+- **Details open instantly** from Biggest movers, Market Comparison, the Sell Planner and price alerts,
+  even when the item is hidden by a filter (the window shows straight away and fills in).
+- **Every window opens at the top**, not where the last one was scrolled to.
+- **Hovering a column header lights the whole column** (tabbing to it with the keyboard too).
+- **Sort arrows always sit just after the header text**, the same gap in every header and table (room
+  for them is kept, so nothing moves when they appear); hovering a table's first or last header can no
+  longer make it scroll sideways.
+- **Profit & Loss entries open their details**: a purchase of something you still have opens its full
+  details with what you paid, what it's worth now and the difference shown first; a sale (or a purchase
+  of something you no longer have) shows the deal itself - prices, profit and your history with that
+  item - without market data. Best / worst sales open too.
+- **Scrolling lists never get stuck**: keep turning the mouse wheel over Biggest movers, the Containers
+  tab's changes, the Profit & Loss list or a data table, and the list scrolls all the way to its top or
+  bottom, rests there for a moment, then - if you're still turning - the page carries on, with no need
+  to stop or move the mouse first. Stop at the end and the page stays put; scroll again and it moves
+  straight away. Lists inside a window carry on into the window, never the page behind it, and
+  scrolling the page past a list doesn't get caught by the list.
+- Scrolling while the page is still loading no longer gets jumped back to your last position.
+- In narrow windows (about 860px and below) a long item name in Biggest movers no longer makes the whole
+  page scroll sideways; it's shortened with "…" instead.
+- **The page behind a window stays still**: scrolling past the top or bottom of a window (or over the
+  dimmed background) no longer scrolls the page underneath.
+- Clicking filters, the Market Comparison list choice or the planner amount quickly can no longer show
+  an older answer over the newer one; switching items quickly can't draw the last item's price history.
+
+### v1.5.1
 
 - **Tables fit the window**: a container's contents (and the inventory, Market Comparison and item
   details) no longer need sideways scrolling - long notes and market names wrap instead, and cells

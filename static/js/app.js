@@ -13,6 +13,7 @@ import { initMotion } from './motion.js';
 import { PlannerView } from './planner.js';
 import { PnlView } from './pnl.js';
 import { onUndone, undoLast } from './undo.js';
+import { initWheel } from './wheel.js';
 import { cashOnly, deltaHtml, esc, money, number, relTime, state, store, toast } from './util.js';
 
 const TAB_ORDER = ['public', 'total', 'containers', 'markets', 'planner', 'pnl'];
@@ -51,9 +52,11 @@ const app = {
       await this.refreshAll();
     });
     initMotion();
+    initWheel();
     initLayout();
     await Promise.all([this.views.public.reload(), this.views.total.reload(), this.views.containers.reload(), this.firstLoad]);
-    this.restoreScroll(this.activeTab);
+    if (this.scrolledByHand) this.holdScroll = false;
+    else this.restoreScroll(this.activeTab);
     const job = state.status.job;
     if (job && job.status === 'running') this.watchJob(job);
     // The app also refreshes prices by itself (when you start it, and its hourly check): show
@@ -161,6 +164,14 @@ const app = {
     try { window.history.scrollRestoration = 'manual'; } catch { /* ignore */ }
     this.scrolls = store.get('scroll', {}) || {};
     this.holdScroll = true;   // not recorded until the tab is back where it was
+    // If you start scrolling while the page is still loading, it isn't then jumped back to where you
+    // were last time.
+    this.scrolledByHand = false;
+    const byHand = () => { this.scrolledByHand = true; };
+    ['wheel', 'touchmove'].forEach((type) => window.addEventListener(type, byHand, { once: true, passive: true }));
+    window.addEventListener('keydown', (event) => {
+      if (['PageDown', 'PageUp', 'ArrowDown', 'ArrowUp', 'Home', 'End', ' '].includes(event.key)) byHand();
+    }, { once: true });
     let saveTimer = null;
     window.addEventListener('scroll', () => {
       if (this.holdScroll) return;

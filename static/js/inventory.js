@@ -43,6 +43,9 @@ export class InventoryView {
     this.scope = scope;
     this.app = app;
     this.items = [];
+    this.allItems = null;
+    this.allItemsAsk = 0;
+    this.loadAsk = 0;
     this.chart = null;
     this.history = null;
     root.append(document.getElementById('inventory-panel-tpl').content.cloneNode(true));
@@ -150,10 +153,13 @@ export class InventoryView {
     r.movers.addEventListener('click', (event) => {
       const row = event.target.closest('[data-name]');
       if (!row) return;
-      // The list below may be filtered (a category, a search): the movers aren't, so fetch it if needed.
-      const item = this.items.find((i) => i.market_hash_name === row.dataset.name);
+      // The list below may be filtered (a category, a search) but the movers aren't: the unfiltered
+      // list is kept ready for that, and anything else is fetched.
+      const name = row.dataset.name;
+      const item = this.items.find((i) => i.market_hash_name === name)
+        || (this.allItems || []).find((i) => i.market_hash_name === name);
       if (item) dialogs.openItem(item);
-      else dialogs.openItemByName(row.dataset.name, { scope: this.scope });
+      else dialogs.openItemByName(name, { scope: this.scope });
     });
     r.mixDetails.addEventListener('toggle', () => this.renderMixTable());
 
@@ -203,6 +209,8 @@ export class InventoryView {
   async load() {
     this.updateControls();
     const r = this.refs;
+    // Filters clicked quickly start several loads: only the newest one's answer is shown.
+    const ask = ++this.loadAsk;
     r.tableCard.classList.add('is-loading');
     try {
       // The server's order (most valuable first) is the "unsorted" order; header clicks sort locally.
@@ -214,8 +222,10 @@ export class InventoryView {
           contents: this.scope === 'total' && !this.state.showContents ? 'hide' : 'show',
         },
       });
+      if (ask !== this.loadAsk) return;
       this.items = data.items;
       this.summary = data.summary;
+      this.keepAllItems();
       r.export.href = exportUrl(this.scope);   // the live demo's file depends on what you've confirmed
       for (const el of r.chips.querySelectorAll('[data-count]')) {
         const n = data.counts[el.dataset.count] || 0;
@@ -226,10 +236,23 @@ export class InventoryView {
       this.app.updateSummary(this.scope, data.summary);
       this.renderChart();
     } catch (error) {
-      toast(error.message, 'error');
+      if (ask === this.loadAsk) toast(error.message, 'error');
     } finally {
-      r.tableCard.classList.remove('is-loading');
+      if (ask === this.loadAsk) r.tableCard.classList.remove('is-loading');
     }
+  }
+
+  /** With a filter or search on, fetch the unfiltered list in the background too, so the movers
+   *  (which cover everything) open instantly. */
+  keepAllItems() {
+    if (!this.state.categories.length && !this.state.q) {
+      this.allItems = this.items;
+      return;
+    }
+    const asked = ++this.allItemsAsk;
+    api('/items', { params: { scope: this.scope } })
+      .then((data) => { if (asked === this.allItemsAsk) this.allItems = data.items; })
+      .catch(() => { /* the movers fetch what they need */ });
   }
 
   rows() {

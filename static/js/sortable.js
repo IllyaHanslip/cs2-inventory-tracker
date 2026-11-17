@@ -77,6 +77,7 @@ export function applySort(table) {
   let type = 'text';
   headers.forEach((th, i) => {
     if (!th.dataset.sort) return;
+    labelHeader(th);
     th.classList.add('sortable');
     th.tabIndex = 0;
     th.title = 'Click to sort - click again to reverse, a third time to clear';
@@ -100,6 +101,80 @@ export function applySort(table) {
     rows.forEach((row) => body.appendChild(row));
   }
 }
+
+/** The header's text in its own box, so the sort arrow can sit a fixed gap from the text (not from
+ *  the cell's edge, where padding varies) without ever changing the column's width. */
+function labelHeader(th) {
+  if (th.querySelector(':scope > .th-label')) return;
+  const label = document.createElement('span');
+  label.className = 'th-label';
+  label.append(...th.childNodes);
+  th.append(label);
+}
+
+// ---------------------------------------------------------------------------
+// Hovering (or tabbing to) a sortable header highlights its whole column.
+// ---------------------------------------------------------------------------
+let lit = [];
+
+function clearColumn() {
+  lit.forEach((cell) => cell.classList.remove('col-hover'));
+  lit = [];
+}
+
+/** The real table and column for a header - including the floating copy of a header row. */
+function columnOf(th) {
+  const float = th.closest('table[data-float-for]');
+  const table = float
+    ? document.querySelector(`table[data-sort-id="${CSS.escape(float.dataset.floatFor)}"]`)
+    : th.closest('table');
+  const head = float && table ? table.querySelector(`thead th[data-key="${CSS.escape(th.dataset.key)}"]`) : th;
+  return table && head ? { table, head } : null;
+}
+
+function lightColumn(th) {
+  clearColumn();
+  const found = columnOf(th);
+  if (!found) return;
+  const { table, head } = found;
+  // Column position, counting any header cells that span several columns.
+  let column = 0;
+  for (const cell of head.parentElement.cells) {
+    if (cell === head) break;
+    column += cell.colSpan || 1;
+  }
+  lit.push(head);
+  if (th !== head) lit.push(th);
+  for (const body of table.tBodies) {
+    for (const row of body.rows) {
+      let at = 0;
+      for (const cell of row.cells) {
+        if (at === column && (cell.colSpan || 1) === 1) lit.push(cell);
+        at += cell.colSpan || 1;
+        if (at > column) break;
+      }
+    }
+  }
+  lit.forEach((cell) => cell.classList.add('col-hover'));
+}
+
+const SORTABLE_HEAD = 'table.data th[data-sort]';
+document.addEventListener('pointerover', (event) => {
+  const th = event.target.closest && event.target.closest(SORTABLE_HEAD);
+  if (th && !lit.includes(th)) lightColumn(th);
+  else if (!th && lit.length && !event.target.closest?.('th')) clearColumn();
+});
+document.addEventListener('pointerout', (event) => {
+  const th = event.target.closest && event.target.closest(SORTABLE_HEAD);
+  if (th && !(event.relatedTarget && th.contains(event.relatedTarget))) clearColumn();
+});
+document.addEventListener('focusin', (event) => {
+  const th = event.target.closest && event.target.closest(SORTABLE_HEAD);
+  if (th) lightColumn(th);
+});
+document.addEventListener('focusout', (event) => {
+  if (event.target.closest && event.target.closest(SORTABLE_HEAD)) clearColumn();
+});
 
 function activate(th) {
   const table = th.closest('table[data-sort-id]');

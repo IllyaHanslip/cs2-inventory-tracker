@@ -7,7 +7,7 @@ CATEGORIES = {
     "weapon_skin": "Weapon Skin",
     "sticker": "Sticker",
     "sticker_slab": "Sticker Slab",
-    "container": "Container",
+    "container": "Case / Capsule",
     "other": "Other",
 }
 
