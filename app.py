@@ -4,6 +4,7 @@
     python app.py --demo       # run with synthetic demo data (data/demo.db)
     python app.py --demo --reset-demo   # regenerate the demo data
     python app.py --open       # also open the dashboard in your browser (used by launch.bat)
+    python app.py --window     # the app's own small window instead of this console (as the Windows app)
     python app.py --update     # daily update without the dashboard, then exit (scheduled task)
 """
 from __future__ import annotations
@@ -183,6 +184,37 @@ def _alert(message: str, popup: bool) -> None:
             pass
 
 
+def _start(demo: bool, reset_demo: bool) -> Flask:
+    """The app, ready to serve: database, pictures for items added by hand, and the scheduler."""
+    app = create_app(demo=demo, reset_demo=reset_demo)
+
+    from backend.jobs import find_pictures_now, start_scheduler
+
+    # Pictures for items added by hand, before the page first loads (it would otherwise show
+    # placeholders until it next reloaded). Waits a few seconds at most.
+    find_pictures_now(timeout=8)
+    start_scheduler()
+    if Config.LEGACY_STEAM_API_KEY_SET:
+        logging.getLogger(__name__).warning(
+            "STEAM_API_KEY in your .env is no longer used. Delete that line, and revoke the key at "
+            "https://steamcommunity.com/dev/apikey so it can't be misused.")
+    return app
+
+
+def _logging(window: bool) -> None:
+    """To the console when there is one; with the app's own window (no console), to data/app.log."""
+    handlers: list[logging.Handler] = []
+    if sys.stderr is not None:
+        handlers.append(logging.StreamHandler())
+    if window:
+        Config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.handlers.RotatingFileHandler(Config.DATA_DIR / "app.log", maxBytes=512_000,
+                                                             backupCount=1, encoding="utf-8"))
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+                        handlers=handlers or [logging.NullHandler()])
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="CS2 Inventory & Multi-Market Intelligence Platform")
     parser.add_argument("--demo", action="store_true", help="use synthetic demo data (separate database)")
@@ -191,15 +223,19 @@ def main() -> None:
     parser.add_argument("--port", type=int, help=f"port (default {Config.PORT})")
     parser.add_argument("--open", action="store_true",
                         help="open the dashboard in your browser (if already running, just open it)")
+    parser.add_argument("--window", action="store_true",
+                        help="show the app's own small window instead of using this console (the Windows app "
+                             "always does); closing it stops the app")
     parser.add_argument("--update", action="store_true",
                         help="refresh prices and save today's snapshot without the dashboard, then exit "
                              "(used by the scheduled daily update)")
     args = parser.parse_args()
     if Config.FROZEN and len(sys.argv) == 1:
         args.open = True   # the Windows app, double-clicked: start and open the dashboard
+    window = (args.window or Config.FROZEN) and not args.update
+    popup = args.open or window   # no console to read a message in: show it in a dialog box
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
-    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+    _logging(window)
     if args.host:
         Config.HOST = args.host
     port = args.port or Config.PORT
@@ -219,28 +255,27 @@ def main() -> None:
             print(f"  Already running - opening {url}")
             webbrowser.open(url)
             return
-        _alert(f"CS2 Inventory Intelligence is already running at {url}", popup=False)
+        _alert(f"CS2 Inventory Intelligence is already running at {url}", popup=popup)
         sys.exit(1)
     if not _port_is_free(Config.HOST, port):
         _alert(f"Port {port} is being used by another program, so the dashboard can't start.\n\n"
-               f"Add a line such as PORT=5001 to the .env file and try again.", popup=args.open)
+               f"Add a line such as PORT=5001 to the .env file and try again.", popup=popup)
         sys.exit(1)
 
-    app = create_app(demo=demo, reset_demo=args.reset_demo)
+    if window:
+        from backend import window as app_window
+
+        app_window.run(lambda: _start(demo, args.reset_demo), host=Config.HOST, port=port, url=url, demo=demo,
+                       on_ready=(lambda: _open_browser_when_ready(url)) if args.open else None)
+        return
+
+    app = _start(demo, args.reset_demo)
 
     from backend.http_client import SHUTDOWN
-    from backend.jobs import find_pictures_now, start_scheduler
 
-    # Pictures for items added by hand, before the page first loads (it would otherwise show
-    # placeholders until it next reloaded). Waits a few seconds at most.
-    find_pictures_now(timeout=8)
-    start_scheduler()
     print(f"\n  CS2 Inventory Intelligence running at {url}"
           f"{'  (DEMO DATA)' if Config.DEMO else ''}\n"
           f"  Keep this window open while you use the dashboard; close it (or press Ctrl+C) to stop.\n")
-    if Config.LEGACY_STEAM_API_KEY_SET:
-        print("  NOTE: STEAM_API_KEY in your .env is no longer used. Delete that line, and revoke the key at\n"
-              "        https://steamcommunity.com/dev/apikey so it can't be misused.\n")
     if args.open:
         _open_browser_when_ready(url)
     try:

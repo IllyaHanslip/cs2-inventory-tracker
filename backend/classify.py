@@ -31,7 +31,12 @@ _CONTAINER_RE = re.compile(
     r"\b(case|capsule|package|storage unit|patch pack|graffiti box|music kit box|souvenir package)\b",
     re.IGNORECASE,
 )
+# CS2's terminals ("Sealed Genesis Terminal", "Sealed Dead Hand Terminal") are containers too.
+_TERMINAL_RE = re.compile(r"^sealed\b.*\bterminal$", re.IGNORECASE)
 _EXTERIOR_RE = re.compile(r"\((" + "|".join(re.escape(e) for e in EXTERIORS) + r")\)\s*$")
+# Bumped whenever categorize() learns a new kind of name, so items added by hand before then are
+# filed again once (see db._migrate).
+CATEGORY_RULES = 1
 
 
 def categorize(market_hash_name: str, type_internal: str | None = None) -> str:
@@ -50,7 +55,7 @@ def categorize(market_hash_name: str, type_internal: str | None = None) -> str:
         return "weapon_skin"
     if lower.endswith(" key") or lower.startswith(("patch |", "charm |", "sealed graffiti |")):
         return "other"
-    if _CONTAINER_RE.search(name):
+    if _CONTAINER_RE.search(name) or _TERMINAL_RE.search(name):
         return "container"
     return "other"
 

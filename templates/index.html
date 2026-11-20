@@ -61,14 +61,14 @@
   <p class="status-line" id="status-line"></p>
 
   <nav class="tabs" role="tablist" aria-label="Views">
-    <span class="tab-step" data-step="-1" aria-hidden="true" title="Previous tab (Shortcut: [)"><kbd class="kbd">[</kbd></span>
+    <span class="tab-step" data-step="-1" aria-hidden="true" title="Previous tab (Shortcut: [)"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8H3M7 4L3 8l4 4"/></svg><kbd class="kbd">[</kbd></span>
     <button role="tab" id="tab-public" aria-controls="panel-public" data-tab="public" data-shortcut="1">Public Inventory</button>
     <button role="tab" id="tab-total" aria-controls="panel-total" data-tab="total" data-shortcut="2">Total Portfolio</button>
     <button role="tab" id="tab-containers" aria-controls="panel-containers" data-tab="containers" data-shortcut="3">Containers <span class="tab-count" id="tab-containers-count"></span><span class="tab-alert" id="tab-containers-alert" hidden></span></button>
     <button role="tab" id="tab-markets" aria-controls="panel-markets" data-tab="markets" data-shortcut="4">Market Comparison &amp; Best Deals</button>
     <button role="tab" id="tab-planner" aria-controls="panel-planner" data-tab="planner" data-shortcut="5">Sell Planner</button>
     <button role="tab" id="tab-pnl" aria-controls="panel-pnl" data-tab="pnl" data-shortcut="6">Profit &amp; Loss</button>
-    <span class="tab-step" data-step="1" aria-hidden="true" title="Next tab (Shortcut: ])"><kbd class="kbd">]</kbd></span>
+    <span class="tab-step" data-step="1" aria-hidden="true" title="Next tab (Shortcut: ])"><kbd class="kbd">]</kbd><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></svg></span>
   </nav>
 
   <section class="tab-panel" id="panel-public" role="tabpanel" aria-labelledby="tab-public" hidden></section>
@@ -149,12 +149,58 @@
     <div class="card planner-card">
       <div class="card-head"><h2 class="card-title">How much do you want to raise?</h2>
         <span class="muted small">cash in hand, after selling and withdrawal fees</span></div>
+      <div class="plan-filters">
+        <div class="plan-filter-row" role="group" aria-label="Which items to sell">
+          <span class="filter-label">Items</span>
+          <input type="search" class="input search" id="plan-search" placeholder="Search items, stickers, name tags…"
+                 aria-label="Search the items to sell" data-shortcut="/">
+          <div class="chips" id="plan-chips" role="group" aria-label="Sell only these kinds of item"></div>
+          <label class="group-by">Filter by
+            <select class="input select-small" id="plan-filter-by">
+              <option value="">Nothing</option>
+              <option value="event">Event</option>
+              <option value="collection">Collection</option>
+              <option value="type">Type</option>
+              <option value="weapon">Weapon</option>
+              <option value="rarity">Rarity</option>
+              <option value="exterior">Wear</option>
+              <option value="container">Container</option>
+            </select>
+          </label>
+          <select class="input select-small" id="plan-filter-only" aria-label="Sell only items from this group" hidden></select>
+          <label class="check"><input type="checkbox" id="plan-stored" checked> Include stored items</label>
+          <button type="button" class="link-btn" id="plan-clear" hidden>Clear filters</button>
+        </div>
+        <div class="plan-filter-row" role="group" aria-label="Where to sell">
+          <span class="filter-label">Markets</span>
+          <div class="chips" id="plan-market-chips"></div>
+          <label class="check" title="Steam pays into your Steam Wallet, which can't be withdrawn (likewise BUFF163 for most accounts)">
+            <input type="checkbox" id="plan-wallet"> Include markets you can't withdraw from</label>
+        </div>
+      </div>
       <div class="planner-controls">
-        <input type="range" id="plan-slider" min="0" max="100" step="1" value="0" aria-label="Amount to raise">
+        <div class="plan-bar" id="plan-bar">
+          <div class="plan-track" aria-hidden="true">
+            <div class="plan-zone plan-zone-sel"></div>
+            <div class="plan-zone plan-zone-avail"></div>
+            <div class="plan-zone plan-zone-over"></div>
+            <div class="plan-marker" hidden></div>
+          </div>
+          <input type="range" id="plan-slider" min="0" max="100" step="1" value="0" aria-label="Amount to raise">
+        </div>
         <label class="plan-amount"><span id="plan-currency"></span>
           <input type="number" class="input" id="plan-target" min="0" step="1" value="0" aria-label="Amount to raise, typed"></label>
-        <label class="check"><input type="checkbox" id="plan-wallet"> Count Steam Wallet sales</label>
+        <label class="plan-amount" title="How far under each market's price to list your copies, so they're the cheapest and sell first. Fees come off that lower price.">Undercut by
+          <select class="input select-small" id="plan-undercut">
+            <option value="0">0% (none)</option>
+            <option value="1">1%</option>
+            <option value="2" selected>2% (suggested)</option>
+            <option value="3">3%</option>
+            <option value="5">5%</option>
+            <option value="10">10%</option>
+          </select></label>
       </div>
+      <div class="plan-over" id="plan-over" role="status" hidden></div>
       <p class="hint" id="plan-limit"></p>
     </div>
     <div class="stats" id="plan-stats"></div>
@@ -172,10 +218,14 @@
       <div id="plan-markets"></div>
     </div>
     <p class="hint" id="plan-kept"></p>
+    <p class="hint">The filters above choose which items and markets the plan may use. The bar always runs to everything
+      you could sell on the chosen markets; the part your filters can raise is blue, with a marker where it ends.</p>
     <p class="hint">How it chooses: items whose after-fee price has been falling go first and rising ones are kept;
       copies from big stacks go before one-offs; expensive single items are kept longest. Each market is used best price
-      first, but only for about as many as it sells in 30 days, so later copies may go elsewhere for less. Cheap
-      copies cover the last few pounds rather than selling something expensive that overshoots.</p>
+      first, but only for about as many as it sells in 30 days, so later copies may go elsewhere for less. Every copy
+      is priced a little under each market's price (Undercut by - always at least 1p/1c under) so yours sell first,
+      and fees come off that lower price. Cheap copies cover the last few pounds rather than selling something
+      expensive that overshoots.</p>
   </section>
 
   <section class="tab-panel" id="panel-markets" role="tabpanel" aria-labelledby="tab-markets" hidden>
@@ -567,5 +617,19 @@
 </dialog>
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
+<button type="button" class="btn btn-icon messages-btn" id="messages-btn" data-shortcut="H" aria-expanded="false"
+        aria-controls="messages-panel" aria-label="Recent messages" title="Recent messages">
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.8-6.5L3 8"/><path d="M3 3v5h5"/><path d="M12 7.5V12l3 2"/></svg>
+  <span class="icon-count" id="messages-count" hidden></span>
+</button>
+<section class="messages-panel" id="messages-panel" role="dialog" aria-labelledby="messages-title" hidden>
+  <div class="messages-head">
+    <h2 id="messages-title" tabindex="-1">Recent messages</h2>
+    <button type="button" class="link-btn" id="messages-clear">Clear all</button>
+    <button type="button" class="btn-close" id="messages-close" aria-label="Close" title="Close (Esc)">×</button>
+  </div>
+  <ol class="messages-list" id="messages-list"></ol>
+  <p class="hint messages-foot">Messages that popped up in the corner, newest first. Each is kept for 24 hours in this browser.</p>
+</section>
 </body>
 </html>

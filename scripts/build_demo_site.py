@@ -34,8 +34,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 RANGES = ("7d", "30d", "90d", "1y", "all")
-PLAN_TARGETS = (5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 100, 125, 150, 200, 250, 300, 400, 500, 600, 750,
-                1000, 1250, 1500, 2000, 2500, 3000, 3500, 4000, 5000)
 # The page's security policy, as the app sends it (a meta tag can't carry frame-ancestors).
 CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; "
        "img-src 'self' data: https://community.steamstatic.com https://*.steamstatic.com; "
@@ -101,8 +99,7 @@ def answers(client, item_index: dict[str, int], switch_only: bool = False) -> di
     save("item-index.json", item_index)
     for item in items:
         save(f"quotes-{item['id']}.json", get(f"/api/quotes?name={quote(item['market_hash_name'])}&item={item['id']}"))
-    for kind, wallet in (("cash", 0), ("wallet", 1)):
-        save(f"plans-{kind}.json", [get(f"/api/sell-plan?target={t}&wallet={wallet}") for t in PLAN_TARGETS])
+    save("sell-candidates.json", get("/api/sell-candidates"))   # the Sell Planner plans in the page
     return files
 
 

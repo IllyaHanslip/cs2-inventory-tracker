@@ -228,13 +228,7 @@ export async function demoApi(path, { method = 'GET', params = {}, body } = {}) 
     const index = await loadState('item-index.json');
     return load(`item-history-${index[params.name]}-${range}.json`);
   }
-  if (path === '/sell-plan') {
-    // Plans were worked out for a set of amounts: use the closest one.
-    const plans = await loadState(`plans-${params.wallet === 1 || params.wallet === '1' ? 'wallet' : 'cash'}.json`);
-    const target = Number(params.target) || 0;
-    const nearest = plans.reduce((best, plan) => (Math.abs(plan.target - target) < Math.abs(best.target - target) ? plan : best));
-    return { ...nearest, demo_note: 'In the demo, plans are worked out for a set of amounts; the closest one is shown.' };
-  }
+  if (path === '/sell-candidates') return loadState('sell-candidates.json');   // the planner plans in the page
   throw new DemoError('That part of the app needs the real thing - download it from GitHub.');
 }
 

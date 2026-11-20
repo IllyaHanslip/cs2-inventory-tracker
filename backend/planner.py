@@ -1,13 +1,10 @@
-"""Sell planner: which items to sell, how many, and where, to raise a chosen amount of cash.
+"""Sell planner: what the page needs to work out which items to sell, how many and where.
 
-Every copy you could sell gets a *keep score* - how much you'd rather hold on to it:
-  * trend: falling prices (after fees, from the saved daily prices) lower it, rising ones raise it;
-  * stack: copies from a big stack (531 capsules) score lower than a one-off;
-  * value: expensive single items score higher, so they're the last to go.
-Copies are sold lowest score first until the target is reached. Each item's copies go to its
-markets best price first, each market taking only about what it sells in 30 days (as in the bulk
-estimate), so later copies of the same item may fetch less. Near the end, cheap copies are used to
-cover the last few pounds instead of selling something expensive that overshoots.
+The planning itself happens in the page (static/js/plan-calc.js), so filters, markets, the undercut
+and the amount answer instantly, and the live demo can plan too. This module supplies every row you
+could sell with what the filters look at, each item's price trend, and per market what one copy
+brings in after fees at each undercut (listed a little under the market's price - at least 0.01 -
+so it sells first) and how many that market sells in 30 days.
 """
 from __future__ import annotations
 
@@ -17,10 +14,21 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from . import history, images, portfolio
+from . import history, images, portfolio, sanity
 from .markets import market_label
 
 TREND_DAYS = 49
+UNDERCUT_DEFAULT = 2.0                  # % under each market's price, so your copies sell first
+UNDERCUT_CHOICES = (0, 1, 2, 3, 5, 10)  # what the Sell Planner offers (the "Undercut by" choice)
+
+
+def undercut_price(price: float, percent: float) -> float:
+    """The price to list at so yours is the cheapest: ``percent`` % under ``price`` and at least 0.01
+    under, rounded down to a whole 0.01 (never below 0.01). 0 % lists at ``price`` itself."""
+    if percent <= 0 or price <= 0.01:
+        return price
+    lower = price - max(price * percent / 100, 0.01)
+    return max(math.floor(lower * 100 + 1e-6) / 100, 0.01)
 
 
 def weekly_trends(names: list[str], valuator) -> dict[str, float]:
@@ -40,137 +48,75 @@ def weekly_trends(names: list[str], valuator) -> dict[str, float]:
     return trends
 
 
-def keep_score(weekly: float | None, stack: int, unit_value: float) -> float:
-    """Higher = keep. Falling items, big stacks and cheap copies score low, so they're sold first."""
-    trend = 1.0 if weekly is None else min(max(1 + weekly / 10, 0.4), 2.5)
-    stack_factor = 1 / (1 + math.log10(max(stack, 1)))
-    value_factor = 1 + 0.25 * math.log10(1 + max(unit_value, 0))
-    return trend * stack_factor * value_factor
+def _clean(value: Any) -> Any:
+    """None for missing values (NaN), so the answer is valid JSON."""
+    return None if value is None or (isinstance(value, float) and value != value) else value
 
 
-def plan(target: float, valuator, *, include_wallet: bool = False, keep: set[int] | None = None) -> dict[str, Any]:
-    """Which items to sell, how many and where. ``include_wallet`` is the planner's own "Count
-    Steam Wallet sales" choice, so it decides which markets count here (not the "Values from" switch)."""
-    keep = keep or set()
-    valuator.cash_only = not include_wallet
+def candidates(valuator) -> dict[str, Any]:
+    """Everything the Sell Planner needs to plan in the page (static/js/plan-calc.js), whatever the
+    filters, markets, undercut or amount: every row you could sell, with what the item filters look
+    at, and per *lot* (plain copies of an item pooled, anything else on its own) each market's
+    after-fee money for one copy at each undercut choice and how many it sells in 30 days."""
+    valuator.cash_only = False   # every market, Steam included: the page chooses
     frame = portfolio.build_frame(valuator, "total")
-    out: dict[str, Any] = {"currency": valuator.base, "target": target, "steps": [], "by_market": [],
-                           "achieved": 0.0, "max": 0.0, "excluded": {"kept": 0, "locked": 0, "no_price": 0}}
+    out: dict[str, Any] = {"currency": valuator.base, "undercuts": list(UNDERCUT_CHOICES),
+                           "default_undercut": UNDERCUT_DEFAULT, "markets": [], "lots": {}, "rows": []}
     if frame.empty:
         return out
+    # Storage units (and anything holding items) aren't sold themselves.
     sellable = frame[~(frame["is_container"].astype(bool) & ((frame["contents_count"] > 0) | (frame["is_storage"] == 1)))]
+    if sellable.empty:
+        return out
+    # Price trends two ways: from every market (when you'll sell where money can't be withdrawn too)
+    # and from cash-out markets only.
     names = sellable["market_hash_name"].unique().tolist()
     trends = weekly_trends(names, valuator)
+    valuator.cash_only = True
+    trends_cash = weekly_trends(names, valuator)
+    changes_cash = history.price_changes(names, valuator).drop_duplicates("market_hash_name")
+    changes_cash = dict(zip(changes_cash["market_hash_name"], changes_cash["change_7w"]))
+    valuator.cash_only = False
 
-    # Lots: plain copies of an item are pooled (like the bulk estimate); anything else is its own lot.
-    lots: dict[Any, dict[str, Any]] = {}
-    for row in sellable.itertuples(index=False):
-        if int(row.id) in keep:
-            out["excluded"]["kept"] += 1
-            continue
-        if row.source == "steam" and not row.tradable:
-            out["excluded"]["locked"] += 1
-            continue
-        options = sorted((o for o in row.sell_quotes if include_wallet or not o["wallet"]), key=lambda o: -o["net"])
-        if not options:
-            out["excluded"]["no_price"] += 1
-            continue
+    def weekly(trend: float | None, change: Any) -> float | None:
+        """The fitted trend, else the 7-week change spread over 7 weeks."""
+        change = _clean(change)
+        if trend is None and change is not None:
+            return ((1 + change / 100) ** (1 / 7) - 1) * 100
+        return trend
+
+    seen: dict[str, bool] = {}
+    for row, category in zip(sellable.itertuples(index=False), portfolio.filter_category(sellable)):
+        name = row.market_hash_name
         plain = row.price_source not in ("custom", "evidence") and not (row.sticker_premium or 0) > 0
-        key = ("plain", row.market_hash_name) if plain else ("row", row.id)
-        lot = lots.setdefault(key, {"name": row.market_hash_name, "ids": [], "units": 0, "options": options,
-                                    "icon": images.icon_src(row.icon_url), "change_7w": row.change_7w})
-        lot["ids"].append(int(row.id))
-        lot["units"] += int(row.quantity)
-
-    # Every sellable copy, priced where it would actually go (best market first, within its sales).
-    copies = []
-    for key, lot in lots.items():
-        _total, steps = valuator.bulk_plan(lot["name"], lot["options"], lot["units"])
-        weekly = trends.get(lot["name"])
-        if weekly is None and lot["change_7w"] == lot["change_7w"] and lot["change_7w"] is not None:
-            weekly = ((1 + lot["change_7w"] / 100) ** (1 / 7) - 1) * 100
-        lot["weekly"] = weekly
-        # One score per item (from its best price), so its copies go best-paying market first.
-        score = keep_score(weekly, lot["units"], steps[0]["net"]) if steps else math.inf
-        position = 0
-        for step in steps:
-            for _ in range(step["units"]):
-                copies.append((score, position, key, step["market"], step["net"], step.get("capacity")))
-                position += 1
-    out["max"] = round(sum(c[4] for c in copies), 2)
-
-    # Lowest keep score first (and an item's best-paying copies before its later ones).
-    copies.sort(key=lambda c: (c[0], c[1]))
-    chosen, total = [], 0.0
-    later = []
-    for copy in copies:
-        if total >= target:
-            break
-        gap = target - total
-        if copy[4] > gap * 1.5 and copy[4] - gap > 1.0:
-            later.append(copy)        # would overshoot a lot: try cheaper copies first
-            continue
-        chosen.append(copy)
-        total += copy[4]
-    if total < target and later:
-        # Still short: the copy that covers the rest with the least left over, keep score breaking ties.
-        gap = target - total
-        covering = [c for c in later if c[4] >= gap]
-        pick = min(covering, key=lambda c: (c[4], c[0])) if covering else max(later, key=lambda c: c[4])
-        chosen.append(pick)
-        total += pick[4]
-        if total < target:            # every copy is needed
-            for copy in sorted(later, key=lambda c: (c[0], c[1])):
-                if copy is pick or total >= target:
-                    continue
-                chosen.append(copy)
-                total += copy[4]
-
-    # Group the chosen copies into steps: per item, how many on which market.
-    steps: dict[Any, dict[str, Any]] = {}
-    markets: dict[str, dict[str, Any]] = {}
-    for score, _pos, key, market, net, capacity in chosen:
-        lot = lots[key]
-        step = steps.setdefault(key, {"name": lot["name"], "ids": lot["ids"], "icon": lot["icon"], "units": 0,
-                                      "held": lot["units"], "proceeds": 0.0, "markets": {}, "score": score,
-                                      "weekly": lot["weekly"]})
-        step["units"] += 1
-        step["proceeds"] += net
-        where = step["markets"].setdefault(market, {
-            "market": market, "label": market_label(market), "units": 0, "net": net, "capacity": capacity,
-            "url": next((o.get("url") for o in lot["options"] if o["market"] == market), None)})
-        where["units"] += 1
-        bucket = markets.setdefault(market, {"market": market, "label": market_label(market), "units": 0, "proceeds": 0.0})
-        bucket["units"] += 1
-        bucket["proceeds"] += net
-    for step in steps.values():
-        step["markets"] = list(step["markets"].values())
-        step["reasons"] = _reasons(step)
-        step["proceeds"] = round(step["proceeds"], 4)
-    out["steps"] = sorted(steps.values(), key=lambda s: s["score"])
-    out["by_market"] = sorted(markets.values(), key=lambda m: -m["proceeds"])
-    out["achieved"] = round(total, 2)
+        key = f"plain:{name}" if plain else f"row:{int(row.id)}"
+        if key not in out["lots"]:
+            own_price = row.price_source in ("custom", "evidence")   # no market change for your own value
+            options = []
+            for option in row.sell_quotes:
+                source = sanity.sticker_inside(name) if option.get("basis") == "sticker_inside" else name
+                prices = []
+                for undercut in UNDERCUT_CHOICES:
+                    listed = undercut_price(option["gross"], undercut)
+                    steps = option if listed == option["gross"] else valuator.fee_steps(option["market"], listed)
+                    ok = steps is not None and steps["net"] > 0
+                    prices.append([round(listed, 4), round(steps["net"], 6)] if ok else None)
+                options.append({"market": option["market"], "url": option.get("url"), "wallet": bool(option["wallet"]),
+                                "capacity": valuator.sell_capacity(source, option["market"]), "prices": prices})
+                seen.setdefault(option["market"], not option["wallet"])
+            out["lots"][key] = {
+                "name": name, "icon": images.icon_src(row.icon_url), "options": options,
+                "weekly": weekly(trends.get(name), row.change_7w),
+                "weekly_cash": weekly(trends_cash.get(name), None if own_price else changes_cash.get(name)),
+            }
+        out["rows"].append({
+            "id": int(row.id), "lot": key, "quantity": int(row.quantity), "category": category,
+            "in_container": _clean(row.container_id) is not None, "container_name": _clean(row.container_name),
+            "exterior": _clean(row.exterior), "tags": row.tags or {}, "search": row.search_text,
+            "is_storage": False, "locked": row.source == "steam" and not row.tradable,
+        })
+    # Markets in the order they're switched on in Settings, then any others (manual quotes) by name.
+    enabled = list(valuator.prefs["enabled_markets"])
+    order = sorted(seen, key=lambda m: (enabled.index(m) if m in enabled else len(enabled), market_label(m).lower()))
+    out["markets"] = [{"key": m, "label": market_label(m), "cash_out": seen[m]} for m in order]
     return out
-
-
-def _reasons(step: dict[str, Any]) -> list[str]:
-    """Short reasons, one per line, all shaped the same way: what it is, then any figures in brackets."""
-    reasons = []
-    weekly = step["weekly"]
-    if weekly is None:
-        reasons.append("trend unknown (not enough price history)")
-    elif weekly <= -1:
-        reasons.append(f"falling (about {abs(weekly):.0f}% a week)")
-    elif weekly < 1:
-        reasons.append("steady (under 1% a week)")
-    elif weekly < 3:
-        reasons.append(f"rising slowly (about {weekly:.0f}% a week)")
-    else:
-        reasons.append(f"rising (about {weekly:.0f}% a week)")
-        reasons.append("sold only to reach the target")
-    if step["held"] >= 5:
-        reasons.append(f"you have {step['held']:,}" + (f" (selling {step['units']:,})" if step["units"] < step["held"] else ""))
-    quick = [m for m in step["markets"] if m["capacity"] and m["capacity"] >= m["units"]]
-    if quick:
-        reasons.append(f"sells steadily on {quick[0]['label']}")
-    return reasons

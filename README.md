@@ -36,6 +36,9 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
   give what a new item cost - or dismiss it with × for good.
 - **Undo**: removing, moving, deleting a container, confirming a change from a Steam sync, deleting a Profit &
   Loss entry: the message that says it's done has an **Undo** button (or press Ctrl+Z).
+- **Messages you can't miss**: messages in the corner stay 15-20 seconds, with a bar running down to when they
+  go (pointing at one, or leaving the browser tab, pauses it) and × to close one. **Recent messages** (the button
+  in the bottom corner, or H) lists everything from the last day with how long ago it came.
 - **Several items at once**: tick items in a container (Shift+click ticks a run) and move or remove them together.
 - **Price alerts**: "tell me when this sells for above / below £X" (after fees), set from any item's details. You're
   told in the dashboard and with a Windows notification; the bell at the top lists them.
@@ -63,7 +66,10 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
 - **Selling many at once**: when you hold a stack (say 531 capsules), each market is counted for only about as
   many as it sells in a month, so the value is what you could really get, not the price of one times 531.
 - **Sell planner**: choose an amount with a slider and it picks what to sell, how many and where: falling items
-  first, copies from big stacks before one-offs, your most valuable items last.
+  first, copies from big stacks before one-offs, your most valuable items last. Narrow it to the items you'd sell
+  (the same filters as your inventory: search, kinds of item, event, collection, wear, container…) and the markets
+  you'd use; the slider shows how much those can raise. It assumes you list a little under each market's price so
+  yours sell first (2% by default; choose 0-10%), and tells you what to list at.
 - **Group by anything**: event (Paris 2023, Budapest 2025…), collection, type (knives, gloves, rifles…), weapon,
   rarity, wear or container, with subtotals.
 - **Biggest movers and portfolio mix**: what rose and fell the most, and how your value splits across knives,
@@ -87,7 +93,8 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
 
 **The easy way:** download **`CS2-Inventory-Intelligence.exe`** from the
 [latest release](https://github.com/IllyaHanslip/cs2-inventory-tracker/releases/latest) and double-click it. No
-Python or setup needed: it opens the dashboard in your browser, and keeps your data in
+Python or setup needed: it opens the dashboard in your browser, with a small window (and the app's icon on the
+taskbar) that shows it's running - close that window to stop it. It keeps your data in
 `%LOCALAPPDATA%\CS2 Inventory Intelligence` (put an optional `.env` there). Windows may warn that it's from an
 unknown publisher, as it isn't code-signed: click **More info → Run anyway**. It's built automatically from this
 code by GitHub Actions.
@@ -99,7 +106,8 @@ code by GitHub Actions.
 2. Download this project: click the green **Code** button on this page, then either copy the link and run
    `git clone <link>`, or choose **Download ZIP** and unzip it.
 3. Double-click **`launch.bat`**. The first run installs what it needs (1–2 minutes), then the dashboard opens
-   in your browser at <http://127.0.0.1:5000>.
+   in your browser at <http://127.0.0.1:5000>, with a small window that shows the app is running (close it to
+   stop the app).
 4. Paste your **SteamID64** into the box at the top and press **Sync Steam**. You can find it at
    *store.steampowered.com/account*. Your Steam inventory privacy must be set to **Public**.
 
@@ -168,6 +176,7 @@ Every button with a shortcut shows its key, and **?** lists them all. They never
 | **A** / **N** | Add an item / new container |
 | **E** | Export this tab to CSV (inventory tabs and Profit & Loss) |
 | **B** | Price alerts |
+| **H** | Recent messages (the ones that popped up in the corner in the last day) |
 | **W** | Values from: all markets / cash-out markets only |
 | **,** | Settings |
 | **Ctrl+Z** | Undo the last change |
@@ -319,7 +328,7 @@ rebuilds the live demo.
 | Path | Contents |
 |---|---|
 | `app.py`, `config.py` | Entry point and settings |
-| `backend/` | Flask API, SQLite storage, Steam sync, market sources, valuation, fees, history |
+| `backend/` | Flask API, SQLite storage, Steam sync, market sources, valuation, fees, history, the app's window |
 | `static/`, `templates/` | The dashboard (vanilla JavaScript + Chart.js) |
 | `tests/` | pytest suite |
 | `scripts/` | Privacy check, desktop-shortcut helper, the daily-update scheduled task and the live-demo builder |

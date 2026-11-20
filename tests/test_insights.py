@@ -100,46 +100,53 @@ def test_background_update_sends_a_notification(client, monkeypatch):
 
 
 # --------------------------------------------------------------------------- planner
-def test_planner_sells_falling_stacks_first_and_keeps_valuables(client):
-    add(client, "Recoil Case", 100, 0.50)                # big stack, falling
-    add(client, "Kilowatt Case", 20, 0.80)               # smaller stack, rising
-    add(client, "★ Karambit | Doppler (Factory New)", 1, 800.0)
+# The planning itself happens in the page (static/js/plan-calc.js); these check what it's given.
+def test_undercut_price():
+    assert planner.undercut_price(10.0, 2) == 9.80
+    assert planner.undercut_price(10.0, 0) == 10.0               # 0 %: the market price itself
+    assert planner.undercut_price(0.05, 2) == 0.04               # always at least 0.01 under
+    assert planner.undercut_price(0.01, 5) == 0.01               # can't go lower than 0.01
+    assert planner.undercut_price(1.999, 2) == 1.95              # rounded down to a whole 0.01
+    assert planner.undercut_price(100.0, 10) == 90.0
+
+
+def test_sell_candidates(client):
+    add(client, "Recoil Case", 100, 0.50)                # falling, on CSFloat (cash)
     history_prices("Recoil Case", [0.80, 0.75, 0.70, 0.65, 0.60, 0.55])
-    history_prices("Kilowatt Case", [0.60, 0.65, 0.70, 0.72, 0.75, 0.78])
-    result = planner.plan(20.0, Valuator())
-    names = [s["name"] for s in result["steps"]]
-    assert names[0] == "Recoil Case" and "★ Karambit | Doppler (Factory New)" not in names
-    assert result["achieved"] >= 20.0 and result["achieved"] - 20.0 < 1.0     # no big overshoot
-    assert any("falling" in r for r in result["steps"][0]["reasons"])
-    assert result["max"] == pytest.approx((100 * 0.5 + 20 * 0.8 + 800) * CSFLOAT, abs=0.01)
-
-
-def test_planner_respects_keep_and_wallet(client):
-    add(client, "Recoil Case", 10, 1.0)
     add_quote("Kilowatt Case", "steam", 2.0)             # Steam only: wallet money
     client.post("/api/items", json={"market_hash_name": "Kilowatt Case", "quantity": 5}, headers=HEADERS)
-    recoil_id = next(i["id"] for i in client.get("/api/items?scope=total").get_json()["items"] if i["name"] == "Recoil Case")
-    plan = client.get(f"/api/sell-plan?target=5&keep={recoil_id}").get_json()
-    assert plan["steps"] == [] and plan["excluded"]["kept"] == 1 and plan["excluded"]["no_price"] == 1
-    with_wallet = client.get(f"/api/sell-plan?target=5&keep={recoil_id}&wallet=1").get_json()
-    assert [s["name"] for s in with_wallet["steps"]] == ["Kilowatt Case"]
-    assert with_wallet["steps"][0]["markets"][0]["market"] == "steam"
+    knife = client.post("/api/items", json={"market_hash_name": "★ Karambit | Doppler (Factory New)", "custom_price": 900,
+                                             "custom_price_currency": "USD"}, headers=HEADERS).get_json()["item"]["id"]
+    data = client.get("/api/sell-candidates").get_json()
+    assert data["currency"] == "USD" and data["undercuts"] == [0, 1, 2, 3, 5, 10] and data["default_undercut"] == 2
+    assert {m["key"]: m["cash_out"] for m in data["markets"]}["steam"] is False
+    assert {m["key"]: m["cash_out"] for m in data["markets"]}["csfloat"] is True
+
+    rows = {r["lot"]: r for r in data["rows"]}
+    recoil = rows["plain:Recoil Case"]
+    assert recoil["quantity"] == 100 and recoil["category"] == "container" and "recoil case" in recoil["search"]
+    assert recoil["locked"] is False and recoil["in_container"] is False
+    lot = data["lots"]["plain:Recoil Case"]
+    assert lot["weekly"] < 0 and lot["weekly_cash"] < 0   # falling either way
+    option = next(o for o in lot["options"] if o["market"] == "csfloat")
+    zero, five = option["prices"][0], option["prices"][data["undercuts"].index(5)]
+    assert zero == [0.5, pytest.approx(0.5 * CSFLOAT)]
+    assert five == [0.47, pytest.approx(0.47 * CSFLOAT)]   # 5 % under (rounded down), fees from that price
+    assert option["wallet"] is False
+
+    steam = data["lots"]["plain:Kilowatt Case"]["options"][0]
+    assert steam["market"] == "steam" and steam["wallet"] is True
+    # Your own value is its own lot (never pooled with plain copies), sold at that value everywhere.
+    assert f"row:{knife}" in data["lots"] and data["lots"][f"row:{knife}"]["weekly"] is None
 
 
-def test_planner_uses_cheap_copies_to_finish(client):
-    add(client, "AK-47 | Redline (Field-Tested)", 1, 50.0)
-    add(client, "Recoil Case", 30, 0.40)
-    plan = planner.plan(3.0, Valuator())
-    assert [s["name"] for s in plan["steps"]] == ["Recoil Case"] and plan["steps"][0]["units"] < 30
-
-
-def test_planner_reasons_share_one_shape():
-    """Each reason: what it is, then any figures in brackets."""
-    step = {"held": 40, "units": 5, "markets": [{"capacity": 34, "units": 5, "label": "Skinport"}]}
-    reasons = lambda weekly: planner._reasons({**step, "weekly": weekly})  # noqa: E731
-    assert reasons(-5.2) == ["falling (about 5% a week)", "you have 40 (selling 5)", "sells steadily on Skinport"]
-    assert reasons(0.4)[0] == "steady (under 1% a week)"
-    assert reasons(1.6)[0] == "rising slowly (about 2% a week)"
-    assert reasons(4.0)[:2] == ["rising (about 4% a week)", "sold only to reach the target"]
-    assert reasons(None)[0] == "trend unknown (not enough price history)"
-    assert planner._reasons({"weekly": None, "held": 60, "units": 60, "markets": []})[1] == "you have 60"
+def test_sell_candidates_leave_out_storage_units(client):
+    unit = client.post("/api/items", json={"market_hash_name": "Storage Unit", "category": "container",
+                                           "name_tag": "Long Holds", "is_storage": True}, headers=HEADERS).get_json()["item"]["id"]
+    add_quote("Recoil Case", "csfloat", 1.0)
+    client.post(f"/api/containers/{unit}/items", json={"items": [{"market_hash_name": "Recoil Case", "quantity": 7}]},
+                headers=HEADERS)
+    data = client.get("/api/sell-candidates").get_json()
+    assert [r["id"] for r in data["rows"]] != [] and unit not in [r["id"] for r in data["rows"]]
+    stored = data["rows"][0]
+    assert stored["in_container"] is True and "Long Holds" in stored["container_name"] and stored["quantity"] == 7

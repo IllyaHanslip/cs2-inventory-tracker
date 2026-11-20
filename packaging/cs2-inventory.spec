@@ -11,7 +11,8 @@ a = Analysis(
     [str(ROOT / "app.py")],
     pathex=[str(ROOT)],
     datas=[(str(ROOT / "templates"), "templates"), (str(ROOT / "static"), "static")],
-    excludes=["pytest", "tkinter", "matplotlib", "IPython", "notebook", "scipy"],
+    # tkinter stays in: it draws the app's own small window (backend/window.py).
+    excludes=["pytest", "matplotlib", "IPython", "notebook", "scipy"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -23,6 +24,7 @@ exe = EXE(
     [],
     name="CS2-Inventory-Intelligence",
     icon=str(ROOT / "static" / "icon.ico"),
-    console=True,          # the window shows the app is running; close it to stop
+    console=False,         # no console: the app's own window (with its icon) shows it's running; close it to stop
+                           # (and the scheduled background update runs without any window flashing up)
     upx=False,
 )

@@ -9,6 +9,7 @@ import { MarketFilter, availableMarkets, bestToSell, bulkNote, sellHtml, walletO
 import { applySortWithin, cycleSort, getSort, sortItems } from './sortable.js';
 import { openEventPicker } from './event-picker.js';
 import { markKeys } from './keys.js';
+import { collapseOut, enterIn, setBadge } from './motion.js';
 import { doneToast } from './undo.js';
 import { esc, floatText, money, number, relTime, state, store, thumbHtml, toast } from './util.js';
 
@@ -177,29 +178,68 @@ export class ContainersView {
   async reload() {
     const grid = this.root.querySelector('#ct-grid');
     grid.classList.add('is-loading');
+    // Changes confirmed quickly one after another start several reloads: only the newest one's answer
+    // is shown (an older one could put back a row you've just confirmed).
+    const ask = (this.loadAsk = (this.loadAsk || 0) + 1);
     try {
-      [this.data, this.changes] = await Promise.all([api('/containers'), api('/changes')]);
+      const [data, changes] = await Promise.all([api('/containers'), api('/changes')]);
+      if (ask !== this.loadAsk) return;
+      [this.data, this.changes] = [data, changes];
       this.loaded = true;
       this.render();
       this.renderChanges();
     } catch (error) {
-      toast(error.message, 'error');
+      if (ask === this.loadAsk) toast(error.message, 'error');
     } finally {
-      grid.classList.remove('is-loading');
+      if (ask === this.loadAsk) grid.classList.remove('is-loading');
     }
   }
 
   // -------------------------------------------------------------------------
   // Changes noticed by Steam syncs: items that went into or came out of a storage unit
   // -------------------------------------------------------------------------
-  renderChanges() {
+  /** The yellow box of changes to review. Rows that have gone (confirmed, dismissed, or settled by a
+   *  later sync) slide away, new ones drop in, and the box folds away when the last one goes. */
+  async renderChanges() {
+    const turn = (this.changesTurn = (this.changesTurn || 0) + 1);   // a newer render wins
     const box = this.root.querySelector('#ct-changes');
+    const { changes = [] } = this.changes || {};
+    setBadge(document.getElementById('tab-containers-alert'), changes.length,
+      changes.length ? `${changes.length} change${changes.length === 1 ? '' : 's'} from Steam to review` : '');
+    // What's on screen now (anything already folding away counts as gone).
+    const card = box.querySelector('.changes-card:not(.collapsing)');
+    const ids = new Set(changes.map((c) => String(c.id)));
+    const shown = card ? [...card.querySelectorAll('.change-row[data-change]:not(.collapsing)')] : [];
+    const before = new Set(shown.map((row) => row.dataset.change));
+    if (!changes.length) {
+      if (card) await collapseOut(card, { slide: false });
+      if (turn === this.changesTurn) box.innerHTML = '';
+      return;
+    }
+    const going = shown.filter((row) => !ids.has(row.dataset.change));
+    if (going.length) await this.leaveRows(going);
+    if (turn !== this.changesTurn) return;
+    // Nothing new since it was drawn (a refresh for something else): leave it be, so a row that's
+    // dropping in finishes, and a price you're typing keeps its place.
+    const signature = JSON.stringify(this.changes);
+    if (card && !going.length && signature === this.changesDrawn) return;
+    this.changesDrawn = signature;
+    this.drawChanges(box);
+    if (!card) enterIn(box.querySelector('.changes-card'));
+    else box.querySelectorAll('.change-row[data-change]').forEach((row) => { if (!before.has(row.dataset.change)) enterIn(row); });
+  }
+
+  /** Rows that have just been settled slide away together - or, when they're all that's left, the
+   *  whole yellow box folds away at once (rather than standing empty until the page refreshes). */
+  leaveRows(rows) {
+    const card = this.root.querySelector('#ct-changes .changes-card');
+    const left = card ? [...card.querySelectorAll('.change-row:not(.collapsing)')] : [];
+    if (card && left.length && left.every((row) => rows.includes(row))) return collapseOut(card, { slide: false });
+    return Promise.all(rows.map((row) => collapseOut(row)));
+  }
+
+  drawChanges(box) {
     const { changes = [], units = [] } = this.changes || {};
-    const alert = document.getElementById('tab-containers-alert');
-    alert.hidden = !changes.length;
-    alert.textContent = changes.length ? String(changes.length) : '';
-    alert.title = changes.length ? `${changes.length} change${changes.length === 1 ? '' : 's'} from Steam to review` : '';
-    if (!changes.length) { box.innerHTML = ''; return; }
     box.innerHTML = `<section class="card changes-card" aria-labelledby="changes-title">
       <div class="card-head">
         <div>
@@ -224,7 +264,7 @@ export class ContainersView {
     const change = this.changes.changes.find((c) => String(c.id) === row.dataset.change);
     const result = await api(`/changes/${row.dataset.change}`, { method: 'POST', body });
     forgetChangeDraft(row.dataset.key);
-    await leave(row);
+    await this.leaveRows([row]);
     const label = this.changes.units.find((u) => String(u.id) === unit)?.label;
     const what = `${number(change.quantity)} × ${change.name}`;
     const cur = this.changes.currency || state.currency;
@@ -244,7 +284,7 @@ export class ContainersView {
     const result = await api(`/changes/${row.dataset.change}`, { method: 'POST', body: { action: 'dismiss' } });
     const change = this.changes.changes.find((c) => String(c.id) === row.dataset.change);
     forgetChangeDraft(row.dataset.key);
-    await leave(row);
+    await this.leaveRows([row]);
     doneToast(`Dismissed ${change ? `${number(change.quantity)} × ${change.name}` : 'that change'} - it won't be asked about again.`, result.undo);
     await afterChange();
   }
@@ -267,7 +307,9 @@ export class ContainersView {
       return;
     }
     const result = await api('/changes/batch', { method: 'POST', body: { changes: chosen.map((c) => c.body) } });
-    for (const { row } of chosen) if (result.ids?.includes(Number(row.dataset.change))) forgetChangeDraft(row.dataset.key);
+    const done = chosen.filter(({ row }) => result.ids?.includes(Number(row.dataset.change))).map(({ row }) => row);
+    for (const row of done) forgetChangeDraft(row.dataset.key);
+    await this.leaveRows(done);
     for (const problem of result.problems || []) toast(problem, 'warn', 9000);
     const left = rows.length - result.applied;
     doneToast(`Confirmed ${number(result.applied)} change${result.applied === 1 ? '' : 's'}.${left ? ` ${number(left)} still need you to choose.` : ''}`, result.undo);
@@ -344,14 +386,6 @@ function rowChoice(row, { needPriceForNew = false } = {}) {
 }
 
 /** A confirmed / dismissed row slides out before the list is redrawn. */
-function leave(row) {
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve();
-  row.style.height = `${row.offsetHeight}px`;
-  void row.offsetHeight;                     // (start from its real height)
-  row.classList.add('leaving');
-  return new Promise((resolve) => setTimeout(resolve, 200));
-}
-
 function changeRowHtml(c, units, currency) {
   const meta = [
     c.exterior ? esc(c.exterior) : '',

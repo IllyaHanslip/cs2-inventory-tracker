@@ -216,6 +216,15 @@ select.input { padding-right: 28px; }
 .data-details { margin-top: 10px; color: var(--text-secondary); font-size: 13px; }
 .data-details summary { cursor: pointer; width: max-content; }
 .data-table-wrap { max-height: 260px; overflow: auto; margin-top: 8px; }
+/* "Show data table" under a chart: headers may wrap onto two lines and cells are tighter, so the
+   table fits its card instead of scrolling sideways (it still scrolls down through the days). */
+.data-table-wrap table.data th {
+  white-space: normal; padding: 8px 6px; font-size: 11px; letter-spacing: .02em; line-height: 1.25; vertical-align: bottom;
+}
+.data-table-wrap table.data td { padding: 6px; font-size: 12.5px; }
+.data-table-wrap table.data th:first-child, .data-table-wrap table.data td:first-child { padding-left: 10px; }
+.data-table-wrap table.data td:first-child { white-space: nowrap; }
+.data-table-wrap table.data th[data-sort] .th-label { padding-right: 12px; }
 
 /* ---------- Toolbar & chips ---------- */
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
@@ -340,7 +349,6 @@ table.data td .sub { white-space: normal; }   /* notes under a figure may wrap; 
   background: var(--surface-3); color: var(--text-secondary); max-width: 220px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.stack-badge { color: var(--accent-hover); font-weight: 700; }
 .tag-custom { font-size: 10.5px; color: var(--warning); font-weight: 600; margin-left: 4px; }
 
 /* ---------- Market comparison ---------- */
@@ -550,18 +558,88 @@ table.data tr.dim td { opacity: 0.6; }
 .sticker-summary dd { margin: 0; text-align: right; }
 
 /* ---------- Toasts ---------- */
-.toasts { position: fixed; right: 16px; bottom: 16px; z-index: 100; display: flex; flex-direction: column; gap: 8px; max-width: min(420px, calc(100vw - 32px)); }
-.toast {
-  background: var(--surface-3); border: 1px solid var(--border-strong); border-left: 3px solid var(--accent);
-  border-radius: var(--radius-sm); padding: 10px 14px; box-shadow: var(--shadow); color: var(--text-primary);
-  animation: reveal .25s ease forwards; opacity: 0; transform: translateY(10px);
+/* Above the Recent messages button in the corner. Each message has its own top margin (not a gap), so
+   one folding away (motion.js collapseOut) closes up smoothly. */
+.toasts {
+  position: fixed; right: 16px; bottom: 62px; z-index: 100; display: flex; flex-direction: column;
+  max-width: min(420px, calc(100vw - 32px)); transition: opacity .15s;
 }
+.toast {
+  position: relative; margin-top: 8px; overflow: hidden;
+  background: var(--surface-3); border: 1px solid var(--border-strong); border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm); padding: 10px 36px 12px 14px; box-shadow: var(--shadow); color: var(--text-primary);
+  animation: toast-in .25s ease;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(10px); } }
 .toast.error { border-left-color: var(--critical); }
 .toast.warn { border-left-color: var(--warning); }
 .toast.ok { border-left-color: var(--good); }
+/* × in the corner. */
+.toast-close {
+  position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text-muted); font-size: 18px; line-height: 1; cursor: pointer;
+}
+.toast-close:hover, .toast-close:focus-visible { background: var(--surface-2); color: var(--text-primary); }
+/* The bar along the bottom runs down to when the message goes; it waits while the message is
+   pointed at (or has the focus, or the page is hidden). */
+.toast-timer {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--accent); opacity: .6;
+  transform-origin: left; animation: toast-life var(--life, 15s) linear forwards;
+}
+.toast.ok .toast-timer { background: var(--good); }
+.toast.warn .toast-timer { background: var(--warning); }
+.toast.error .toast-timer { background: var(--critical); }
+.toast.paused .toast-timer { animation-play-state: paused; }
+@keyframes toast-life { to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .toast .toast-timer { animation-duration: var(--life, 15s) !important; }   /* a slow, steady bar is fine */
+}
+
+/* "2 entries" under a stacked row's quantity: one line, however narrow the column. */
+.stack-note { white-space: nowrap; }
+
+/* Count badges (motion.js setBadge): pop when the number changes, shrink away at zero. */
+.badge-pop { animation: badge-pop .34s cubic-bezier(.3, 1.6, .5, 1); }
+@keyframes badge-pop { from { transform: scale(.55); } }
+.badge-going { opacity: 0; transform: scale(.55); transition: opacity .18s ease-in, transform .18s ease-in; }
+
+/* ---------- Recent messages (messages.js): a button in the corner and the list it opens ---------- */
+.btn-icon.messages-btn {
+  position: fixed; right: 16px; bottom: 16px; z-index: 101; height: 36px; border-radius: 999px;
+  background: var(--surface-2); box-shadow: var(--shadow);
+}
+.btn-icon.messages-btn[aria-expanded="true"] { background: var(--surface-3); border-color: var(--accent); color: var(--text-primary); }
+.messages-panel {
+  position: fixed; right: 16px; bottom: 62px; z-index: 101; width: min(400px, calc(100vw - 32px));
+  max-height: min(70vh, 560px); display: flex; flex-direction: column;
+  background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow);
+  animation: toast-in .2s ease;
+}
+.messages-panel[hidden] { display: none; }
+.messages-panel.closing { opacity: 0; transform: translateY(8px); transition: opacity .15s ease-in, transform .15s ease-in; }
+.messages-head { display: flex; align-items: center; gap: 10px; padding: 12px 10px 10px 16px; border-bottom: 1px solid var(--border); }
+.messages-head h2 { flex: 1; margin: 0; font-size: 14px; }
+.messages-head .link-btn { margin-right: 30px; }   /* room for the close button's "Esc" just to its left */
+.messages-head h2:focus { outline: none; }
+.messages-list { list-style: none; margin: 0; padding: 6px 0; overflow-y: auto; overscroll-behavior: contain; }
+.message {
+  display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 10px; padding: 8px 16px; font-size: 13px;
+}
+.message + .message { border-top: 1px solid var(--border); }
+.message-dot { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--accent); }
+.message.ok .message-dot { background: var(--good); }
+.message.warn .message-dot { background: var(--warning); }
+.message.error .message-dot { background: var(--critical); }
+.message-text { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; }
+.message-when { color: var(--text-muted); font-size: 11.5px; }
+.message.unseen .message-text { font-weight: 600; }
+.messages-empty { padding: 18px 16px; color: var(--text-muted); font-size: 13px; }
+.messages-foot { margin: 0; padding: 8px 16px 12px; border-top: 1px solid var(--border); }
+/* While the list is open, new messages go straight into it rather than over it. */
+body.messages-open .toasts:not(.in-dialog) { opacity: 0; pointer-events: none; }
 
 /* ---------- Footer ---------- */
-.footer { max-width: 1640px; margin: 0 auto; padding: 0 24px 28px; color: var(--text-muted); font-size: 12px; }
+.footer { max-width: 1640px; margin: 0 auto; padding: 0 24px 72px; color: var(--text-muted); font-size: 12px; }  /* (clear of the Recent messages button) */
 .footer p { margin: 4px 0; }
 .footer a { color: var(--text-secondary); }
 
@@ -653,9 +731,57 @@ button.mover:hover { background: var(--surface-2); }
 
 /* ---------- Sell planner ---------- */
 .planner-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
-.planner-controls input[type="range"] { flex: 1 1 320px; accent-color: var(--accent); }
+/* Which items and markets the planner may use, above the amount. */
+.plan-filters { display: flex; flex-direction: column; gap: 10px; margin: 2px 0 16px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.plan-filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.plan-filter-row .filter-label { min-width: 60px; margin-right: 0; }
+.plan-filter-row .search { flex: 1 1 200px; max-width: 300px; }
+.chip:disabled { opacity: .45; cursor: not-allowed; }
+.chip:disabled:hover { color: var(--text-secondary); }
+.chip:disabled:active { transform: none; }
+/* The amount slider: a native range input over a drawn track. The track is inset by half the thumb
+   on each side, so a value's place on it is exactly under the thumb's centre. */
+.plan-bar { position: relative; flex: 1 1 320px; min-width: 200px; height: 28px; --thumb: 18px; }
+.plan-track {
+  position: absolute; left: calc(var(--thumb) / 2); right: calc(var(--thumb) / 2); top: 11px; height: 6px;
+  border-radius: 3px; background: var(--surface-3);
+}
+.plan-zone { position: absolute; top: 0; bottom: 0; }
+.plan-zone-sel { background: var(--accent); border-radius: 3px 0 0 3px; }                 /* selling */
+.plan-zone-avail { background: rgba(57, 135, 229, 0.32); }                                 /* could sell */
+.plan-zone-over {                                                                          /* asked for, can't */
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.30) 0 3px, rgba(255, 255, 255, 0.07) 3px 6px);
+}
+.plan-marker {
+  position: absolute; top: -6px; bottom: -6px; width: 3px; margin-left: -1.5px; border-radius: 2px;
+  background: var(--text-primary); box-shadow: 0 0 0 2px var(--surface-1);
+}
+.plan-bar input[type="range"] {
+  position: relative; z-index: 1; display: block; width: 100%; height: 28px; margin: 0;
+  background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer;
+}
+.plan-bar input[type="range"]::-webkit-slider-runnable-track { height: 28px; background: transparent; }
+.plan-bar input[type="range"]::-moz-range-track { height: 28px; background: transparent; }
+.plan-bar input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: var(--thumb); height: var(--thumb); margin-top: 5px; border-radius: 50%;
+  background: var(--accent); border: 3px solid var(--text-primary); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+.plan-bar input[type="range"]::-moz-range-thumb {
+  box-sizing: border-box; width: var(--thumb); height: var(--thumb); border-radius: 50%;
+  background: var(--accent); border: 3px solid var(--text-primary); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+.plan-bar input[type="range"]:focus { outline: none; }
+.plan-bar input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(57, 135, 229, 0.45); }
+.plan-bar input[type="range"]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 4px rgba(57, 135, 229, 0.45); }
+/* Asking for more than the chosen items can raise. */
+.plan-over {
+  margin-top: 12px; padding: 10px 12px; border: 1px solid rgba(250, 178, 25, 0.45); border-radius: var(--radius-sm);
+  background: rgba(250, 178, 25, 0.08); color: var(--text-secondary); font-size: 13px; line-height: 1.5;
+}
+.plan-over strong { color: var(--text-primary); }
 .plan-amount { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 13px; }
 .plan-amount .input { width: 130px; }
+.plan-amount select.input { width: auto; }
 #plan-markets { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px 20px; }
 .plan-market h3 { font-size: 14px; margin: 0 0 6px; }
 .plan-market ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text-secondary); }
@@ -767,11 +893,20 @@ table.data tbody td { transition: background-color .12s; }
 /* "Show data table" and similar: the content fades in. */
 details[open] > :not(summary) { animation: fade-in .18s ease-out; }
 @keyframes fade-in { from { opacity: 0; } }
-/* Changes from Steam syncs: a confirmed row slides away; a price box fades in. */
-.change-row.leaving {
-  opacity: 0; transform: translateX(16px); height: 0 !important; padding-top: 0; padding-bottom: 0;
-  overflow: hidden; transition: opacity .18s, transform .18s, height .2s .05s, padding .2s .05s;
+/* Leaving (motion.js collapseOut): fades, slides a little right, then folds its height away so what's
+   below closes the gap smoothly. Used by messages, changes from Steam syncs and their box. */
+.collapsing {
+  opacity: 0 !important; transform: translateX(18px); height: 0 !important; overflow: hidden;
+  padding-top: 0 !important; padding-bottom: 0 !important; margin-top: 0 !important; margin-bottom: 0 !important;
+  border-top-width: 0 !important; border-bottom-width: 0 !important; pointer-events: none;
+  transition: opacity .17s ease-in, transform .17s ease-in, height .22s ease .06s, padding .22s ease .06s,
+    margin .22s ease .06s, border-width .22s ease .06s;
 }
+.collapsing.no-slide { transform: none; }
+/* Arriving (motion.js enterIn). */
+.entering { animation: enter-in .24s cubic-bezier(.2, .8, .3, 1); }
+@keyframes enter-in { from { opacity: 0; transform: translateY(-6px); } }
+/* Changes from Steam syncs: a price box fades in. */
 .change-price:not([hidden]) input { animation: fade-in .15s ease-out; }
 /* Cards that are loading fade a little rather than snapping. */
 .card, .table-card { transition: opacity .2s; }
@@ -800,9 +935,15 @@ a.ignored-cell { cursor: pointer; }
 .deal-sub { font-size: 12.5px; color: var(--text-secondary); }
 tr.this-entry td { background: var(--accent-soft); }
 
-/* [ and ] at either end of the tabs: previous / next tab. */
-.tab-step { display: inline-flex; align-items: center; padding: 0 6px; cursor: pointer; opacity: .6; }
-.tab-step:hover { opacity: 1; }
+/* ← [ and ] → at either end of the tabs: previous / next tab (click them, or press the key). */
+.tab-step {
+  display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; cursor: pointer; opacity: .6;
+  color: var(--text-secondary); transition: opacity .15s, color .15s;
+}
+.tab-step svg { flex: none; transition: transform .15s; }
+.tab-step:hover { opacity: 1; color: var(--text-primary); }
+.tab-step[data-step="-1"]:hover svg { transform: translateX(-2px); }
+.tab-step[data-step="1"]:hover svg { transform: translateX(2px); }
 
 /* ---------- "Values from": all markets, or cash-out markets only ---------- */
 .basis-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }

@@ -4,8 +4,8 @@ rem  CS2 Inventory Intelligence - one-click launcher (used by the desktop shortc
 rem
 rem  * First run: creates a private Python environment (.venv) and installs the
 rem    packages from requirements.txt. Re-installs automatically if that file changes.
-rem  * Starts the local server in its own minimised window and opens the dashboard.
-rem    Close that window to stop the app.
+rem  * Starts the local server with the app's own small window (our icon on the taskbar)
+rem    and opens the dashboard. Close that window to stop the app.
 rem  * Extra arguments go to app.py, e.g.   launch.bat --demo
 rem ---------------------------------------------------------------------------
 setlocal
@@ -34,6 +34,16 @@ if errorlevel 1 (
     copy /y requirements.txt ".venv\requirements.installed" >nul
 )
 
+rem The app's own small window (with its icon) when this Python has Tk, as the python.org installer
+rem gives it by default; otherwise a minimised console window, as before.
+set "VENV_PYW=.venv\Scripts\pythonw.exe"
+if not exist "%VENV_PYW%" goto :console
+"%VENV_PY%" -c "import tkinter" >nul 2>nul
+if errorlevel 1 goto :console
+start "" "%VENV_PYW%" app.py --open --window %*
+exit /b 0
+
+:console
 start "CS2 Inventory Intelligence - close this window to stop" /min "%VENV_PY%" app.py --open %*
 exit /b 0
 

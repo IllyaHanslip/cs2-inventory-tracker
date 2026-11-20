@@ -23,6 +23,7 @@ export const SHORTCUTS = [
     [['N'], 'New container'],
     [['E'], 'Export this tab as a spreadsheet (inventory tabs and Profit & Loss)'],
     [['B'], 'Price alerts'],
+    [['H'], 'Recent messages: the ones that popped up in the corner in the last day'],
     [['W'], 'Values from: switch between All markets and Cash-out markets only'],
     [[','], 'Settings'],
     [[UNDO_KEY], 'Undo the last change: removing, moving, deleting, or confirming a change from a Steam sync'],
@@ -107,6 +108,7 @@ export function initShortcuts(on) {
       n: on.newContainer,
       e: on.export,
       b: on.alerts,
+      h: on.messages,
       w: on.basis,
       ',': on.settings,
     };

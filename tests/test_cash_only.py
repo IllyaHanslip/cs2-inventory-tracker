@@ -62,9 +62,10 @@ def test_cash_out_only_values_items_on_markets_you_can_withdraw_from(client):
     # Market comparison marks which markets pay out (the page ranks them by the switch).
     rows = client.get("/api/market-comparison?scope=total").get_json()
     assert {m["key"]: m["cash_out"] for m in rows["markets"]}["steam"] is False
-    # The Sell Planner's own "Count Steam Wallet sales" choice decides its markets, whatever the switch.
-    plan = client.get("/api/sell-plan?target=1&wallet=1").get_json()
-    assert plan["steps"][0]["markets"][0]["market"] == "steam"
+    # The Sell Planner chooses its own markets, whatever the switch: it's given every one, Steam included.
+    plan = client.get("/api/sell-candidates").get_json()
+    assert "steam" in [o["market"] for o in plan["lots"]["plain:Recoil Case"]["options"]]
+    assert {m["key"]: m["cash_out"] for m in plan["markets"]}["steam"] is False
     switch(client, False)
     assert items(client)["Recoil Case"]["sell_market"] == "steam"
 

@@ -49,6 +49,7 @@ class SteamMarket(BulkPriceList):
     currency = "USD"
     cache_minutes = FEED_CACHE_HOURS * 60
     revalidate = True   # ask "has it changed?" (ETag) instead of downloading it again
+    publisher = "CSGOTrader's daily price file (where they come from)"
     sales_from_prices = True   # its prices are averages of real sales
 
     def __init__(self) -> None:

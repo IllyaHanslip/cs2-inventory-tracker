@@ -3,6 +3,7 @@
 // gone off since you last looked. They're checked after every price refresh.
 
 import { api } from './api.js';
+import { collapseOut, setBadge } from './motion.js';
 import { esc, money, relTime, state, thumbHtml, toast } from './util.js';
 
 const $ = (selector) => document.querySelector(selector);
@@ -21,6 +22,7 @@ export function initAlerts({ openItem }) {
         openItemByName(button.dataset.name);
       } else if (button.dataset.act === 'alert-delete') {
         await api(`/alerts/${id}`, { method: 'DELETE' });
+        await collapseOut(button.closest('tr'));        // the deleted alert slides away first
         await openAlerts({ refreshOnly: true });
       } else if (button.dataset.act === 'alert-rearm') {
         await api(`/alerts/${id}/rearm`, { method: 'POST' });
@@ -35,9 +37,7 @@ export function initAlerts({ openItem }) {
 
 /** The count on the bell: alerts that went off since you last opened the list. */
 export function updateBell(count) {
-  const badge = $('#alerts-count');
-  badge.hidden = !count;
-  badge.textContent = count ? String(count) : '';
+  setBadge($('#alerts-count'), count);
   $('#alerts-btn').setAttribute('aria-label', count ? `Price alerts (${count} went off)` : 'Price alerts');
 }
 
@@ -140,6 +140,7 @@ export async function renderItemAlerts(box, item) {
   box.querySelectorAll('[data-alert-delete]').forEach((button) => button.addEventListener('click', async () => {
     try {
       await api(`/alerts/${button.dataset.alertDelete}`, { method: 'DELETE' });
+      await collapseOut(button.closest('li'));
       renderItemAlerts(box, item);
     } catch (error) {
       toast(error.message, 'error');

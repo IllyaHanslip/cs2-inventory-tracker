@@ -9,7 +9,8 @@ import { InventoryView } from './inventory.js';
 import { initShortcuts, markKeys, openShortcuts } from './keys.js';
 import { initLayout, updateStickyOffsets } from './layout.js';
 import { MarketsView } from './markets.js';
-import { initMotion } from './motion.js';
+import { initMessages, toggleMessages } from './messages.js';
+import { initMotion, setBadge } from './motion.js';
 import { PlannerView } from './planner.js';
 import { PnlView } from './pnl.js';
 import { onUndone, undoLast } from './undo.js';
@@ -53,6 +54,7 @@ const app = {
     });
     initMotion();
     initWheel();
+    initMessages();
     initLayout();
     await Promise.all([this.views.public.reload(), this.views.total.reload(), this.views.containers.reload(), this.firstLoad]);
     if (this.scrolledByHand) this.holdScroll = false;
@@ -88,9 +90,8 @@ const app = {
     ];
     if (s.fx.date) parts.push(`FX: ${s.fx.source || 'stored rates'}`);
     document.getElementById('status-line').textContent = parts.join(' · ');
-    const alert = document.getElementById('tab-containers-alert');
-    alert.hidden = !s.pending_changes;
-    alert.textContent = s.pending_changes ? String(s.pending_changes) : '';
+    setBadge(document.getElementById('tab-containers-alert'), s.pending_changes || 0,
+      s.pending_changes ? `${s.pending_changes} change${s.pending_changes === 1 ? '' : 's'} from Steam to review` : '');
     updateBell(s.alerts_unseen || 0);
     this.renderBasis();
   },
@@ -286,6 +287,7 @@ const app = {
         else toast('Export works on Public Inventory, Total Portfolio and Profit & Loss.', 'info', 4000);
       },
       alerts: () => openAlerts(),
+      messages: () => toggleMessages(),
       settings: () => dialogs.openSettings(),
       undo: () => undoLast(),
       help: () => openShortcuts(),

@@ -79,7 +79,7 @@ def test_downloads_again_only_when_the_file_has_changed(app, monkeypatch):
 def test_says_so_when_the_file_stops_being_updated(app, monkeypatch):
     source, _ = serve(monkeypatch, FakeResponse(200, FEED, {"ETag": '"v1"', "Last-Modified": published(days_ago=5)}))
     source.fetch_bulk({"Recoil Case"})
-    assert source.note and "5 days" in source.note
+    assert source.note and "5 days" in source.note and "CSGOTrader" in source.note   # says whose file it is
 
 
 def test_unreachable_file_keeps_the_last_prices(app, monkeypatch):

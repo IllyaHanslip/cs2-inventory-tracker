@@ -1,5 +1,7 @@
 // Shared helpers: escaping, formatting, storage, toasts.
 
+import { collapseOut } from './motion.js';
+
 export const state = {
   status: null,      // /api/status payload
   currency: 'USD',   // base currency
@@ -157,12 +159,44 @@ function toastArea() {
   return area;
 }
 
-/** A message in the corner. ``action`` adds a button to it ({ label, key, run }); the message
- *  stays while the pointer is over it. Returns the message element. */
-export function toast(message, kind = 'info', timeout = 6000, { action = null } = {}) {
+// How long a message stays (ms): a bar along its bottom runs down to when it goes.
+const TOAST_LIFE = { ok: 15000, info: 15000, warn: 20000, error: 20000 };
+const TOAST_MAX = 5;            // more than this on screen at once: the oldest goes early
+const toastTimers = new WeakMap();
+let pageHidden = typeof document !== 'undefined' && document.hidden;
+// Leaving the page (reloading, closing the tab): the requests it was still making get cut off, which
+// would read as "Cannot reach the local server" - those aren't real problems, so they aren't shown
+// or kept in Recent messages.
+let pageLeaving = false;
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => { pageLeaving = true; });
+  window.addEventListener('pageshow', () => { pageLeaving = false; });   // (back from the browser's cache)
+}
+
+/** A message in the corner (``kind``: ok, info, warn or error). It stays 15 seconds (20 for warnings
+ *  and problems, or ``timeout`` if that's longer), with a bar along its bottom running down to when
+ *  it goes. Pointing at it, tabbing into it, or leaving the browser tab pauses it; × closes it. The
+ *  same message again starts its time over rather than showing twice. ``action`` adds a button
+ *  ({ label, key, run }). Every message is kept in Recent messages too (messages.js). Returns the
+ *  message element (close it early with dismissToast), or null while the page is being left. */
+export function toast(message, kind = 'info', timeout = 0, { action = null } = {}) {
+  if (pageLeaving) return null;
+  const id = recordMessage(kind, message);
   const box = toastArea();
+  const key = `${kind}|${message}`;
+  if (!action) {
+    const same = [...box.querySelectorAll('.toast:not(.collapsing)')].find((el) => el.dataset.key === key);
+    if (same && toastTimers.has(same)) {
+      same.dataset.message = id;
+      toastTimers.get(same).restart();
+      return same;
+    }
+  }
+  const life = Math.max(TOAST_LIFE[kind] || TOAST_LIFE.info, timeout || 0);
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
+  el.dataset.key = key;
+  el.dataset.message = id;
   el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
   const text = document.createElement('span');
   text.className = 'toast-text';
@@ -174,14 +208,132 @@ export function toast(message, kind = 'info', timeout = 6000, { action = null } 
     button.className = 'toast-action';
     button.innerHTML = `${esc(action.label)}${action.key ? ` <kbd class="kbd">${esc(action.key)}</kbd>` : ''}`;
     if (action.key) button.setAttribute('aria-keyshortcuts', action.key.replace('Ctrl+', 'Control+').replace('⌘', 'Meta+'));
-    button.addEventListener('click', () => { el.remove(); action.run(); });
+    button.addEventListener('click', () => { dismissToast(el); action.run(); });
     el.append(button);
   }
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'toast-close';
+  close.setAttribute('aria-label', 'Close this message');
+  close.title = 'Close';
+  close.textContent = '×';
+  close.addEventListener('click', () => { markMessageSeen(el.dataset.message); dismissToast(el); });
+  const bar = document.createElement('span');
+  bar.className = 'toast-timer';
+  bar.setAttribute('aria-hidden', 'true');
+  el.append(close, bar);
   box.append(el);
-  let timer = setTimeout(() => el.remove(), timeout);
-  el.addEventListener('mouseenter', () => clearTimeout(timer));
-  el.addEventListener('mouseleave', () => { clearTimeout(timer); timer = setTimeout(() => el.remove(), 3000); });
+  toastTimers.set(el, toastTimer(el, life));
+  const showing = [...box.querySelectorAll('.toast:not(.collapsing)')];
+  showing.slice(0, Math.max(0, showing.length - TOAST_MAX)).forEach((old) => dismissToast(old));
   return el;
+}
+
+/** Runs a message's time down, paused while it's pointed at, has the focus, or the page is hidden. */
+function toastTimer(el, life) {
+  let remaining = life;
+  let started = 0;
+  let timer = null;
+  let hover = false;
+  let focus = false;
+  const bar = el.querySelector('.toast-timer');
+  const held = () => hover || focus || pageHidden;
+  const stop = () => {
+    if (timer === null) return;
+    clearTimeout(timer);
+    timer = null;
+    remaining = Math.max(0, remaining - (performance.now() - started));
+  };
+  const sync = () => {
+    if (held()) {
+      stop();
+      el.classList.add('paused');
+    } else if (timer === null) {
+      started = performance.now();
+      timer = setTimeout(() => dismissToast(el), remaining);
+      el.classList.remove('paused');
+    }
+  };
+  bar.style.setProperty('--life', `${life}ms`);
+  el.addEventListener('pointerenter', () => { hover = true; sync(); });
+  el.addEventListener('pointerleave', () => { hover = false; sync(); });
+  el.addEventListener('focusin', () => { focus = true; sync(); });
+  el.addEventListener('focusout', (event) => { focus = el.contains(event.relatedTarget); sync(); });
+  sync();
+  return {
+    sync,
+    stop,
+    restart() {
+      stop();
+      remaining = life;
+      bar.style.animation = 'none';            // run the bar from full again
+      void bar.offsetWidth;
+      bar.style.animation = '';
+      sync();
+    },
+  };
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    pageHidden = document.hidden;
+    document.querySelectorAll('.toast').forEach((el) => toastTimers.get(el)?.sync());
+  });
+}
+
+/** Close a message: it slides away and folds up, and the ones above close the gap. */
+export function dismissToast(el) {
+  if (!el || !el.isConnected || el.classList.contains('collapsing')) return;
+  toastTimers.get(el)?.stop();
+  collapseOut(el).then(() => el.remove());
+}
+
+// ---------------------------------------------------------------------------
+// Recent messages: every message from the corner, kept in this browser for a day (messages.js
+// shows them). The same message again moves to the top and counts how many times it came.
+// ---------------------------------------------------------------------------
+export const MESSAGE_HOURS = 24;
+const MESSAGE_MAX = 50;
+
+export function messageHistory() {
+  const since = Date.now() - MESSAGE_HOURS * 3600 * 1000;
+  const list = store.get('messages', []);
+  return Array.isArray(list) ? list.filter((m) => m && typeof m.text === 'string' && m.at >= since) : [];
+}
+
+function saveMessages(list) {
+  store.set('messages', list.slice(0, MESSAGE_MAX));
+  if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('cs2t:messages'));
+}
+
+function recordMessage(kind, text) {
+  const list = messageHistory();
+  const at = list.findIndex((m) => m.kind === kind && m.text === text);
+  const count = at >= 0 ? (list[at].count || 1) + 1 : 1;
+  if (at >= 0) list.splice(at, 1);
+  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  list.unshift({ id, kind, text, at: Date.now(), count, seen: false });
+  saveMessages(list);
+  return id;
+}
+
+/** A message closed with × has clearly been read: it doesn't count as missed. */
+export function markMessageSeen(id) {
+  const list = messageHistory();
+  const entry = list.find((m) => m.id === id);
+  if (entry && !entry.seen) {
+    entry.seen = true;
+    saveMessages(list);
+  }
+}
+
+export function markAllMessagesSeen() {
+  const list = messageHistory();
+  if (list.some((m) => !m.seen)) saveMessages(list.map((m) => ({ ...m, seen: true })));
+}
+
+export function clearMessages() {
+  saveMessages([]);
 }
 
 const CATEGORY_ICONS = {
@@ -207,6 +359,15 @@ export function thumbHtml(item, size = '') {
  *  "container" category but can't be opened, so this, not is_container, decides "Open". */
 export function isStorage(item) {
   return Boolean(item.is_storage || item.contents_count > 0);
+}
+
+/** The group an item falls in for "Group by" (and the Sell Planner's "Filter by"): its event,
+ *  collection, type, weapon, rarity, wear ("exterior") or container. */
+export function groupOf(item, by) {
+  if (by === 'exterior') return item.exterior || 'No wear';
+  if (by === 'container') return item.container_name || (isStorage(item) ? 'Containers' : 'Not in a container');
+  const value = item.tags?.[by];
+  return value || { event: 'No event', collection: 'No collection', weapon: 'Not a weapon', rarity: 'Unknown rarity' }[by] || 'Other';
 }
 
 export const CATEGORY_FILTERS = [

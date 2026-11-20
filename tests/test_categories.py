@@ -35,6 +35,33 @@ def test_cases_and_capsules_apart_from_storage_units(client):
     assert client.get("/api/status").get_json()["categories"]["container"] == "Case / Capsule"
 
 
+def test_chip_counts_follow_the_search(client):
+    """A chip's count is what picking it shows, with the search as it is."""
+    setup(client)
+    counts = client.get("/api/items?scope=total&q=capsule").get_json()["counts"]
+    assert counts.get("container") == 1 and not counts.get("storage") and counts.get("in_container") == 1
+    assert names(client, "storage&q=capsule") == []                     # ...so 0 here isn't a surprise
+    hidden = client.get("/api/items?scope=total&q=capsule&contents=hide").get_json()["counts"]
+    assert hidden.get("container") == 1          # a search finds stored items even with them hidden
+    assert client.get("/api/items?scope=total").get_json()["counts"]["storage"] == 1   # no search: all
+
+
+def test_terminals_added_before_the_rule_are_filed_again_once(client):
+    """Items added by hand were filed by name; a name the app has since learned moves them, once."""
+    from backend import db
+
+    post(client, "/api/items", {"market_hash_name": "Sealed Genesis Terminal", "quantity": 3})
+    item = client.get("/api/items?scope=total").get_json()["items"][0]
+    assert item["category"] == "container"                               # new ones: straight away
+    db.execute("UPDATE items SET category = 'other'")                     # as saved by an older version
+    db.execute("DELETE FROM settings WHERE key = 'category_rules'")
+    db.init_db()
+    assert db.query_one("SELECT category FROM items")["category"] == "container"
+    db.execute("UPDATE items SET category = 'other'")                     # chosen by hand afterwards: kept
+    db.init_db()
+    assert db.query_one("SELECT category FROM items")["category"] == "other"
+
+
 def test_one_item_by_name(client):
     unit = setup(client)
     item = client.get("/api/item?name=Shanghai 2024 Legends Sticker Capsule&scope=total").get_json()["item"]

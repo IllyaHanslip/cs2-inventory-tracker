@@ -3,7 +3,7 @@
 // Undo button. Ctrl+Z does the same until something else changes (the server then refuses).
 
 import { api } from './api.js';
-import { toast } from './util.js';
+import { dismissToast, toast } from './util.js';
 
 export const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 export const UNDO_KEY = IS_MAC ? '⌘Z' : 'Ctrl+Z';
@@ -17,12 +17,12 @@ export function onUndone(fn) {
 }
 
 /** "Done" message, with an Undo button when the server said the change can be undone. */
-export function doneToast(message, token, timeout = 10000) {
+export function doneToast(message, token, timeout = 0) {
   if (!token) {
     toast(message, 'ok');
     return;
   }
-  last?.el?.remove();         // only the newest change can be undone
+  dismissToast(last?.el);     // only the newest change can be undone
   const el = toast(message, 'ok', timeout, { action: { label: 'Undo', key: UNDO_KEY, run: () => undoLast() } });
   last = { token, el };
 }
@@ -38,7 +38,7 @@ export async function undoLast() {
   }
   const { token, el } = last;
   last = null;
-  el?.remove();
+  dismissToast(el);
   try {
     await api(`/undo/${token}`, { method: 'POST' });
     toast('Undone - everything is back as it was.', 'ok', 5000);

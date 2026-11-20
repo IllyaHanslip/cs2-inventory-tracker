@@ -2,7 +2,49 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.5.2
+### What's new in v1.5.3
+
+- **Its own window and icon**: the app now opens a small window of its own, with its icon on the taskbar,
+  instead of a console window (which Windows 11 showed as Windows Terminal). It says what the app is doing
+  (prices updated 5 minutes ago, or a refresh's progress) and has **Open dashboard** and **Stop** buttons.
+  Closing it stops the app, as before. The scheduled background update no longer flashes a window up either.
+- **Choose what the Sell Planner sells**: filters above the slider, the same as your inventory's - search,
+  kinds of item, Filter by event, collection, type, weapon, rarity, wear or container, and stored items - plus
+  the markets to sell on. Markets you can't withdraw money from (Steam, BUFF163) are listed too, switched on
+  with their own tick box (replacing "Count Steam Wallet sales").
+- **The slider shows what your filters can raise**: it always runs to everything you could sell on the
+  chosen markets; the part your filtered items can raise is blue, with a marker where it ends (drag close to
+  it and it snaps there). The amount you chose stays when you change filters: if it's more than they can
+  raise, the slider stays put, the gap is striped, and a note says the most you can get with those filters.
+- The Sell Planner answers instantly as you drag or change anything, and works fully in the live demo.
+- **Messages last longer and can't slip by**: messages in the corner now stay 15 seconds (20 for warnings
+  and problems), with a bar along the bottom running down to when they go, and × to close one. Pointing at a
+  message, or switching to another browser tab, pauses it; the same message again starts over rather than
+  showing twice; they slide away when they go.
+- **Recent messages**: the button in the bottom corner (or press H) lists every message from the last day,
+  newest first, with how long ago each came ("25 seconds ago", "3 hours ago"). Its count shows warnings you
+  haven't seen yet. Messages are kept for 24 hours in your browser.
+- **Changes from Steam syncs slide away** when you confirm or dismiss them - one at a time or with "Confirm all
+  as set" - or when a later sync settles them; new ones drop in, and the yellow box folds away once the last
+  one goes (and comes back the same way after Undo). Counts on the Containers tab and the price-alerts bell
+  pop when they change and shrink away at zero; deleted price alerts and Profit & Loss entries slide away too.
+- **CS2's terminals are cases**: "Sealed Genesis Terminal", "Sealed Dead Hand Terminal" and the like now count
+  as Cases & Capsules, including ones you added by hand before (moved over once, when you update).
+- **Category counts follow the search**: with something typed in the search box, each category button's
+  count is what you'd see picking it - so a button no longer says 8 and then shows nothing.
+- A stacked row of separate entries you added (say, ones you typed in and ones a Steam sync moved in) says
+  "2 entries" under its quantity, instead of a bare "×".
+- The "Steam Market prices haven't changed" note now says they come from CSGOTrader's daily price file, and
+  that the app keeps checking for a newer one.
+- **"Show data table" fits its box**: under Portfolio mix and the other charts, the table's headers wrap and
+  its cells are tighter, so it no longer scrolls sideways (on a phone-sized window it still can).
+- **← [ and ] →** at the ends of the tabs: arrows show which way each goes (click them, or press [ or ]).
+- **The Sell Planner undercuts for you**: it now assumes you list each copy a little under the market's price
+  so yours sell first - 2% by default, or choose none, 1, 3, 5 or 10% ("Undercut by"), always at least 1p/1c
+  under - and works out fees and what you raise from that lower price. The listing guide says what to list
+  each item at as well as what you get.
+
+### v1.5.2
 
 - **Cases & capsules apart from storage units**: they're now separate categories ("Cases & Capsules" and
   "Storage Units") in the filters, counts and the Category column.

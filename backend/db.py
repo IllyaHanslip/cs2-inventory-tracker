@@ -279,6 +279,23 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "cash_value" not in snapshot_columns:
         # The cash-out total (see history.fill_cash_values for days saved before it was kept).
         conn.execute("ALTER TABLE portfolio_snapshots ADD COLUMN cash_value REAL")
+    _refile_categories(conn)
+
+
+def _refile_categories(conn: sqlite3.Connection) -> None:
+    """Items added by hand are filed by their name when they're added. When the app learns a new
+    kind of name (CS2's "Sealed … Terminal"s are containers), the ones it had put under Other are
+    filed again - once per version of the rules, so a category you choose yourself afterwards sticks."""
+    from .classify import CATEGORY_RULES, categorize
+
+    done = conn.execute("SELECT value FROM settings WHERE key = 'category_rules'").fetchone()
+    if done is not None and int(done[0]) >= CATEGORY_RULES:
+        return
+    rows = conn.execute("SELECT id, market_hash_name FROM items WHERE source = 'manual' AND category = 'other'").fetchall()
+    fixes = [(category, item_id) for item_id, name in rows if (category := categorize(name)) != "other"]
+    conn.executemany("UPDATE items SET category = ? WHERE id = ?", fixes)
+    conn.execute("INSERT INTO settings (key, value) VALUES ('category_rules', ?) "
+                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(CATEGORY_RULES),))
 
 
 def query(sql: str, params: tuple | list = ()) -> list[dict[str, Any]]:

@@ -6,7 +6,7 @@ import { api, exportUrl } from './api.js';
 import { chartsAvailable, dataTableHtml, renderLineChart } from './charts.js';
 import { confirmDialog, openItem, showInItemWindow, suggestNames } from './dialogs.js';
 import { markClean, protectForm } from './guard.js';
-import { steady } from './motion.js';
+import { collapseOut, steady } from './motion.js';
 import { applySortWithin } from './sortable.js';
 import { doneToast } from './undo.js';
 import { deltaHtml, esc, longDate, money, number, store, thumbHtml, toast } from './util.js';
@@ -285,6 +285,7 @@ export class PnlView {
     if (!ok) return;
     try {
       const result = await api(`/ledger/${entry.id}`, { method: 'DELETE' });
+      await collapseOut(this.root.querySelector(`tr.row[data-id="${entry.id}"]`));   // slides away first
       doneToast(`Deleted the entry for ${number(entry.quantity)} × ${entry.name}.`, result.undo);
       await this.reload();
     } catch (error) {

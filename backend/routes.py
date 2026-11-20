@@ -207,19 +207,23 @@ def list_items():
     frame = portfolio.build_frame(valuator, scope)
     categories = [c for c in request.args.get("category", "").split(",") if c]
     include_contents = request.args.get("contents", "show") != "hide"
+    search = request.args.get("q", "")
     filtered = portfolio.apply_filters(
         frame,
         categories=categories,
-        search=request.args.get("q", ""),
+        search=search,
         sort=request.args.get("sort", "value"),
         order=request.args.get("order", "desc"),
         include_contents=include_contents,
     )
+    # Each category chip's count: how many you'd see picking it, with the search as it is.
     counts: dict[str, int] = {}
     if not frame.empty:
-        listed = frame if include_contents else frame[frame["container_id"].isna()]
+        searched = portfolio.apply_filters(frame, search=search) if search.strip() else frame
+        # (A search finds stored items even with "Show stored items" off, as the list does.)
+        listed = searched if include_contents or search.strip() else searched[searched["container_id"].isna()]
         counts = {k: int(v) for k, v in portfolio.filter_category(listed).value_counts().items()}
-        counts["in_container"] = int(frame["container_id"].notna().sum())
+        counts["in_container"] = int(searched["container_id"].notna().sum())
     return jsonify(
         scope=scope,
         summary=portfolio.summarize(frame, valuator, scope),
@@ -859,13 +863,10 @@ def portfolio_history():
                                              cash_only=bool(prefs.get("cash_only"))))
 
 
-@bp.get("/sell-plan")
-def sell_plan():
-    """Which items to sell, how many and where, to raise ``target`` (after fees). ``wallet=1`` also
-    counts Steam Wallet sales; ``keep`` is a comma-separated list of item ids never to sell."""
-    target = _number(request.args.get("target"), "Target", 0, 10_000_000) or 0.0
-    keep = {int(x) for x in (request.args.get("keep") or "").split(",") if x.strip().isdigit()}
-    return jsonify(planner.plan(target, Valuator(), include_wallet=request.args.get("wallet") == "1", keep=keep))
+@bp.get("/sell-candidates")
+def sell_candidates():
+    """What the Sell Planner plans from, in the page (static/js/plan-calc.js)."""
+    return jsonify(planner.candidates(Valuator()))
 
 
 @bp.get("/insights")

@@ -8,7 +8,8 @@ import * as dialogs from './dialogs.js';
 import { MarketFilter, availableMarkets, bestToSell, bulkNote, noCashLabel, sellHtml, walletOnlyHtml } from './market-filter.js';
 import { applySort, applySortWithin } from './sortable.js';
 import {
-  CATEGORY_FILTERS, cashOnly, debounce, deltaHtml, esc, floatText, isStorage, money, number, state, store, thumbHtml, toast,
+  CATEGORY_FILTERS, cashOnly, debounce, deltaHtml, esc, floatText, groupOf, isStorage, money, number, state, store, thumbHtml,
+  toast,
 } from './util.js';
 
 /** % change along daily values, leaving out each day the number of items changed: adding 50
@@ -285,11 +286,7 @@ export class InventoryView {
 
   /** The group an item falls in, for the "Group by" choice. */
   groupOf(item) {
-    const by = this.state.groupBy;
-    if (by === 'exterior') return item.exterior || 'No wear';
-    if (by === 'container') return item.container_name || (isStorage(item) ? 'Containers' : 'Not in a container');
-    const value = item.tags?.[by];
-    return value || { event: 'No event', collection: 'No collection', weapon: 'Not a weapon', rarity: 'Unknown rarity' }[by] || 'Other';
+    return groupOf(item, this.state.groupBy);
   }
 
   /** Value as shown in the Value column (a container's own value when its contents are listed too). */
@@ -390,7 +387,12 @@ export class InventoryView {
       ? `<span class="badge ${item.source === 'steam' ? 'badge-steam' : ''}">${item.source === 'steam' ? 'Steam' : 'Manual'}</span>`
       : '';
     const stacked = item.stack_ids && item.stack_ids.length > 1;
-    const qty = `${stacked ? '<span class="stack-badge">×</span>' : ''}${number(item.quantity)}`;
+    // A row stacking separate entries you added (say, ones you typed in and ones a Steam sync moved
+    // in) says how many entries, since they're changed or removed one at a time. (Steam copies are
+    // always one entry each, so for them it would say nothing new.)
+    const qty = stacked && item.source === 'manual'
+      ? `${number(item.quantity)}<div class="sub stack-note" title="${esc(`${item.stack_ids.length} separate entries of this item, stacked into one row. Untick "Stack duplicates" to see, change or remove them one at a time.`)}">${number(item.stack_ids.length)} entries</div>`
+      : number(item.quantity);
     // When stored items are listed separately, a container row shows only its own value
     // (so nothing looks counted twice); otherwise it shows its value including contents.
     let value = money(item.display_value);

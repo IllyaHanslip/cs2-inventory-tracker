@@ -32,6 +32,9 @@ def test_parse_money(text, expected):
     ("Sticker Slab | IEM (Gold) | Rio 2022", "sticker_slab"),
     ("Patch | Phoenix", "other"),
     ("Sir Bloody Miami Darryl | The Professionals", "other"),
+    ("Sealed Genesis Terminal", "container"),          # CS2's terminals are containers too
+    ("Sealed Dead Hand Terminal", "container"),
+    ("Sealed Graffiti | Terminal", "other"),           # ...but not graffiti that happens to say it
 ])
 def test_categorize(name, expected):
     assert categorize(name) == expected

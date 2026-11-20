@@ -25,7 +25,11 @@ jobs:
       - name: Build the app
         run: pyinstaller packaging/cs2-inventory.spec --noconfirm
       - name: Check it starts
-        run: dist/CS2-Inventory-Intelligence.exe --help
+        # A windowed app: wait for it and check how it finished (the shell wouldn't wait by itself).
+        shell: pwsh
+        run: |
+          $run = Start-Process dist/CS2-Inventory-Intelligence.exe -ArgumentList '--help' -Wait -PassThru
+          if ($run.ExitCode -ne 0) { throw "The app exited with code $($run.ExitCode)" }
       - name: Publish the release
         if: startsWith(github.ref, 'refs/tags/')
         env:

@@ -28,6 +28,7 @@ class BulkPriceList(MarketSource):
     cache_minutes: float | None = None   # how long a downloaded list is used (default BULK_CACHE_MINUTES)
     revalidate = False   # after that, ask whether it has changed (ETag / Last-Modified) before downloading it
     STALE_DAYS = 3       # a list that hasn't changed for this long is reported as possibly out of date
+    publisher: str | None = None   # who publishes the list, when it isn't the market itself (named in that note)
 
     def __init__(self) -> None:
         self.client = RateLimitedClient(self.label, min_interval=30.0, base_backoff=60, max_retries=1)
@@ -91,7 +92,9 @@ class BulkPriceList(MarketSource):
         except (TypeError, ValueError):
             return
         if days >= self.STALE_DAYS:
-            self.note = (f"{self.label} prices haven't been updated for {days} days, so they may be out of date.")
+            where = f" in {self.publisher}" if self.publisher else ""
+            self.note = (f"{self.label} prices haven't changed for {days} days{where}, so they may be out of date. "
+                         "The app checks for a newer one every few hours.")
 
     def _quotes(self, rows: list[list], names: set[str]) -> dict[str, Quote]:
         return {

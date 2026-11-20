@@ -69,6 +69,61 @@ function setupTabs(tabs) {
   place();
 }
 
+const REDUCED = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Something leaving: it fades (sliding a little right, unless ``slide`` is false), then folds its
+ *  height away so whatever is below closes the gap smoothly. Resolves when it's gone from view; the
+ *  caller removes or re-renders it. Instant when the system asks for reduced motion. */
+export function collapseOut(el, { slide = true } = {}) {
+  if (!el || !el.isConnected || el.classList.contains('collapsing')) return Promise.resolve();
+  if (REDUCED()) return Promise.resolve();
+  el.style.height = `${el.offsetHeight}px`;
+  void el.offsetHeight;                      // (start from its real height)
+  el.classList.add('collapsing');
+  if (!slide) el.classList.add('no-slide');
+  return new Promise((resolve) => setTimeout(resolve, 290));
+}
+
+/** A count badge (the Containers tab's changes, the price-alerts bell): it pops when its number
+ *  changes and shrinks away when there's nothing left to count. */
+export function setBadge(el, count, title = '') {
+  if (!el) return;
+  el.title = title;
+  const turn = (el.dataset.badgeTurn = String(Number(el.dataset.badgeTurn || 0) + 1));
+  if (!count) {
+    if (el.hidden) return;
+    if (REDUCED()) { el.hidden = true; el.textContent = ''; return; }
+    el.classList.remove('badge-pop');
+    el.classList.add('badge-going');
+    setTimeout(() => {
+      if (el.dataset.badgeTurn !== turn) return;     // a number came back meanwhile
+      el.classList.remove('badge-going');
+      el.hidden = true;
+      el.textContent = '';
+    }, 200);
+    return;
+  }
+  const text = String(count);
+  const changed = el.hidden || el.textContent !== text;
+  el.classList.remove('badge-going');
+  el.hidden = false;
+  el.textContent = text;
+  if (changed && !REDUCED()) {
+    el.classList.remove('badge-pop');
+    void el.offsetWidth;
+    el.classList.add('badge-pop');
+  }
+}
+
+/** Something arriving: a quick fade and drop into place. */
+export function enterIn(el) {
+  if (!el || REDUCED()) return;
+  el.classList.remove('entering');
+  void el.offsetWidth;                       // (restart the animation)
+  el.classList.add('entering');
+  el.addEventListener('animationend', () => el.classList.remove('entering'), { once: true });
+}
+
 /** Keep a box at the tallest it has been, so switching a toggle or filter that makes it shorter
  *  doesn't pull everything below it up (and back down again on the next click). Reset when the
  *  window is resized. Call after re-rendering the box. */
