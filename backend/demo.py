@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from config import Config
 
-from . import db, settings
+from . import db, sanity, settings
 from .classify import applied_hash_name, categorize, exterior_from_name
 from .valuation import soft_cap
 
@@ -364,7 +364,7 @@ def seed() -> None:
     # (The cash-out total - only markets you can withdraw from - is scaled the same way.)
     db.executemany(
         "INSERT OR REPLACE INTO portfolio_snapshots (snapshot_date, scope, total_value, item_count, currency, "
-        "market_value, basis, screened, cash_value) VALUES (?, ?, ?, ?, 'USD', ?, 'after_fees', 1, ?)",
+        f"market_value, basis, screened, cash_value) VALUES (?, ?, ?, ?, 'USD', ?, 'after_fees', {sanity.RULES}, ?)",
         [(day, scope, round(value * live[scope] / last_market[scope], 2), count, round(value, 2),
           round(value * live_cash[scope] / last_market[scope], 2))
          for day, scope, value, count in portfolio_rows if last_market.get(scope)],

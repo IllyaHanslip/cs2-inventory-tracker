@@ -288,6 +288,7 @@ def background_update() -> dict[str, Any]:
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(str(time.time()), encoding="utf-8")
     try:
+        _notify_start("daily")
         images.backfill()
         job = Job("daily", "Daily update")
         result = daily_job(job)
@@ -297,8 +298,38 @@ def background_update() -> dict[str, Any]:
         marker.unlink(missing_ok=True)
 
 
+def _notify_start(kind: str) -> None:
+    """A Windows notification that an update the app started by itself is under way (the
+    scheduled background update, or the open app's own): another one says when it's done."""
+    from . import notify, settings
+
+    try:
+        if kind == "daily":
+            title, what = "Updating your CS2 inventory", "today's prices and exchange rates"
+            if Config.AUTO_SYNC_STEAM and settings.get("steam_id"):
+                what += ", and re-reading your Steam inventory"
+        else:
+            title, what = "Refreshing your CS2 prices", "the latest prices and exchange rates"
+        notify.toast(title, [f"Getting {what}.", "You'll get another notification when it's done."])
+    except Exception:  # noqa: BLE001 - a notification must never stop the update
+        log.exception("Couldn't show the update notification")
+
+
+def automatic(kind: str, fn: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """A job the open app starts by itself (not your Refresh button): a notification when it
+    starts and when it's done, as the scheduled background update gives."""
+    def run(job: Job, *args, **kwargs) -> dict[str, Any]:
+        _notify_start(kind)
+        result = fn(job, *args, **kwargs)
+        if not job.cancelled:
+            _notify_update(bool((result or {}).get("complete", True)))
+        return result
+
+    return run
+
+
 def _notify_update(complete: bool) -> None:
-    """A Windows notification saying what the background update found (or that it'll try again)."""
+    """A Windows notification saying what an automatic update found (or that it'll try again)."""
     from . import insights, notify, portfolio
     from .valuation import Valuator
 
@@ -355,14 +386,20 @@ def start_scheduler() -> None:
             except Exception:  # noqa: BLE001
                 log.exception("Finding item pictures failed")
             try:
+                from . import currency
+
+                currency.refresh_rates()   # exchange rates kept current between price updates too
+            except Exception:  # noqa: BLE001
+                log.exception("Checking exchange rates failed")
+            try:
                 action = scheduled_action()
                 if action:
                     kind, why = action
                     log.info("Starting the %s: %s", "daily update" if kind == "daily" else "price refresh", why)
                     if kind == "daily":
-                        jobs.start("daily", "Daily update", daily_job)
+                        jobs.start("daily", "Daily update", automatic("daily", daily_job))
                     else:
-                        jobs.start("refresh", "Price refresh", refresh_job)
+                        jobs.start("refresh", "Price refresh", automatic("refresh", refresh_job))
             except JobBusy:
                 pass
             except Exception:  # noqa: BLE001

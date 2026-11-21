@@ -518,37 +518,39 @@ def market_comparison(valuator, scope: str = "total") -> dict[str, Any]:
         steam_saving = matrix["steam"] - best_price if "steam" in matrix.columns else pd.Series(dtype=float)
     else:
         best_price = best_market = spread = steam_saving = pd.Series(dtype=float)
-    details = {name: grp for name, grp in quotes.groupby("market_hash_name")}
+    # Plain dicts: looking each item up in pandas objects one at a time costs more than the rest.
+    best_price, best_market, spread, steam_saving = (s.to_dict() for s in (best_price, best_market, spread, steam_saving))
+    cash_out = {m: valuator.cash_out(m) for m in quotes["market"].unique()} if not quotes.empty else {}
+    details: dict[str, dict[str, dict[str, Any]]] = {}
+    for q in quotes[["market_hash_name", "market", "price_base", "price", "currency", "url", "volume",
+                     "fetched_at"]].to_dict("records"):
+        volume = _py(q["volume"])
+        details.setdefault(q["market_hash_name"], {})[q["market"]] = {
+            "price_base": float(q["price_base"]),
+            "price": float(q["price"]),
+            "currency": q["currency"],
+            "url": q["url"],
+            "volume": int(volume) if volume is not None else None,
+            "fetched_at": q["fetched_at"],
+            "net": valuator.net(q["market"], float(q["price_base"])),
+            "cash_out": cash_out[q["market"]],
+        }
 
     rows = []
-    for name, info in owned.iterrows():
-        prices = {}
-        if name in details:
-            for q in details[name].itertuples():
-                volume = _py(q.volume)
-                prices[q.market] = {
-                    "price_base": float(q.price_base),
-                    "price": float(q.price),
-                    "currency": q.currency,
-                    "url": q.url,
-                    "volume": int(volume) if volume is not None else None,
-                    "fetched_at": q.fetched_at,
-                    "net": valuator.net(q.market, float(q.price_base)),
-                    "cash_out": valuator.cash_out(q.market),
-                }
-        icon = info["icon_url"]
+    for name, quantity, icon, category in zip(owned.index, owned["quantity"], owned["icon_url"], owned["category"]):
+        prices = details.get(name, {})
         rows.append({
             "market_hash_name": name,
-            "category": info["category"],
-            "quantity": int(info["quantity"]),
+            "category": category,
+            "quantity": int(quantity),
             "icon": images.icon_src(icon),
             "prices": prices,
             "valuation": valuator.price(name),
-            "best_market": best_market.get(name) if name in best_market.index else None,
-            "best_market_label": market_label(best_market[name]) if name in best_market.index else None,
-            "best_price": _py(best_price.get(name)) if name in best_price.index else None,
-            "spread_pct": _py(spread.get(name)) if name in spread.index else None,
-            "steam_saving": _py(steam_saving.get(name)) if name in steam_saving.index else None,
+            "best_market": best_market.get(name),
+            "best_market_label": market_label(best_market[name]) if name in best_market else None,
+            "best_price": _py(best_price.get(name)),
+            "spread_pct": _py(spread.get(name)),
+            "steam_saving": _py(steam_saving.get(name)),
             # Listings left out as unrealistic (sanity.py): shown as "ignored", not as "not listed".
             "ignored": {a["market"]: {"price": a["price"], "reason": a["reason"], "reference": a["reference"],
                                       "url": a.get("url")}

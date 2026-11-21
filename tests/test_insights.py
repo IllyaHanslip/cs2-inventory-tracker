@@ -93,10 +93,24 @@ def test_background_update_sends_a_notification(client, monkeypatch):
     add(client, "Recoil Case", 2, 1.0)
     monkeypatch.setattr(refresh, "refresh_prices", lambda job: {"complete": False})
     jobs.background_update()
-    assert sent and sent[-1][0] == "Couldn't update your CS2 inventory" and "Trying again at 14:00" in sent[-1][1][0]
+    assert sent[0][0] == "Updating your CS2 inventory" and "another notification" in sent[0][1][1]   # it's starting
+    assert sent[-1][0] == "Couldn't update your CS2 inventory" and "Trying again at 14:00" in sent[-1][1][0]
     monkeypatch.setattr(refresh, "refresh_prices", lambda job: {"complete": True})
     jobs.background_update()
     assert sent[-1][0].startswith("Inventory $")
+    sent.clear()
+    jobs.background_update()                                   # done for today: nothing, so no notification
+    assert sent == []
+
+
+def test_open_app_notifies_when_its_own_update_starts_and_ends(client, monkeypatch):
+    from backend import jobs
+    sent = []
+    monkeypatch.setattr(notify, "toast", lambda title, lines: sent.append((title, lines)) or True)
+    add(client, "Recoil Case", 2, 1.0)
+    run = jobs.automatic("refresh", lambda job: {"complete": True})
+    run(jobs.Job("refresh", "Price refresh"))
+    assert [t for t, _ in sent][0] == "Refreshing your CS2 prices" and sent[-1][0].startswith("Inventory $")
 
 
 # --------------------------------------------------------------------------- planner

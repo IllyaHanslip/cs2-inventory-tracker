@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .classify import is_capsule
+
 WEAPON_CLASSES = {
     "Rifle": ("AK-47", "M4A4", "M4A1-S", "FAMAS", "Galil AR", "AUG", "SG 553"),
     "Sniper rifle": ("AWP", "SSG 08", "SCAR-20", "G3SG1"),
@@ -78,7 +80,7 @@ def type_of(name: str, category: str, weapon: str | None, weapon_type: str | Non
     if category == "container":
         if name == "Storage Unit":
             return "Storage unit"
-        if "capsule" in lower:
+        if "capsule" in lower or is_capsule(name):     # (also "MLG Columbus 2016 Challengers (Holo-Foil)")
             return "Capsule"
         if "souvenir" in lower and "package" in lower:
             return "Souvenir package"

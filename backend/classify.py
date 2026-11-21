@@ -28,15 +28,21 @@ _WEAPON_TYPES = {
 }
 _CONTAINER_TYPES = {"CSGO_Type_WeaponCase"}
 _CONTAINER_RE = re.compile(
-    r"\b(case|capsule|package|storage unit|patch pack|graffiti box|music kit box|souvenir package)\b",
+    r"\b(case|capsule|package|storage unit|patch pack|graffiti box|music kit box|souvenir package"
+    r"|sticker collection|patch collection)\b",
     re.IGNORECASE,
 )
+# Tournament sticker capsules from before their names said "Capsule": "MLG Columbus 2016 Challengers
+# (Holo-Foil)", "EMS Katowice 2014 Legends", "2020 RMR Contenders", "Boston 2018 Minor Challengers
+# with Flash Gaming (Holo/Foil)". (Anything with " | " in its name is something else: stickers,
+# autograph capsules, music kits, agents... The item catalogue settles the rest: see images.py.)
+_EVENT_CAPSULE_RE = re.compile(r"\b(19|20)\d\d\b.*\b(legends|challengers|contenders)\b", re.IGNORECASE)
 # CS2's terminals ("Sealed Genesis Terminal", "Sealed Dead Hand Terminal") are containers too.
 _TERMINAL_RE = re.compile(r"^sealed\b.*\bterminal$", re.IGNORECASE)
 _EXTERIOR_RE = re.compile(r"\((" + "|".join(re.escape(e) for e in EXTERIORS) + r")\)\s*$")
 # Bumped whenever categorize() learns a new kind of name, so items added by hand before then are
 # filed again once (see db._migrate).
-CATEGORY_RULES = 1
+CATEGORY_RULES = 2
 
 
 def categorize(market_hash_name: str, type_internal: str | None = None) -> str:
@@ -57,7 +63,16 @@ def categorize(market_hash_name: str, type_internal: str | None = None) -> str:
         return "other"
     if _CONTAINER_RE.search(name) or _TERMINAL_RE.search(name):
         return "container"
+    if is_capsule(name):
+        return "container"
     return "other"
+
+
+def is_capsule(name: str) -> bool:
+    """A sticker or patch capsule whose name doesn't say "Capsule" (see _EVENT_CAPSULE_RE)."""
+    name = name or ""
+    return bool((" | " not in name and _EVENT_CAPSULE_RE.search(name))
+                or re.search(r"(sticker|patch) collection", name, re.IGNORECASE))
 
 
 def exterior_from_name(market_hash_name: str) -> str | None:

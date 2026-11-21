@@ -213,16 +213,38 @@ function axisFormatter(currency, peak) {
   return (v) => nf.format(v);
 }
 
+/** About how wide ``text`` is in digits (ch): punctuation and spaces are about half a digit. */
+function digitsWide(text) {
+  let width = 0;
+  for (const c of String(text)) width += /[,.'\s]/.test(c) ? 0.5 : 1;
+  return width;
+}
+
 /** Accessible table view of the same data, newest first. */
 export function dataTableHtml(labels, series, currency, sortId = 'chart-data') {
   if (!labels.length) return '<p class="muted">No data yet.</p>';
   const head = series.map((s, i) => `<th class="num" data-sort="num" data-key="s${i}">${esc(s.label)}</th>`).join('');
   const rows = [];
+  let widest = 1;      // the longest value and date shown (characters), for the columns' smallest width
+  let dateChars = 4;
   for (let i = labels.length - 1, n = 0; i >= 0; i -= 1, n += 1) {
-    const cells = series.map((s) => `<td class="num" data-v="${s.values[i] ?? ''}">${money(s.values[i], currency)}</td>`).join('');
-    rows.push(`<tr data-i="${n}"><td data-v="${esc(labels[i])}">${esc(longDate(labels[i]))}</td>${cells}</tr>`);
+    const cells = series.map((s) => {
+      const text = money(s.values[i], currency);
+      widest = Math.max(widest, digitsWide(text));
+      return `<td class="num" data-v="${s.values[i] ?? ''}">${text}</td>`;
+    }).join('');
+    const day = longDate(labels[i]);
+    dateChars = Math.max(dateChars, digitsWide(day));
+    rows.push(`<tr data-i="${n}"><td data-v="${esc(labels[i])}">${esc(day)}</td>${cells}</tr>`);
   }
-  return `<table class="data" data-sort-id="${esc(sortId)}"><thead><tr><th data-sort="text" data-key="date">Date</th>${head}</tr></thead>
+  // The longest word in a heading ("CAPSULES"): headings wrap between words, never inside one.
+  const word = Math.max(4, ...series.flatMap((s) => String(s.label).split(/\s+/).map((w) => w.length)));
+  // Every number column the same width (see .data-table-wrap): --cols of them, each at least wide enough
+  // for --numch characters of value or a --wordch-letter heading word; the date column fits --datech.
+  const size = `--cols:${series.length};--numch:${widest};--wordch:${word};--datech:${dateChars}`;
+  return `<table class="data chart-data" style="${size}" data-sort-id="${esc(sortId)}">
+    <colgroup><col class="col-date"><col span="${series.length}"></colgroup>
+    <thead><tr><th data-sort="text" data-key="date">Date</th>${head}</tr></thead>
     <tbody>${rows.join('')}</tbody></table>`;
 }
 

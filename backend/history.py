@@ -10,9 +10,10 @@ import math
 from datetime import date, timedelta
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
-from . import db, sanity, settings
+from . import db, memo, sanity, settings
 from .classify import applied_hash_name
 from .currency import FxConverter
 from .markets import MANUAL_PREFIX, market_label
@@ -73,11 +74,11 @@ def take_snapshot(valuator=None) -> dict[str, Any]:
         totals[scope] = cash if v.cash_only else value
         db.execute(
             "INSERT INTO portfolio_snapshots (snapshot_date, scope, total_value, item_count, currency, market_value, "
-            "basis, screened, cash_value) VALUES (?, ?, ?, ?, ?, ?, 'after_fees', 1, ?) ON CONFLICT(snapshot_date, scope) "
+            "basis, screened, cash_value) VALUES (?, ?, ?, ?, ?, ?, 'after_fees', ?, ?) ON CONFLICT(snapshot_date, scope) "
             "DO UPDATE SET total_value = excluded.total_value, item_count = excluded.item_count, "
-            "currency = excluded.currency, market_value = excluded.market_value, basis = excluded.basis, screened = 1, "
-            "cash_value = excluded.cash_value",
-            (day, scope, value, count, v.base, market, cash),
+            "currency = excluded.currency, market_value = excluded.market_value, basis = excluded.basis, "
+            "screened = excluded.screened, cash_value = excluded.cash_value",
+            (day, scope, value, count, v.base, market, sanity.RULES, cash),
         )
     settings.set_value("last_snapshot", db.utcnow_iso())
     return {"date": day, "prices": len(rows), "totals": totals, "currency": v.base}
@@ -117,46 +118,114 @@ def _snapshot_rows(names: list[str], since: str | None, *, valuation: bool) -> l
     return rows
 
 
-def _screened(hist: pd.DataFrame, valuator) -> pd.Series:
+def _screened(hist: pd.DataFrame, valuator, rules: int = sanity.RULES) -> pd.Series:
     """Which saved prices to keep: each day's listings get the same check as today's (sanity.py),
-    against that day's other markets and the item's recent sales / sticker inside."""
+    against that day's other markets and the item's recent sales / sticker inside. ``rules``: an
+    older version of the check (to correct totals saved under it)."""
     usd = valuator.fx.convert(1.0, "USD", valuator.base) or 1.0
+    rows = hist.sort_values(["market_hash_name", "date"], kind="stable")
+    names, days = rows["market_hash_name"].to_numpy(), rows["date"].to_numpy()
+    markets, gross, index = rows["market"].to_numpy(), rows["gross"].to_numpy(), rows.index.to_numpy()
+    cash = {m: valuator.cash_out(m) for m in set(markets)}
+    context: dict[str, tuple] = {}     # per item: its sales, the sticker inside, ... (the same every day)
+    drop = []
+    i, n = 0, len(rows)
+    while i < n:
+        name, day = names[i], days[i]
+        j = i + 1
+        while j < n and names[j] == name and days[j] == day:
+            j += 1
+        if name not in context:
+            inner_name = sanity.sticker_inside(name)
+            context[name] = (valuator.sales.get(name, {}).get("price"),
+                             valuator.price(inner_name) if inner_name else None,
+                             valuator.sales_market(name), valuator.own_sales(name))
+        sold, inner, sales_market, own = context[name]
+        listings = {markets[k]: float(gross[k]) for k in range(i, j)}
+        _, aside, _ = sanity.screen(listings, sold, inner, usd, cash=cash.__getitem__, sales_market=sales_market,
+                                    own_sales=own, rules=rules)
+        if aside:
+            drop.extend(index[k] for k in range(i, j) if markets[k] in aside)
+        i = j
     keep = pd.Series(True, index=hist.index)
-    for (name, _day), group in hist.groupby(["market_hash_name", "date"]):
-        listings = dict(zip(group["market"], group["gross"]))
-        inner_name = sanity.sticker_inside(name)
-        inner = valuator.price(inner_name) if inner_name else None
-        _, aside, _ = sanity.screen(listings, valuator.sales.get(name, {}).get("price"), inner, usd)
-        for market in aside:
-            keep[group.index[group["market"] == market]] = False
+    if drop:
+        keep[drop] = False
     return keep
 
 
-def _after_fees(rows: list[dict], valuator, screen: bool = True) -> pd.DataFrame:
+CARRY_DAYS = 3   # a market's last saved price stands for up to this many saved days it wasn't checked
+
+
+def _fill_gaps(hist: pd.DataFrame) -> pd.DataFrame:
+    """Days a market didn't report on an item it still listed get its last saved price.
+
+    CSFloat is asked one item at a time (and on a day it asks the app to slow down, perhaps not at
+    all), and a market whose list couldn't be fetched one day saved nothing for anything. Without
+    this, a day's "best price" would be whichever market happened to be checked that day, and the
+    24-hour change would compare different markets - say today's CSFloat price with yesterday's
+    Steam one. A market whose whole list *was* fetched that day without the item had stopped
+    listing it: nothing is carried then, until it lists the item again. At most CARRY_DAYS days."""
+    if hist.empty:
+        return hist
+    days = sorted(hist["date"].unique())
+    if len(days) < 2:
+        return hist
+    from .markets import SOURCES
+
+    fetched = {(r["market"], r["day"]) for r in db.query(
+        "SELECT DISTINCT market, snapshot_date AS day FROM price_snapshots WHERE snapshot_date >= ? "
+        "AND market != 'valuation'", (days[0],))}
+    wide = hist.set_index(["market_hash_name", "market", "date"])[["price", "currency"]].unstack("date")
+    price, currency = wide["price"].reindex(columns=days), wide["currency"].reindex(columns=days)
+    row_markets = price.index.get_level_values("market")
+    per_market = {m: np.array([bool(getattr(SOURCES.get(m), "bulk", False)) and (m, d) in fetched for d in days])
+                  for m in set(row_markets)}
+    gone = price.isna().to_numpy() & np.vstack([per_market[m] for m in row_markets])   # fetched, not listed
+    price = price.mask(gone, -1.0).ffill(axis=1, limit=CARRY_DAYS)
+    currency = currency.mask(gone, "").ffill(axis=1, limit=CARRY_DAYS)
+    keys = ["market_hash_name", "market"]
+    out = price.reset_index().melt(id_vars=keys, var_name="date", value_name="price")
+    out["currency"] = currency.reset_index().melt(id_vars=keys, var_name="date", value_name="currency")["currency"]
+    return out[out["price"] > 0].reset_index(drop=True)
+
+
+def _after_fees(rows: list[dict], valuator, screen: bool | int = True) -> pd.DataFrame:
     """Saved market prices -> what you'd have received after that market's fees (base currency).
     Only markets you use now count (enabled ones and your manual quotes), and unrealistic
-    listings are left out unless ``screen`` is off."""
+    listings are left out unless ``screen`` is off (a number: that version of the rules)."""
     if not rows:
         return pd.DataFrame(columns=["market_hash_name", "market", "date", "value"])
     hist = pd.DataFrame(rows)
     enabled = set(valuator.prefs["enabled_markets"])
-    hist = hist[hist["market"].isin(enabled) | hist["market"].str.startswith(MANUAL_PREFIX)].copy()
+    hist = hist[hist["market"].isin(enabled) | hist["market"].str.startswith(MANUAL_PREFIX)]
     if hist.empty:
         return pd.DataFrame(columns=["market_hash_name", "market", "date", "value"])
+    hist = _fill_gaps(hist).copy()
     hist["gross"] = _to_base(hist, "price", valuator.fx, valuator.base)
     hist = hist.dropna(subset=["gross"])
     if screen and not hist.empty:
-        hist = hist[_screened(hist, valuator)]
+        hist = hist[_screened(hist, valuator, sanity.RULES if screen is True else int(screen))]
     hist["value"] = [valuator.net(m, g) for m, g in zip(hist["market"], hist["gross"])]
     hist = hist.dropna(subset=["value"])
     return hist[hist["value"] > 0]
+
+
+def _market_history(names: list[str], since: str | None, valuator, screen: bool = True) -> pd.DataFrame:
+    """Every market's saved prices for these items, after fees, gaps filled and unrealistic listings
+    left out - worked out once and reused until the data changes (memo.py). Read-only."""
+    def compute() -> pd.DataFrame:
+        return _after_fees(_snapshot_rows(names, since, valuation=False), valuator, screen)
+
+    if not getattr(valuator, "shared", False):
+        return compute()
+    return memo.cached(("market_history", frozenset(names), since, screen, valuator.signature()), compute)
 
 
 def best_after_fees(names: list[str], valuator, since: str | None = None, screen: bool = True,
                     cash_only: bool | None = None) -> pd.DataFrame:
     """Per item and day: the most you'd have received for a plain copy after fees, on any market
     that counts (``cash_only``: only markets whose money you can withdraw; default: the switch)."""
-    hist = _after_fees(_snapshot_rows(names, since, valuation=False), valuator, screen)
+    hist = _market_history(names, since, valuator, screen)
     if valuator.cash_only if cash_only is None else cash_only:
         hist = hist[[valuator.cash_out(m) for m in hist["market"]]] if not hist.empty else hist
     if hist.empty:
@@ -269,12 +338,17 @@ def item_history(market_hash_name: str, range_key: str, valuator) -> dict[str, A
     the "Values from" switch are still listed (``counted: false``) but aren't in the best line.
     Plain copies only: stickers aren't part of market price history."""
     base = valuator.base
-    hist = _after_fees(_snapshot_rows([market_hash_name], _cutoff(range_key), valuation=False), valuator)
+    hist = _market_history([market_hash_name], _cutoff(range_key), valuator)
     if hist.empty:
         return {"labels": [], "series": [], "best_markets": [], "currency": base, "cash_only": valuator.cash_only}
     wide = hist.pivot_table(index="date", columns="market", values="value", aggfunc="last")
     wide.index = pd.to_datetime(wide.index)
-    wide = wide.asfreq("D").ffill(limit=7)  # bridge short gaps only
+    saved = wide.index
+    wide = wide.asfreq("D")
+    # Days nothing at all was saved (the PC was off): bridge short gaps. (Days a market wasn't
+    # checked are already filled in, and days it had stopped listing the item stay empty.)
+    bridged = ~wide.index.isin(saved)
+    wide[bridged] = wide.ffill(limit=7)[bridged]
     counted = [c for c in wide.columns if valuator.counts(c)]
     best = wide[counted].max(axis=1, skipna=True) if counted else pd.Series(float("nan"), index=wide.index)
     leader = [row.idxmax() if counted and row.notna().any() else None for _, row in wide[counted].iterrows()] \
@@ -398,46 +472,86 @@ def convert_market_snapshots(valuator=None) -> int:
 # One-off clean-up of totals inflated by unrealistic listings
 # ---------------------------------------------------------------------------
 def remove_outlier_inflation(valuator=None) -> int:
-    """Portfolio totals saved before listings were checked (sanity.py) may count an unrealistic
-    listing - say a slab listed at £1,500 that sells for 62p. Each such snapshot is corrected
-    once: the value those listings added that day is taken off, worked out from that day's saved
-    prices for the items you hold. Runs during a price refresh, when sales and the stickers inside
-    slabs have just been fetched. Returns how many snapshots changed."""
+    """Portfolio totals saved before listings were checked (sanity.py), or under an older version
+    of that check, may count an unrealistic listing - say a slab listed at £1,500 that sells for
+    62p, or a capsule listed at three times what it sells for. Each such snapshot is corrected once:
+    the difference those listings made that day is worked out from that day's saved prices for the
+    items you hold, valued the way the totals are (a big stack spread over the markets by how many
+    each sells), counting every market (the total) and cash-out markets only (the cash total); the
+    snapshot is then marked with the current rules. Runs during a price refresh, when sales and the
+    stickers inside slabs have just been fetched. Returns how many snapshots changed."""
     from . import portfolio  # local import to avoid a circular dependency
     from .valuation import Valuator
 
-    rows = db.query("SELECT snapshot_date AS date, scope, total_value FROM portfolio_snapshots "
-                    "WHERE basis = 'after_fees' AND screened = 0")
+    rows = db.query("SELECT snapshot_date AS date, scope, total_value, cash_value, screened FROM portfolio_snapshots "
+                    "WHERE basis = 'after_fees' AND screened < ?", (sanity.RULES,))
     if not rows:
         return 0
     v = valuator or Valuator()
     frame = portfolio.build_frame(v, "total", with_changes=False)
     if frame.empty:
         return 0  # nothing priced yet - try again next refresh
-    changed = 0
-    if not frame.empty:
-        listed = frame[~frame["price_source"].isin(["custom", "evidence"])]
-        names = listed["market_hash_name"].unique().tolist()
-        raw = _snapshot_rows(names, None, valuation=False)
-        before = _after_fees(raw, v, screen=False).groupby(["market_hash_name", "date"])["value"].max()
-        after = _after_fees(raw, v, screen=True).groupby(["market_hash_name", "date"])["value"].max()
-        # Where every listing that day was unrealistic, count what the item is really worth now.
-        fallback = {n: max((o["net"] for o in v.sell_options(v.fallback_quotes(n))), default=0.0) for n in names}
-        excess = {}
-        for key, value in before.items():
-            kept = after.get(key)
-            excess[key] = max(value - (kept if kept is not None else fallback.get(key[0], 0.0)), 0.0)
-        updates = []
-        for row in rows:
-            subset = listed if row["scope"] == "total" else listed[listed["source"] == "steam"]
-            held = subset.groupby("market_hash_name")["quantity"].sum()
-            extra = sum(qty * excess.get((name, row["date"]), 0.0) for name, qty in held.items())
-            if extra > 0.01 * max(row["total_value"], 1.0):   # ignore rounding-sized differences
-                updates.append((max(row["total_value"] - extra, 0.0), row["date"], row["scope"]))
-        db.executemany("UPDATE portfolio_snapshots SET total_value = ? WHERE snapshot_date = ? AND scope = ?", updates)
-        changed = len(updates)
-        if changed:
-            log.info("Removed unrealistic listings from %d portfolio snapshots", changed)
-    db.executemany("UPDATE portfolio_snapshots SET screened = 1 WHERE snapshot_date = ? AND scope = ?",
-                   [(r["date"], r["scope"]) for r in rows])
+    listed = frame[~frame["price_source"].isin(["custom", "evidence"])]
+    names = listed["market_hash_name"].unique().tolist()
+    raw = _snapshot_rows(names, None, valuation=False)
+    held = {scope: (listed if scope == "total" else listed[listed["source"] == "steam"])
+            .groupby("market_hash_name")["quantity"].sum().to_dict() for scope in ("total", "public")}
+    days = {r["date"] for r in rows}
+    hists: dict[int, pd.DataFrame] = {0: _after_fees(raw, v, screen=False)}
+    priced = set(zip(hists[0]["market_hash_name"], hists[0]["date"])) if not hists[0].empty else set()
+
+    def worth(rules: int, scope: str, cash: bool) -> dict[str, float]:
+        """Per day: what the items held were worth from that day's saved prices, under ``rules``."""
+        if rules not in hists:
+            hists[rules] = _after_fees(raw, v, screen=False if rules == 0 else rules)
+        hist = hists[rules]
+        hist = hist[hist["date"].isin(days)] if not hist.empty else hist
+        out: dict[str, float] = {}
+        for name, qty in held[scope].items():
+            rows_for = hist[hist["market_hash_name"] == name] if not hist.empty else hist
+            by_day = dict(tuple(rows_for.groupby("date"))) if not rows_for.empty else {}
+            for day in days:
+                group = by_day.get(day)
+                options = [] if group is None else [
+                    {"market": m, "net": float(n), "wallet": not v.cash_out(m)}
+                    for m, n in zip(group["market"], group["value"]) if not cash or v.cash_out(m)]
+                if not options:   # every listing that day unrealistic (or none): what it's really worth now
+                    if (name, day) not in priced:
+                        continue
+                    options = [o for o in v.sell_options(v.fallback_quotes(name)) if not cash or not o["wallet"]]
+                options.sort(key=lambda o: -o["net"])
+                total, _plan = v.bulk_plan(name, options, int(qty)) if options else (0.0, [])
+                out[day] = out.get(day, 0.0) + total
+        return out
+
+    cache: dict[tuple, dict[str, float]] = {}
+
+    def day_worth(rules: int, scope: str, cash: bool) -> dict[str, float]:
+        if (rules, scope, cash) not in cache:
+            cache[(rules, scope, cash)] = worth(rules, scope, cash)
+        return cache[(rules, scope, cash)]
+
+    updates = []
+    for row in rows:
+        fixed = {}
+        for column, cash in (("total_value", False), ("cash_value", True)):
+            if row[column] is None:
+                continue
+            then = day_worth(row["screened"], row["scope"], cash).get(row["date"])
+            now = day_worth(sanity.RULES, row["scope"], cash).get(row["date"])
+            if then is None or now is None:
+                continue
+            extra = then - now
+            if abs(extra) > 0.01 * max(row[column], 1.0):   # ignore rounding-sized differences
+                fixed[column] = max(row[column] - extra, 0.0)
+        if fixed:
+            updates.append((fixed.get("total_value", row["total_value"]), fixed.get("cash_value", row["cash_value"]),
+                            row["date"], row["scope"]))
+    db.executemany("UPDATE portfolio_snapshots SET total_value = ?, cash_value = ? WHERE snapshot_date = ? AND scope = ?",
+                   updates)
+    changed = len(updates)
+    if changed:
+        log.info("Corrected %d portfolio snapshots for unrealistic listings", changed)
+    db.executemany("UPDATE portfolio_snapshots SET screened = ? WHERE snapshot_date = ? AND scope = ?",
+                   [(sanity.RULES, r["date"], r["scope"]) for r in rows])
     return changed

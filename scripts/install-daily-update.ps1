@@ -17,7 +17,7 @@
       * while the dashboard is open it does nothing: the dashboard keeps itself up to date.
     If the PC is off all day, that day is skipped and charts carry the last value across.
     Every run is noted in data\update.log. One update downloads about 5-6 MB.
-    After each update a Windows notification says what it found (your total and today's change, the
+    A Windows notification says when an update starts, and another what it found (your total and today's change, the
     biggest movers, items that now sell best elsewhere); clicking it opens the dashboard. It also sets
     up the name/icon for those notifications and the link they open, under your account only.
 
@@ -133,6 +133,6 @@ try {
 Write-Host "Done. The daily update now runs once a day $when."
 Write-Host "If it can't reach the markets, it tries again every hour until midnight."
 Write-Host "Opening the dashboard updates straight away at any time, and then counts as that day's update."
-Write-Host "After each background update a notification says what it found; click it to open the dashboard."
+Write-Host "A notification says when a background update starts, and another what it found; click it to open the dashboard."
 Write-Host "(Turn notifications off with NOTIFICATIONS=false in .env.)"
 Write-Host "Each run is noted in $(Join-Path $root 'data\update.log'). To undo: add -Remove to the same command."

@@ -22,6 +22,7 @@ FX_DAY = "2026-01-01"
 def app(tmp_path, monkeypatch):
     overrides = {
         "DATABASE_PATH": tmp_path / "test.db",
+        "DATA_DIR": tmp_path,              # (markers and logs stay out of the real data folder)
         "AUTO_DAILY_SNAPSHOT": False,
         "DEMO": False,
         "HOST": "127.0.0.1",

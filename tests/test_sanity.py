@@ -31,9 +31,12 @@ def test_screen_rules():
     # A lone listing far above recent sales is set aside...
     kept, aside, trusted = sanity.screen({"skinport": 1500.0}, 0.7, None, usd)
     assert kept == {} and aside["skinport"]["reason"] == "sales" and trusted == 0.7
-    # ...but not one a bit above, nor a cheap one (pennies don't count).
+    # ...but not one a bit above, nor pennies.
     assert sanity.screen({"skinport": 2.0}, 0.7, None, usd)[1] == {}
-    assert sanity.screen({"skinport": 1.1}, 0.2, None, usd)[1] == {}       # 5.5x, but only $0.90 above
+    assert sanity.screen({"skinport": 0.09}, 0.02, None, usd)[1] == {}     # 4.5x, but only 7 cents above
+    # Cheap items are checked too (the first rules needed $1 above, so they never were).
+    assert sanity.screen({"skinport": 1.1}, 0.2, None, usd)[1]["skinport"]["reason"] == "sales"
+    assert sanity.screen({"skinport": 1.1}, 0.2, None, usd, rules=1)[1] == {}
     # Markets that agree overrule an odd low sales figure.
     kept, aside, trusted = sanity.screen({"skinport": 3.0, "waxpeer": 3.3}, 0.5, None, usd)
     assert trusted is None and len(kept) == 2
@@ -44,6 +47,32 @@ def test_screen_rules():
     assert sanity.screen({"waxpeer": 5.0}, None, 1.0, usd)[1] == {}
     assert sanity.screen({"waxpeer": 9.0}, None, 1.0, usd)[1]["waxpeer"]["reason"] == "sticker_inside"
     assert sanity.sticker_inside(SLAB) == STICKER and sanity.sticker_inside(STICKER) is None
+
+
+def test_listing_far_above_what_it_goes_for_elsewhere():
+    """A capsule whose cheapest Market.CSGO listing ($0.58) is three times what it goes for on the
+    other markets ($0.18-0.19) and what it sells for: not a price you'd sell at."""
+    listings = {"csfloat": 0.18, "marketcsgo": 0.583, "steam": 0.32, "waxpeer": 0.189}
+    kept, aside, trusted = sanity.screen(listings, 0.32, None, 1.0, sales_market="steam")
+    assert list(aside) == ["marketcsgo"] and trusted == 0.32
+    assert aside["marketcsgo"]["factor"] == 2 and aside["marketcsgo"]["reference"] == pytest.approx(0.189)
+    assert set(kept) == {"csfloat", "steam", "waxpeer"}            # Steam (wallet money) is allowed 3x
+    # The old rules let it through: under 3x Steam's average sale, and less than $1 above it.
+    assert sanity.screen(listings, 0.32, None, 1.0, rules=1)[1] == {}
+    # Steam is naturally dearer: 2.3x the cash markets is fine there, but not on a cash market.
+    assert sanity.screen({"steam": 1.2, "skinport": 0.5, "csfloat": 0.55}, None, None, 1.0)[1] == {}
+    assert list(sanity.screen({"waxpeer": 1.2, "skinport": 0.5, "csfloat": 0.55}, None, None, 1.0)[1]) == ["waxpeer"]
+    # A price rise every market agrees on isn't flagged against last week's sales.
+    assert sanity.screen({"skinport": 25.0, "csfloat": 26.0, "waxpeer": 25.5}, 10.0, None, 1.0)[1] == {}
+    # A listing no higher than what it has recently sold for on that same market is realistic there.
+    capsule = {"skinport": 0.301, "csfloat": 0.129, "waxpeer": 0.144, "marketcsgo": 0.129}
+    assert list(sanity.screen(capsule, 0.301, None, 1.0)[1]) == ["skinport"]
+    assert sanity.screen(capsule, 0.301, None, 1.0, own_sales={"skinport": 0.301})[1] == {}
+    # Steam keeps its old margin: a cheap skin's wallet price several times the cash markets is normal.
+    assert sanity.screen({"steam": 0.32, "skinport": 0.092, "csfloat": 0.084}, None, None, 1.0)[1] == {}
+    # Recent sales are a figure in their own right ("elsewhere" = other markets and sales).
+    _, aside, _ = sanity.screen({"marketcsgo": 3.0, "csfloat": 1.0}, 1.1, None, 1.0)
+    assert aside["marketcsgo"]["reason"] == "elsewhere" and aside["marketcsgo"]["reference"] == pytest.approx(1.05)
 
 
 def test_pick_sales_prefers_recent_windows_with_a_few_sales():
@@ -133,11 +162,33 @@ def test_inflated_history_is_corrected_once(client):
                "VALUES (?, 'total', ?, 11, 'USD', 'after_fees')", (day, inflated))
     assert history.remove_outlier_inflation() == 1
     row = db.query_one("SELECT total_value, screened FROM portfolio_snapshots WHERE snapshot_date = ?", (day,))
-    assert row["total_value"] == pytest.approx(0.71 * SKINPORT + 10 * SKINPORT) and row["screened"] == 1
+    assert row["total_value"] == pytest.approx(0.71 * SKINPORT + 10 * SKINPORT) and row["screened"] == sanity.RULES
     assert history.remove_outlier_inflation() == 0                     # never twice
     # The item's own chart leaves the listing out too.
     data = client.get("/api/history/item", query_string={"name": SLAB, "range": "7d"}).get_json()
     assert data["series"] == []
+
+
+def test_history_saved_under_older_rules_is_corrected_once(client):
+    """A day saved under the first rules counted a capsule's listing three times too high; the
+    current rules take that back out - from the total and the cash-out total - once."""
+    capsule = "Budapest 2025 Contenders Autograph Capsule"
+    client.post("/api/items", json={"market_hash_name": capsule, "quantity": 100}, headers=HEADERS)
+    for market, price in (("marketcsgo", 0.583), ("csfloat", 0.18), ("waxpeer", 0.189)):
+        add_quote(capsule, market, price)
+    day = (date.today() - timedelta(days=1)).isoformat()
+    db.executemany("INSERT INTO price_snapshots VALUES (?, ?, ?, ?, 'USD')",
+                   [(capsule, m, day, p) for m, p in (("marketcsgo", 0.583), ("csfloat", 0.18), ("waxpeer", 0.189))])
+    mcsgo = 0.583 * 0.95 * 0.97                        # 5 % sale fee, 3 % withdrawal
+    waxpeer = 0.189 * 0.94 * 0.98                      # the best realistic one: 6 % + 2 %
+    db.execute("INSERT INTO portfolio_snapshots (snapshot_date, scope, total_value, item_count, currency, basis, "
+               "screened, cash_value) VALUES (?, 'total', ?, 100, 'USD', 'after_fees', 1, ?)", (day, 100 * mcsgo, 100 * mcsgo))
+    assert history.remove_outlier_inflation() == 1
+    row = db.query_one("SELECT total_value, cash_value, screened FROM portfolio_snapshots WHERE snapshot_date = ?", (day,))
+    assert row["total_value"] == pytest.approx(100 * waxpeer, rel=1e-6) and row["cash_value"] == pytest.approx(100 * waxpeer, rel=1e-6)
+    assert row["screened"] == sanity.RULES and history.remove_outlier_inflation() == 0
+    found = item(client, capsule)
+    assert [a["market"] for a in found["set_aside"]] == ["marketcsgo"] and found["sell_market"] == "waxpeer"
 
 
 # --------------------------------------------------------------------------- names

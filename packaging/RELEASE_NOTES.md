@@ -2,7 +2,41 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.5.3
+### What's new in v1.5.4
+
+- **Much faster**: the dashboard reuses the valuation and its price history until something actually
+  changes, checks saved prices for unrealistic listings several times faster, and answers its heavy views one
+  after another rather than all at once. On a 400-item inventory everything a page asks for went from about
+  8.4 to 1.4 seconds; the Sell Planner from 2.8 seconds to under half a second, an item's details from
+  0.7 to 0.1; switching "Values from" no longer starts from scratch.
+- **24-hour and 7-week changes compare like with like**: a day a market wasn't checked (CSFloat is asked one
+  item at a time, and sometimes not at all on a day it asks the app to slow down) now keeps that market's last
+  price, for up to 3 days, instead of the day's "best price" being whichever market happened to be checked.
+  So an item no longer shows, say, +5% with every market counted and -20% with cash-out markets only when its
+  best market (CSFloat) barely moved. A market that had stopped listing the item isn't carried over.
+- **Selling prices you can actually get**: a market's cheapest listing is only an asking price, and on thinly
+  traded items it's often far above what anyone pays - say a capsule whose cheapest Market.CSGO listing is
+  three times what it sells for on every other market. The check that ignores such listings now compares each
+  one with what the item goes for elsewhere (its other markets and recent sales together), sets aside listings
+  more than twice that, and works for cheap items too (it used to need $1 above, so items under a dollar or two
+  were never checked). Steam keeps its wider margin (its price is real sales, in wallet money), and a listing
+  that matches what the item recently sold for on that same market is always kept. Totals saved on earlier days
+  are corrected once, the same way.
+- **Notifications when an update starts**: when the scheduled background update, or the open app's own
+  automatic update, starts collecting prices, a Windows notification says so; another says what it found when
+  it's done (now for the open app's automatic updates too).
+- **Up-to-date exchange rates**: rates are checked again with every price update (at most every half hour)
+  instead of once a day, and when the ECB's latest are more than a day old the newer source is used.
+- **Old tournament capsules are Cases & Capsules**: items you add by hand are now checked against the item
+  catalogue's list of every container, so ones whose names don't say what they are - "MLG Columbus 2016
+  Challengers (Holo-Foil)", "EMS Katowice 2014 Legends", gift packages, music kit boxes - are filed properly
+  (ones you added before are moved over once). Steam items already used Steam's own item type.
+- **"Show data table" columns are evenly spaced**: every number column is the same width, whatever its
+  heading, and the table still fits its card - each table works out the room it needs from what it shows.
+  Below 1240px wide, Biggest movers and Portfolio mix sit one above the other (they did below 1100px), so the
+  mix's table has room for a column per group.
+
+### v1.5.3
 
 - **Its own window and icon**: the app now opens a small window of its own, with its icon on the taskbar,
   instead of a console window (which Windows 11 showed as Windows Terminal). It says what the app is doing

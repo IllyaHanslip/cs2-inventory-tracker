@@ -20,7 +20,7 @@ import time
 import urllib.request
 import webbrowser
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, g, jsonify, render_template, request
 
 from config import BASE_DIR, Config
 
@@ -78,6 +78,25 @@ def create_app(*, demo: bool = False, reset_demo: bool = False) -> Flask:
     app = Flask(__name__, root_path=getattr(sys, "_MEIPASS", None) or str(BASE_DIR))
     app.json.sort_keys = False
     app.register_blueprint(bp)
+
+    # The dashboard asks for several heavy views at once (both inventory tabs, their insights, the
+    # containers). Python works on one at a time anyway, and interleaving them only makes each one
+    # slower: so they take turns, and the first answers arrive sooner. (Only these - nothing that
+    # waits on the internet.)
+    turns = threading.Lock()
+    heavy = {"/api/items", "/api/insights", "/api/containers", "/api/market-comparison", "/api/sell-candidates",
+             "/api/item", "/api/ledger", "/api/history/portfolio", "/api/history/item"}
+
+    @app.before_request
+    def take_turn():
+        if request.method == "GET" and request.path in heavy:
+            turns.acquire()
+            g.took_turn = True
+
+    @app.teardown_request
+    def end_turn(_error=None):
+        if g.pop("took_turn", False):
+            turns.release()
 
     @app.before_request
     def guard_requests():

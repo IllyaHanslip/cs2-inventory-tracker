@@ -180,12 +180,47 @@ def ensure(names: Iterable[str]) -> set[str]:
                 break
             try:
                 _download(file)
+                if file == "crates":
+                    _refile_containers(names)
             except ApiError as exc:
                 _retry_at = time.monotonic() + RETRY_AFTER_FAILURE
                 log.warning("Couldn't download item pictures (%s); will try again later", exc)
                 break
             missing -= set(lookup(missing))
     return missing
+
+
+def listed_as_containers(names: Iterable[str]) -> set[str]:
+    """Which of these names the item catalogue lists as containers - cases, capsules, souvenir
+    packages, gifts, music kit boxes - whatever their names say (only once its "crates" file has
+    been downloaded, which happens with the first item that needs it)."""
+    unique = sorted({n for n in names if isinstance(n, str) and n})
+    found: set[str] = set()
+    for i in range(0, len(unique), 800):
+        chunk = unique[i:i + 800]
+        found |= {r["market_hash_name"] for r in db.query(
+            f"SELECT market_hash_name FROM item_images WHERE source = 'crates' AND market_hash_name IN "
+            f"({','.join('?' * len(chunk))})", chunk)}
+    return found
+
+
+def category_for(name: str) -> str:
+    """The category for an item added by hand: from its name (classify.categorize), except that one
+    the item catalogue lists as a container is one, even when its name doesn't say so ("MLG
+    Columbus 2016 Challengers (Holo-Foil)" is a sticker capsule). Steam items use Steam's own type."""
+    category = categorize(name)
+    if category == "other" and listed_as_containers([name]):
+        return "container"
+    return category
+
+
+def _refile_containers(names: set[str]) -> None:
+    """The container list has just arrived: items added by hand that it lists, filed under Other
+    for want of it, go to Cases & Capsules."""
+    found = listed_as_containers(names)
+    if found:
+        db.executemany("UPDATE items SET category = 'container' WHERE source = 'manual' AND category = 'other' "
+                       "AND market_hash_name = ?", [(n,) for n in sorted(found)])
 
 
 def backfill() -> set[str]:

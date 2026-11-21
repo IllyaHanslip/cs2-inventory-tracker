@@ -6,6 +6,7 @@ safe when background jobs and web requests run on different threads.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterator
@@ -109,7 +110,7 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     currency      TEXT NOT NULL,
     market_value  REAL,
     basis         TEXT NOT NULL DEFAULT 'market',
-    screened      INTEGER NOT NULL DEFAULT 0,   -- 1 once unrealistic listings are kept out (sanity.py)
+    screened      INTEGER NOT NULL DEFAULT 0,   -- version of the unrealistic-listing check applied (sanity.RULES)
     cash_value    REAL,                         -- after fees, counting only markets you can withdraw from
     PRIMARY KEY (snapshot_date, scope)
 );
@@ -226,9 +227,36 @@ def _open() -> sqlite3.Connection:
     return conn
 
 
+# Results worth reusing (see memo.py) are kept until the data changes: every write through this
+# module counts one change. The scheduled background update writes from a process of its own, and
+# leaves a marker file while it does: while that's there, nothing is reused.
+_changes = 0
+_changes_lock = threading.Lock()
+
+
+def _changed() -> None:
+    global _changes
+    with _changes_lock:
+        _changes += 1
+
+
+_updating = False
+
+
+def data_version() -> tuple:
+    """Changes whenever the data may have: a write here, or the background update writing."""
+    global _updating
+    writing = (Config.DATA_DIR / ".update-running").exists()
+    if writing or _updating:
+        _changed()                         # another process is writing (or just finished): start afresh
+    _updating = writing
+    return (str(Config.DATABASE_PATH), _changes)
+
+
 @contextmanager
-def connect() -> Iterator[sqlite3.Connection]:
-    """Open a connection, commit on success, roll back on error, always close."""
+def connect(counts: bool = True) -> Iterator[sqlite3.Connection]:
+    """Open a connection, commit on success, roll back on error, always close. Writes made through
+    it count as a change of data (``counts`` off: a setting, whose cached uses key on it anyway)."""
     conn = _open()
     try:
         yield conn
@@ -237,7 +265,10 @@ def connect() -> Iterator[sqlite3.Connection]:
         conn.rollback()
         raise
     finally:
+        wrote = conn.total_changes > 0
         conn.close()
+        if wrote and counts:
+            _changed()
 
 
 def init_db() -> None:
@@ -285,14 +316,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
 def _refile_categories(conn: sqlite3.Connection) -> None:
     """Items added by hand are filed by their name when they're added. When the app learns a new
     kind of name (CS2's "Sealed … Terminal"s are containers), the ones it had put under Other are
-    filed again - once per version of the rules, so a category you choose yourself afterwards sticks."""
+    filed again - once per version of the rules, so a category you choose yourself afterwards sticks.
+    The item catalogue's list of containers counts too (images.category_for), when it's on the PC."""
     from .classify import CATEGORY_RULES, categorize
 
     done = conn.execute("SELECT value FROM settings WHERE key = 'category_rules'").fetchone()
     if done is not None and int(done[0]) >= CATEGORY_RULES:
         return
     rows = conn.execute("SELECT id, market_hash_name FROM items WHERE source = 'manual' AND category = 'other'").fetchall()
-    fixes = [(category, item_id) for item_id, name in rows if (category := categorize(name)) != "other"]
+    crates = {r[0] for r in conn.execute("SELECT market_hash_name FROM item_images WHERE source = 'crates'")}
+    fixes = [("container" if name in crates else category, item_id) for item_id, name in rows
+             if name in crates or (category := categorize(name)) != "other"]
     conn.executemany("UPDATE items SET category = ? WHERE id = ?", fixes)
     conn.execute("INSERT INTO settings (key, value) VALUES ('category_rules', ?) "
                  "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(CATEGORY_RULES),))
@@ -308,9 +342,9 @@ def query_one(sql: str, params: tuple | list = ()) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def execute(sql: str, params: tuple | list = ()) -> int:
+def execute(sql: str, params: tuple | list = (), counts: bool = True) -> int:
     """Run a write statement and return lastrowid."""
-    with connect() as conn:
+    with connect(counts) as conn:
         return conn.execute(sql, params).lastrowid
 
 

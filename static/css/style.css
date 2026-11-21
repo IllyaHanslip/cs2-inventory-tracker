@@ -225,6 +225,19 @@ select.input { padding-right: 28px; }
 .data-table-wrap table.data th:first-child, .data-table-wrap table.data td:first-child { padding-left: 10px; }
 .data-table-wrap table.data td:first-child { white-space: nowrap; }
 .data-table-wrap table.data th[data-sort] .th-label { padding-right: 12px; }
+/* Every number column the same width, however long its heading; the date column just fits its dates.
+   The smallest width the table needs comes from what it shows (charts.js dataTableHtml sets the counts:
+   the longest value, the longest heading word, the longest date); only below that does it scroll sideways
+   inside its box, rather than squeezing one column. (ch: one digit's width at the cells' 12.5px.) */
+.data-table-wrap table.chart-data {
+  table-layout: fixed; font-size: 12.5px;
+  min-width: calc(var(--datech, 11) * 1ch + 16px
+    + var(--cols, 1) * max(var(--numch, 8) * 1ch + 10px, var(--wordch, 8) * 0.95ch + 22px));
+}
+.data-table-wrap table.chart-data col.col-date { width: calc(var(--datech, 11) * 1ch + 16px); }
+.data-table-wrap table.chart-data th { font-size: 10.5px; }
+.data-table-wrap table.chart-data th, .data-table-wrap table.chart-data td { padding-left: 4px; padding-right: 4px; }
+.data-table-wrap table.chart-data th:first-child, .data-table-wrap table.chart-data td:first-child { padding-left: 10px; }
 
 /* ---------- Toolbar & chips ---------- */
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
@@ -719,7 +732,9 @@ button.mover:hover { background: var(--surface-2); }
 .movers-card .movers { flex: 1 1 0; min-height: 280px; grid-template-rows: minmax(0, 1fr); }
 .movers-card .mover-list { display: flex; flex-direction: column; min-height: 0; }
 .movers-card .mover-list ol { flex: 1 1 0; min-height: 0; overflow-y: auto; padding-right: 4px; }
-@media (max-width: 1100px) {
+/* Biggest movers and Portfolio mix side by side only when each card has room for its lists and a
+   data table with a column per group; narrower, one above the other. */
+@media (max-width: 1240px) {
   .insight-grid { grid-template-columns: minmax(0, 1fr); }
   .movers-card .movers { flex: none; height: 460px; }
 }

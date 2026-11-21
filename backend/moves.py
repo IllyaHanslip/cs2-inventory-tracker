@@ -19,7 +19,6 @@ import json
 from typing import Any
 
 from . import db, images, ledger, storage
-from .classify import categorize
 
 # What you've recorded about an item yourself: carried over wherever it goes.
 USER_FIELDS = ("purchase_price", "purchase_currency", "custom_price", "custom_price_currency", "notes")
@@ -381,7 +380,7 @@ def _store(conn, change, details: dict, unit: int, now: str) -> None:
     name = change["market_hash_name"]
     values: dict[str, Any] = {
         "source": "manual", "market_hash_name": name, "name": details.get("name") or name,
-        "category": details.get("category") or categorize(name), "quantity": change["quantity"],
+        "category": details.get("category") or images.category_for(name), "quantity": change["quantity"],
         "container_id": unit, "marketable": 1, "tradable": 1, "created_at": now, "updated_at": now,
     }
     for field in KEPT_FIELDS:

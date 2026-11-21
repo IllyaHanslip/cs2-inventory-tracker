@@ -35,17 +35,20 @@ def weekly_trends(names: list[str], valuator) -> dict[str, float]:
     """Per item: % change per week of its best after-fee price, fitted over the last 7 weeks
     (needs at least 5 days of prices)."""
     daily = history.best_after_fees(names, valuator, history._days_ago(TREND_DAYS))
-    trends: dict[str, float] = {}
-    for name, rows in daily.groupby("market_hash_name"):
-        if len(rows) < 5:
-            continue
-        days = pd.to_datetime(rows["date"])
-        x = (days - days.min()).dt.days.to_numpy(dtype=float)
-        if x.max() < 4:
-            continue
-        slope = np.polyfit(x, np.log(rows["value"].to_numpy(dtype=float)), 1)[0]
-        trends[name] = (math.exp(slope * 7) - 1) * 100
-    return trends
+    daily = daily[daily["value"] > 0]
+    if daily.empty:
+        return {}
+    # A straight line through log(price) by day, fitted for every item at once (least squares:
+    # the same as numpy.polyfit per item, without a loop).
+    day = pd.to_datetime(daily["date"])
+    x = (day - day.groupby(daily["market_hash_name"]).transform("min")).dt.days.astype(float)
+    y = np.log(daily["value"].astype(float))
+    sums = pd.DataFrame({"name": daily["market_hash_name"], "x": x, "y": y, "xx": x * x, "xy": x * y}) \
+        .groupby("name").agg(n=("x", "size"), sx=("x", "sum"), sy=("y", "sum"), sxx=("xx", "sum"),
+                             sxy=("xy", "sum"), span=("x", "max"))
+    fit = sums[(sums["n"] >= 5) & (sums["span"] >= 4)]          # at least 5 days of prices, 4 days apart
+    slope = (fit["n"] * fit["sxy"] - fit["sx"] * fit["sy"]) / (fit["n"] * fit["sxx"] - fit["sx"] ** 2)
+    return {name: (math.exp(s * 7) - 1) * 100 for name, s in slope.items()}
 
 
 def _clean(value: Any) -> Any:

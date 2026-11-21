@@ -6,13 +6,18 @@ Historical snapshots are converted with the rates of their own date.
 
 Sources (no API key needed):
   * Frankfurter (European Central Bank reference rates) - primary
-  * open.er-api.com (ExchangeRate-API open access)      - fallback
+  * open.er-api.com (ExchangeRate-API open access)      - fallback, and used instead when the ECB's
+    latest rates are more than a day old (weekends, holidays) and it has newer ones
+
+The rates are checked again with every price update (at most every half hour), not just once a
+day: the ECB publishes each working day's rates in the afternoon, so an update in the morning would
+otherwise go on using the day before's all day.
 """
 from __future__ import annotations
 
 import bisect
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from . import cache, db
 from .http_client import ApiError, RateLimitedClient
@@ -25,40 +30,62 @@ ER_API_URL = "https://open.er-api.com/v6/latest/USD"
 _client = RateLimitedClient("Exchange rates", min_interval=1.0, max_retries=2)
 
 
-def _from_frankfurter() -> tuple[dict[str, float], str]:
+CHECK_MINUTES = 30          # rates are checked again at most this often (each price update)
+
+
+def _from_frankfurter() -> tuple[dict[str, float], str, str | None]:
     resp = _client.get(FRANKFURTER_URL, params={"base": "USD"})
     if resp.status_code != 200:
         raise ApiError(f"Frankfurter returned HTTP {resp.status_code}")
     data = resp.json()
-    return dict(data["rates"]), f"Frankfurter / ECB ({data.get('date', 'latest')})"
+    return dict(data["rates"]), f"Frankfurter / ECB ({data.get('date', 'latest')})", data.get("date")
 
 
-def _from_er_api() -> tuple[dict[str, float], str]:
+def _from_er_api() -> tuple[dict[str, float], str, str | None]:
     resp = _client.get(ER_API_URL)
     if resp.status_code != 200:
         raise ApiError(f"open.er-api.com returned HTTP {resp.status_code}")
     data = resp.json()
     if data.get("result") != "success":
         raise ApiError("open.er-api.com returned an error")
-    return dict(data["rates"]), "ExchangeRate-API (open.er-api.com)"
+    stamp = data.get("time_last_update_unix")
+    day = datetime.fromtimestamp(stamp, timezone.utc).date().isoformat() if isinstance(stamp, (int, float)) else None
+    return dict(data["rates"]), f"ExchangeRate-API (open.er-api.com, {day or 'latest'})", day
+
+
+def _fetch_latest() -> tuple[dict[str, float], str]:
+    """The newest rates available: the ECB's (Frankfurter), or ExchangeRate-API's when the ECB's
+    are more than a day old and it has newer ones (or the ECB's can't be reached)."""
+    errors, found = [], []
+    for fetch in (_from_frankfurter, _from_er_api):
+        try:
+            found.append(fetch())
+        except (ApiError, KeyError, ValueError, TypeError) as exc:
+            errors.append(str(exc))
+            continue
+        day = found[-1][2]
+        if day and day >= (date.today() - timedelta(days=1)).isoformat():
+            break                                    # recent enough: no need to ask the other
+    if not found:
+        raise ApiError("; ".join(errors))
+    rates, source, _day = max(found, key=lambda f: f[2] or "")   # the newest (the ECB's when tied)
+    return rates, source
 
 
 def refresh_rates(force: bool = False) -> dict[str, float]:
-    """Fetch today's rates once per day (or when forced) and store them."""
+    """Check for newer rates (at most every CHECK_MINUTES, or when forced) and store them as today's."""
     today = date.today().isoformat()
-    if not force and db.query_one("SELECT 1 FROM fx_rates WHERE rate_date = ?", (today,)):
+    checked = cache.get_cached("fx_last_check", CHECK_MINUTES * 60) is not None
+    if not force and checked and db.query_one("SELECT 1 FROM fx_rates WHERE rate_date = ?", (today,)):
         return FxConverter.load().rates_for(today)
 
-    errors = []
-    for fetch in (_from_frankfurter, _from_er_api):
-        try:
-            rates, source = fetch()
-            break
-        except (ApiError, KeyError, ValueError, TypeError) as exc:
-            errors.append(str(exc))
-    else:
-        log.warning("Could not refresh exchange rates: %s", "; ".join(errors))
+    try:
+        rates, source = _fetch_latest()
+    except ApiError as exc:
+        log.warning("Could not refresh exchange rates: %s", exc)
         return FxConverter.load().rates_for(today)  # fall back to the latest stored rates
+    finally:
+        cache.set_cached("fx_last_check", {"at": datetime.now(timezone.utc).isoformat()})
 
     rates["USD"] = 1.0
     rows = [(today, code.upper(), float(rate), source) for code, rate in rates.items() if rate and float(rate) > 0]

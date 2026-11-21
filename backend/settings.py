@@ -53,9 +53,11 @@ def get(key: str, default: Any = None) -> Any:
 
 
 def set_value(key: str, value: Any) -> None:
+    # (Not counted as a change of data: whatever is reused across requests is keyed on the settings
+    # it depends on, so switching "Values from" doesn't throw it all away - see memo.py.)
     db.execute(
         "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        (key, json.dumps(value)),
+        (key, json.dumps(value)), counts=False,
     )
 
 

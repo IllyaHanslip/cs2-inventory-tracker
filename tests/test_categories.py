@@ -62,6 +62,42 @@ def test_terminals_added_before_the_rule_are_filed_again_once(client):
     assert db.query_one("SELECT category FROM items")["category"] == "other"
 
 
+def test_the_item_catalogue_settles_names_that_dont_say(client):
+    """A gift or music kit box whose name gives no hint is a container if the item catalogue (its
+    'crates' file, downloaded for pictures) lists it - when added, and for older items once."""
+    from backend import db, images
+
+    db.executemany("INSERT INTO item_images (market_hash_name, icon, source) VALUES (?, 'x', 'crates')",
+                   [("Pallet of Presents",), ("StatTrak™ Radicals Box",)])
+    post(client, "/api/items", {"market_hash_name": "Pallet of Presents"})
+    post(client, "/api/items", {"market_hash_name": "Global Offensive Badge"})
+    assert names(client, "container") == ["Pallet of Presents"]
+    assert images.category_for("StatTrak™ Radicals Box") == "container"
+    assert images.category_for("Global Offensive Badge") == "other"
+    # Added before the catalogue knew it: filed again once at start-up.
+    post(client, "/api/items", {"market_hash_name": "StatTrak™ Radicals Box", "category": "other"})
+    db.execute("DELETE FROM settings WHERE key = 'category_rules'")
+    db.init_db()
+    assert names(client, "container") == ["Pallet of Presents", "StatTrak™ Radicals Box"]
+
+
+def test_items_are_filed_again_when_the_catalogue_arrives(client, monkeypatch):
+    from backend import db, images
+
+    post(client, "/api/items", {"market_hash_name": "Audience Participation Parcel"})
+    assert names(client, "other") == ["Audience Participation Parcel"]          # nothing to go on yet
+
+    def download(file):                                   # only the container list ("crates") has it
+        if file == "crates":
+            db.execute("INSERT INTO item_images VALUES ('Audience Participation Parcel', 'x', 'crates')")
+        return 1
+
+    monkeypatch.setattr(images, "_download", download)
+    monkeypatch.setattr(images.Config, "ITEM_IMAGES", True)
+    images.ensure(["Audience Participation Parcel"])
+    assert names(client, "container") == ["Audience Participation Parcel"]
+
+
 def test_one_item_by_name(client):
     unit = setup(client)
     item = client.get("/api/item?name=Shanghai 2024 Legends Sticker Capsule&scope=total").get_json()["item"]

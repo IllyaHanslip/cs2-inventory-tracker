@@ -6,6 +6,7 @@ per item.
 """
 from __future__ import annotations
 
+import json
 import math
 import statistics
 from collections import Counter
@@ -15,7 +16,7 @@ import pandas as pd
 
 from config import Config
 
-from . import db, fees, sanity
+from . import db, fees, memo, sanity
 from . import settings as app_settings
 from .classify import applied_hash_name
 from .currency import FxConverter
@@ -36,13 +37,36 @@ SINGLE_MARKET_STRATEGIES = app_settings.MARKET_KEYS
 
 class Valuator:
     def __init__(self, fx: FxConverter | None = None, prefs: dict[str, Any] | None = None):
-        self.fx = fx or FxConverter.load()
+        shared = fx is None and prefs is None      # built from the stored data: reuse it while unchanged
+        self.shared = shared
+        self.fx = fx or memo.cached(("fx",), FxConverter.load)
         self.prefs = prefs or app_settings.get_all()
         self.base: str = self.prefs["base_currency"]
         self.strategy: str = self.prefs["valuation_strategy"]
         # "Values from: Cash-out markets only": markets whose money can't be withdrawn (Steam
         # Wallet) are still shown, but don't set any price or value.
         self.cash_only: bool = bool(self.prefs.get("cash_only", False))
+        self.fee_overrides = self.prefs.get("selling_fees") or {}   # (before screening: it asks cash_out)
+        # Quotes, sales and the listing check don't depend on the "Values from" switch: worked out
+        # once per version of the data and shared (read-only) by every valuation until it changes.
+        core = memo.cached(("valuator", self.signature()), self._core) if shared else self._core()
+        (self.sales, self.sales_by_source, self.sales_feeds, self.set_aside, self.trusted_sales,
+         self.quotes, self.prices, self.lowest, self.liquidity) = core
+        self.premium_cap = float(self.prefs.get("sticker_premium_cap", Config.STICKER_PREMIUM_CAP))
+        self._to_eur = self.fx.convert(1.0, self.base, "EUR")
+
+        low = self.fx.convert(Config.STICKER_PRICE_LOW, "USD", self.base) or Config.STICKER_PRICE_LOW
+        high = self.fx.convert(Config.STICKER_PRICE_HIGH, "USD", self.base) or Config.STICKER_PRICE_HIGH
+        self._sticker_low = max(low, 0.01)
+        self._sticker_high = max(high, self._sticker_low * 1.01)
+        self._best_net: dict[bool, dict[str, float]] = {}   # per "Values from" choice
+
+    def signature(self) -> tuple:
+        """The settings everything shared between valuations depends on (memo.py keys)."""
+        return (self.base, self.strategy, tuple(sorted(self.prefs.get("enabled_markets") or [])),
+                json.dumps(self.fee_overrides, sort_keys=True))
+
+    def _core(self) -> tuple:
         self.sales = self._load_sales()
         # Listings that can't be right are set aside (see sanity.py): name -> [{market, price, reason, reference}]
         self.set_aside: dict[str, list[dict[str, Any]]] = {}
@@ -53,15 +77,8 @@ class Valuator:
         self.lowest = (self.quotes.groupby("market_hash_name")["price_base"].min().to_dict()
                        if not self.quotes.empty else {})
         self.liquidity = self._liquidity()
-        self.premium_cap = float(self.prefs.get("sticker_premium_cap", Config.STICKER_PREMIUM_CAP))
-        self.fee_overrides = self.prefs.get("selling_fees") or {}
-        self._to_eur = self.fx.convert(1.0, self.base, "EUR")
-
-        low = self.fx.convert(Config.STICKER_PRICE_LOW, "USD", self.base) or Config.STICKER_PRICE_LOW
-        high = self.fx.convert(Config.STICKER_PRICE_HIGH, "USD", self.base) or Config.STICKER_PRICE_HIGH
-        self._sticker_low = max(low, 0.01)
-        self._sticker_high = max(high, self._sticker_low * 1.01)
-        self._best_net: dict[str, float] | None = None
+        return (self.sales, self.sales_by_source, self.sales_feeds, self.set_aside, self.trusted_sales,
+                self.quotes, self.prices, self.lowest, self.liquidity)
 
     # ------------------------------------------------------------------- fees
     def net(self, market: str, price: float | None) -> float | None:
@@ -120,7 +137,7 @@ class Valuator:
     def best_net(self) -> dict[str, float]:
         """Per item name: the most you'd receive for a plain copy (no stickers) after fees, on any market
         that counts (see ``counts``)."""
-        if self._best_net is None:
+        if self.cash_only not in self._best_net:
             nets: dict[str, float] = {}
             for name, market, price in zip(self.quotes["market_hash_name"], self.quotes["market"], self.quotes["price_base"]):
                 if not self.counts(market):
@@ -128,8 +145,8 @@ class Valuator:
                 value = self.net(market, float(price))
                 if value is not None and value > nets.get(name, 0.0):
                     nets[name] = value
-            self._best_net = nets
-        return self._best_net
+            self._best_net[self.cash_only] = nets
+        return self._best_net[self.cash_only]
 
     def sell_options(self, market_quotes: list[dict[str, Any]], extra: float = 0.0,
                      whole_value: float | None = None, markets: list[str] | None = None) -> list[dict[str, Any]]:
@@ -160,10 +177,11 @@ class Valuator:
         """Per item: (number of markets quoting it, total listings/volume reported)."""
         if self.quotes.empty:
             return {}
-        grouped = self.quotes.groupby("market_hash_name")
-        markets = grouped["market"].nunique()
-        volume = grouped["volume"].apply(lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum())
-        return {name: (int(markets[name]), float(volume[name])) for name in markets.index}
+        volumes = pd.to_numeric(self.quotes["volume"], errors="coerce").fillna(0)
+        grouped = self.quotes.assign(volume_n=volumes).groupby("market_hash_name")
+        markets = grouped["market"].nunique().to_dict()
+        volume = grouped["volume_n"].sum().to_dict()
+        return {name: (int(markets[name]), float(volume[name])) for name in markets}
 
     def _load_quotes(self) -> pd.DataFrame:
         df = pd.DataFrame(db.query(f"SELECT {', '.join(QUOTE_COLUMNS)} FROM market_prices"), columns=QUOTE_COLUMNS)
@@ -204,6 +222,25 @@ class Valuator:
                 out[row["market_hash_name"]] = info
         return out
 
+    def sales_market(self, name: str) -> str | None:
+        """The market whose listed price *is* this item's recent-sales figure (Steam's prices are
+        average sales), so the listing check doesn't count it twice."""
+        from .markets import SOURCES
+
+        source = self.sales.get(name, {}).get("source")
+        return source if source in SOURCES and getattr(SOURCES[source], "sales_from_prices", False) else None
+
+    def own_sales(self, name: str) -> dict[str, float]:
+        """{market: what the item has recently sold for on that market}, from sales histories kept
+        apart from its listings (Skinport's sales, CSFloat's reference price - not Steam, whose
+        listed price already *is* its sales)."""
+        out = {}
+        for source, info in self.sales_by_source.get(name, {}).items():
+            market = source.removesuffix("_ref")
+            if market != "steam" and info.get("price"):
+                out[market] = info["price"]
+        return out
+
     def _screen(self, df: pd.DataFrame) -> pd.DataFrame:
         """Set aside listings far above what the item really sells for (see sanity.py)."""
         listed = set(df["market_hash_name"]) if not df.empty else set()
@@ -223,7 +260,8 @@ class Valuator:
             inner_name = sanity.sticker_inside(name)
             inner = reference.get(inner_name) if inner_name else None
             sold = self.sales.get(name, {}).get("price")
-            kept, aside, trusted = sanity.screen(listings, sold, inner, usd)
+            kept, aside, trusted = sanity.screen(listings, sold, inner, usd, cash=self.cash_out,
+                                                 sales_market=self.sales_market(name), own_sales=self.own_sales(name))
             if trusted:
                 self.trusted_sales[name] = trusted
             reference[name] = trusted or (statistics.median(kept.values()) if kept else None)

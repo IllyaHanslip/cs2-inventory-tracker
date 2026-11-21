@@ -14,7 +14,7 @@ from config import Config
 from . import (alerts, catalogue, comparables, db, evidence, events, fees, history, images, insights, ledger, moves,
                planner,
                portfolio, settings, storage, undo)
-from .classify import APPLIED_KINDS, CATEGORIES, EXTERIORS, applied_hash_name, categorize, exterior_from_float, exterior_from_name
+from .classify import APPLIED_KINDS, CATEGORIES, EXTERIORS, applied_hash_name, exterior_from_float, exterior_from_name
 from .currency import FxConverter, last_source
 from .http_client import ApiError, RateLimitError
 from .jobs import JobBusy, jobs, refresh_job, sync_job
@@ -316,7 +316,7 @@ def _parse_item(data: dict[str, Any], existing: dict[str, Any] | None) -> tuple[
             values["market_hash_name"] = values["name"] = name
         name = values.get("market_hash_name") or existing["market_hash_name"]
         if present("category"):
-            category = data.get("category") or categorize(name)
+            category = data.get("category") or images.category_for(name)
             if category not in CATEGORIES:
                 raise ValueError(f"Category must be one of: {', '.join(CATEGORIES)}")
             values["category"] = category
@@ -561,7 +561,7 @@ def add_to_container(container_id: int):
         storage.check_capacity(conn, container_id, sum(q for _, q in rows))
         storage.mark_storage(conn, container_id)
         for name, quantity in rows:
-            values = {"source": "manual", "market_hash_name": name, "name": name, "category": categorize(name),
+            values = {"source": "manual", "market_hash_name": name, "name": name, "category": images.category_for(name),
                       "exterior": exterior_from_name(name), "quantity": quantity, "container_id": container_id,
                       "marketable": 1, "tradable": 1, "created_at": now, "updated_at": now}
             stacked += storage.add_item(conn, values, [])[1]

@@ -141,8 +141,8 @@ Once today's update has happened, by the task or because you opened the dashboar
 tomorrow; those hourly checks only read your local database and use no internet. Each run is noted in
 `data\update.log`. Days the PC is off all day are skipped; charts carry the last value across.
 
-After each background update a **Windows notification** sums up what it found: your total and the change since
-yesterday, the biggest riser and faller, how many items moved 10 %+ (`ALERT_MOVE_PCT`), items that now sell best
+When an update starts by itself - this background one, or the open app's own - a **Windows notification** says
+so, and another sums up what it found when it's done: your total and the change since yesterday, the biggest riser and faller, how many items moved 10 %+ (`ALERT_MOVE_PCT`), items that now sell best
 on a different market, and any unrealistic listings it ignored. Clicking it opens the dashboard. The script also
 registers the notifications' name and the link they open, under your account only; if you set it up before
 notifications existed, run it again. Turn them off with `NOTIFICATIONS=false`.
@@ -201,7 +201,7 @@ Most of them can also be changed later in the app's **Settings** dialog.
 | `DAILY_UPDATE_TIME` | Earliest time of day for the automatic background update (default `12:00`). |
 | `BULK_SELL_DAYS` | For the "selling many at once" estimate: each market takes about what it sells in this many days (default `30`). |
 | `ITEM_IMAGES` | Find pictures for items you add by hand (default `true`). |
-| `NOTIFICATIONS` | Show a Windows notification after each background update (default `true`). |
+| `NOTIFICATIONS` | Show a Windows notification when an automatic update starts and when it's done (default `true`). |
 | `ALERT_MOVE_PCT` | An item moving at least this much (%) in a day is counted in that notification (default `10`). |
 
 ### API keys
@@ -218,6 +218,9 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
 ## How values are worked out
 
 - **Market prices**: each market's cheapest current listing of the item, converted with that day's exchange rate.
+  The rates are checked again with every price update (at most every half hour), so a morning update doesn't keep
+  using the day before's all day; when the European Central Bank's latest are more than a day old (weekends,
+  holidays) the newer of the two sources is used.
 - **Selling price** (what every price and value on the page shows): the most you'd receive on any market after
   its fees. For each market, that's its cheapest listing plus your stickers' value, minus the selling fee and
   withdrawal fee; the best market wins. Steam counts too, marked as Steam Wallet money. A **custom price** you
@@ -228,9 +231,12 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
   capsules aren't all valued at the price of a market that sells 8 a week. Copies spread across several entries
   or containers are pooled. **Value** and every total use this estimate; **Price** stays the best price for
   one, and the item view shows both, with each market's total for all your copies and how the estimate splits.
-- **Price check**: a listing is ignored when it's more than 3 times (and at least $1 above) the item's recent
-  sales (Skinport's sales history, or what it sold for on average on Steam), or without sales, its price on the other
-  markets. A Sticker Slab with neither is compared with the sticker inside: a slab can be cracked open to get its
+- **Price check**: a market's cheapest listing is only an asking price, so it's ignored when it's far above what
+  the item goes for elsewhere - the middle of its prices on the other markets and its recent sales (Skinport's sales
+  history, what it sold for on average on Steam, CSFloat's reference price). "Far above" is more than twice that on
+  a market you can withdraw money from, more than 3 times on Steam (wallet money, naturally dearer) or with only one
+  other figure to compare with, and always at least 10 cents above it - so cheap items are checked too. A Sticker
+  Slab with nothing else to go on is compared with the sticker inside: a slab can be cracked open to get its
   sticker back, so it's worth at least that much, and is ignored above 4 times it. Cheap listings are never
   ignored. When every listing is ignored, the item is valued from its recent sales, or a slab from the sticker
   inside. This is a simple statistical rule rather than a trained model, so each decision can be explained.

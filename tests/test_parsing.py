@@ -35,6 +35,13 @@ def test_parse_money(text, expected):
     ("Sealed Genesis Terminal", "container"),          # CS2's terminals are containers too
     ("Sealed Dead Hand Terminal", "container"),
     ("Sealed Graffiti | Terminal", "other"),           # ...but not graffiti that happens to say it
+    ("MLG Columbus 2016 Challengers (Holo-Foil)", "container"),   # capsules from before "Capsule" was in names
+    ("EMS Katowice 2014 Legends", "container"),
+    ("2020 RMR Contenders", "container"),
+    ("Boston 2018 Minor Challengers with Flash Gaming (Holo/Foil)", "container"),
+    ("Operation Riptide Sticker Collection", "container"),
+    ("Sticker | Natus Vincere (Holo) | MLG Columbus 2016", "sticker"),
+    ("Cologne 2016 Gold Coin", "other"),
 ])
 def test_categorize(name, expected):
     assert categorize(name) == expected

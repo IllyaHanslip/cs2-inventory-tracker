@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 from config import Config
 
-from . import alerts, cache, catalogue, comparables, currency, db, history, images, settings
+from . import alerts, cache, catalogue, comparables, currency, db, history, images, sanity, settings
 from .classify import applied_hash_name
 from .sanity import sticker_inside
 from .http_client import ApiError, AuthError, CancelledError, RateLimitError
@@ -219,7 +219,7 @@ def refresh_reasons() -> list[str]:
     no_sales = not db.query_one("SELECT 1 FROM sale_prices WHERE source = 'skinport'")
     if "skinport" in prefs["enabled_markets"] and no_sales and _hours_since(attempts.get("sales")) > Config.PRICE_TTL_HOURS:
         reasons.append("recent sales haven't been fetched yet")
-    if db.query_one("SELECT 1 FROM portfolio_snapshots WHERE basis = 'after_fees' AND screened = 0"):
+    if db.query_one("SELECT 1 FROM portfolio_snapshots WHERE basis = 'after_fees' AND screened < ?", (sanity.RULES,)):
         reasons.append("older history needs checking for unrealistic prices")
     return reasons
 

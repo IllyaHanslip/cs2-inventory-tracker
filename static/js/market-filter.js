@@ -124,16 +124,20 @@ export function walletOnlyHtml(item, currency) {
     <div class="sub" title="${esc(NOT_COUNTED_WHY)}">${esc(where)} only · not counted</div>`;
 }
 
+/** "twice", "3 times": how far above a listing was to be ignored (saved before this was sent: 3). */
+const times = (factor) => (Number(factor) === 2 ? 'twice' : `${Number(factor) || 3} times`);
+
 const ASIDE_REASONS = {
-  sales: (ref, cur) => `more than 3 times what it has recently sold for (${money(ref, cur)})`,
-  markets: (ref, cur) => `more than 3 times its price on the other markets (${money(ref, cur)})`,
+  sales: (ref, cur, f) => `more than ${times(f)} what it has recently sold for (${money(ref, cur)})`,
+  markets: (ref, cur, f) => `more than ${times(f)} its price on the other markets (${money(ref, cur)})`,
+  elsewhere: (ref, cur, f) => `more than ${times(f)} what it goes for elsewhere (${money(ref, cur)}, from the other markets and recent sales)`,
   sticker_inside: (ref, cur) => `far above the value of the sticker inside it (${money(ref, cur)})`,
 };
 
-/** Why a market's listing was left out, e.g. "its lowest listing (£0.78) is more than 3 times
- *  what it has recently sold for (£0.0076)". */
+/** Why a market's listing was left out, e.g. "its lowest listing (£0.44) is more than twice
+ *  what it goes for elsewhere (£0.14, from the other markets and recent sales)". */
 export function asideText(aside, currency) {
-  const why = ASIDE_REASONS[aside.reason] ? ASIDE_REASONS[aside.reason](aside.reference, currency) : 'unrealistic';
+  const why = ASIDE_REASONS[aside.reason] ? ASIDE_REASONS[aside.reason](aside.reference, currency, aside.factor) : 'unrealistic';
   return `its lowest listing (${money(aside.price, currency)}) is ${why}`;
 }
 
