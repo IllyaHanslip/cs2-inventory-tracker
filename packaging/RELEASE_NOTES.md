@@ -2,7 +2,13 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.5.5
+### What's new in v1.5.6
+
+- **"Confirm all as set" straight after confirming one change** no longer sends that change again: you'd
+  see "That change has already been dealt with" and a "still need you to choose" count one too high
+  (nothing was saved twice). Changes already on their way are left out.
+
+### v1.5.5
 
 - **The Sell Planner keeps some of each item for later**: "Keep for later" (next to "Undercut by") holds back part
   of every item in case its price goes up - half of each by default, or nothing, a quarter or three quarters. The

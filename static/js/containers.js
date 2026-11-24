@@ -102,6 +102,18 @@ export function reopenIfOpen() {
 
 /** Refresh everything after a change: an open container first (it's what you're looking at), then
  *  the rest of the dashboard. */
+/** Rows on their way (sent, waiting for the app's answer): marked, so "Confirm all" and their own
+ *  buttons leave them alone; unmarked again if it fails. */
+async function settle(rows, send) {
+  rows.forEach((row) => row.classList.add('settling'));
+  try {
+    return await send();
+  } catch (error) {
+    rows.forEach((row) => row.classList.remove('settling'));
+    throw error;
+  }
+}
+
 async function afterChange() {
   if ($('#container-dialog').open && manager.id) await openContainer(manager.id, { animate: false });
   await app.refreshAll();
@@ -144,6 +156,7 @@ export class ContainersView {
     root.querySelector('#ct-changes').addEventListener('click', (event) => {
       const button = event.target.closest('[data-act]');
       if (!button || button.disabled) return;
+      if (button.closest('[data-change]')?.classList.contains('settling')) return;   // already on its way
       const run = (work) => {
         button.disabled = true;
         work.catch((error) => { toast(error.message, 'error'); button.disabled = false; });
@@ -262,7 +275,7 @@ export class ContainersView {
     const { action, price } = body;
     const unit = body.container_id ? String(body.container_id) : '';
     const change = this.changes.changes.find((c) => String(c.id) === row.dataset.change);
-    const result = await api(`/changes/${row.dataset.change}`, { method: 'POST', body });
+    const result = await settle([row], () => api(`/changes/${row.dataset.change}`, { method: 'POST', body }));
     forgetChangeDraft(row.dataset.key);
     await this.leaveRows([row]);
     const label = this.changes.units.find((u) => String(u.id) === unit)?.label;
@@ -281,7 +294,7 @@ export class ContainersView {
   }
 
   async dismissChange(row) {
-    const result = await api(`/changes/${row.dataset.change}`, { method: 'POST', body: { action: 'dismiss' } });
+    const result = await settle([row], () => api(`/changes/${row.dataset.change}`, { method: 'POST', body: { action: 'dismiss' } }));
     const change = this.changes.changes.find((c) => String(c.id) === row.dataset.change);
     forgetChangeDraft(row.dataset.key);
     await this.leaveRows([row]);
@@ -292,7 +305,9 @@ export class ContainersView {
   /** Confirm every row as it's set on screen (your choices and prices, not just the suggestions),
    *  in one go, so one Undo puts them all back. */
   async applyAllChanges() {
-    const rows = [...this.root.querySelectorAll('#ct-changes [data-change]')];
+    // Not rows already confirmed or dismissed on their own (still folding away, or waiting for the
+    // app's answer): they'd be sent twice.
+    const rows = [...this.root.querySelectorAll('#ct-changes [data-change]:not(.settling):not(.collapsing)')];
     const chosen = [];
     for (const row of rows) {
       try {
@@ -306,8 +321,10 @@ export class ContainersView {
       toast('Choose what happened on at least one row first.', 'warn');
       return;
     }
-    const result = await api('/changes/batch', { method: 'POST', body: { changes: chosen.map((c) => c.body) } });
+    const result = await settle(chosen.map((c) => c.row),
+      () => api('/changes/batch', { method: 'POST', body: { changes: chosen.map((c) => c.body) } }));
     const done = chosen.filter(({ row }) => result.ids?.includes(Number(row.dataset.change))).map(({ row }) => row);
+    for (const { row } of chosen) if (!done.includes(row)) row.classList.remove('settling');   // not taken: still yours
     for (const row of done) forgetChangeDraft(row.dataset.key);
     await this.leaveRows(done);
     for (const problem of result.problems || []) toast(problem, 'warn', 9000);
