@@ -2,7 +2,19 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.5.4
+### What's new in v1.5.5
+
+- **The Sell Planner keeps some of each item for later**: "Keep for later" (next to "Undercut by") holds back part
+  of every item in case its price goes up - half of each by default, or nothing, a quarter or three quarters. The
+  plan sells the rest of every item first, so the amount is spread over more of them (say 30 of your 60 Fracture
+  Cases and 20 of 40 Dreams & Nightmares rather than all of one), and only sells what's held back if the amount
+  can't be reached otherwise. A single item can't be split, so it's held back too. Each row says how many you keep.
+- **Kept items, in one place**: the items you've pressed Keep on (so the plan never sells them) are listed under
+  "Kept items" above the plan, with a count - most recently kept first, how many, where they're stored and what
+  they'd fetch. Unkeep brings one back, Unkeep all brings back the lot, and the message after pressing Keep has
+  an Undo (Ctrl+Z works too). Before, the only way back was one link at the bottom that restored everything.
+
+### v1.5.4
 
 - **Much faster**: the dashboard reuses the valuation and its price history until something actually
   changes, checks saved prices for unrealistic listings several times faster, and answers its heavy views one

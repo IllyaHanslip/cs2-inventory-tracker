@@ -800,6 +800,23 @@ button.mover:hover { background: var(--surface-2); }
 #plan-markets { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px 20px; }
 .plan-market h3 { font-size: 14px; margin: 0 0 6px; }
 .plan-market ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text-secondary); }
+/* Above the plan: what's left out of it, and the kept items' window. */
+.plan-table-head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+}
+.plan-table-head .hint { margin: 0; }
+.plan-table-head .btn { margin-left: auto; }
+.kept-count {
+  display: inline-block; min-width: 18px; margin-left: 4px; padding: 1px 6px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent-hover); font-size: 11.5px; font-weight: 700; text-align: center;
+}
+.kept-count[hidden] { display: none; }
+.kept-list { list-style: none; margin: 0; padding: 0; }
+.kept-item { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.kept-item:last-child { border-bottom: 0; }
+.kept-what { flex: 1; min-width: 0; }
+.kept-what .item-name { display: block; overflow-wrap: anywhere; }
 
 /* Live demo site banner */
 .demo-banner { padding: 8px 16px; text-align: center; font-size: 13px; background: var(--accent-soft); color: var(--text-primary); border-bottom: 1px solid var(--border); }

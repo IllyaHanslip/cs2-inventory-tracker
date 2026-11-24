@@ -199,12 +199,25 @@
             <option value="5">5%</option>
             <option value="10">10%</option>
           </select></label>
+        <label class="plan-amount" title="How much of each item to hold back in case its price goes up: the plan sells the rest of every item first, spreading the amount over more of them, and only sells what's held back if the amount can't be reached otherwise. (A single item can't be split, so it's held back too.)">Keep for later
+          <select class="input select-small" id="plan-hold">
+            <option value="0">nothing</option>
+            <option value="0.25">a quarter of each</option>
+            <option value="0.5" selected>half of each (suggested)</option>
+            <option value="0.75">three quarters of each</option>
+          </select></label>
       </div>
       <div class="plan-over" id="plan-over" role="status" hidden></div>
       <p class="hint" id="plan-limit"></p>
     </div>
     <div class="stats" id="plan-stats"></div>
     <div class="card table-card">
+      <div class="plan-table-head">
+        <p class="hint" id="plan-kept"></p>
+        <button type="button" class="btn btn-small" id="plan-kept-btn" aria-haspopup="dialog"
+                title="The items you pressed Keep on: the plan never sells them. See them, and bring any back into the plan.">Kept items
+          <span class="kept-count" id="plan-kept-count" hidden></span></button>
+      </div>
       <div class="table-scroll"><table class="data" id="plan-table" data-sort-id="sell-plan">
         <thead><tr><th class="col-icon"><span class="sr-only">Image</span></th>
           <th data-sort="text" data-key="name">Item</th><th class="num" data-sort="num" data-key="units">Sell</th>
@@ -217,15 +230,16 @@
       <div class="card-head"><h2 class="card-title">Listing guide by market</h2></div>
       <div id="plan-markets"></div>
     </div>
-    <p class="hint" id="plan-kept"></p>
     <p class="hint">The filters above choose which items and markets the plan may use. The bar always runs to everything
       you could sell on the chosen markets; the part your filters can raise is blue, with a marker where it ends.</p>
     <p class="hint">How it chooses: items whose after-fee price has been falling go first and rising ones are kept;
       copies from big stacks go before one-offs; expensive single items are kept longest. Each market is used best price
       first, but only for about as many as it sells in 30 days, so later copies may go elsewhere for less. Every copy
       is priced a little under each market's price (Undercut by - always at least 1p/1c under) so yours sell first,
-      and fees come off that lower price. Cheap copies cover the last few pounds rather than selling something
-      expensive that overshoots.</p>
+      and fees come off that lower price. Keep for later holds back part of every item in case prices go up: the rest
+      of each item is sold first, spreading the amount over more items, and what's held back only if the amount can't
+      be reached otherwise. Cheap copies cover the last few pounds rather than selling something expensive that
+      overshoots.</p>
   </section>
 
   <section class="tab-panel" id="panel-markets" role="tabpanel" aria-labelledby="tab-markets" hidden>
@@ -609,6 +623,15 @@
 <dialog id="alerts-dialog" class="dialog dialog-wide" aria-labelledby="alerts-title">
   <div class="dialog-head"><h2 id="alerts-title">Price alerts</h2><button type="button" class="btn-close" data-close aria-label="Close" title="Close">×</button></div>
   <div class="dialog-body" id="alerts-body"></div>
+</dialog>
+
+<dialog id="kept-dialog" class="dialog" aria-labelledby="kept-title">
+  <div class="dialog-head"><h2 id="kept-title">Kept out of the Sell Planner</h2><button type="button" class="btn-close" data-close aria-label="Close" title="Close">×</button></div>
+  <div class="dialog-body" id="kept-body"></div>
+  <div class="dialog-actions">
+    <button type="button" class="btn" id="kept-all">Unkeep all</button><span class="spacer"></span>
+    <button type="button" class="btn btn-primary" data-close>Done</button>
+  </div>
 </dialog>
 
 <dialog id="keys-dialog" class="dialog" aria-labelledby="keys-title">

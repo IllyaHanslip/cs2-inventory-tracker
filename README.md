@@ -69,7 +69,9 @@ install) · **[Download the Windows app](https://github.com/IllyaHanslip/cs2-inv
   first, copies from big stacks before one-offs, your most valuable items last. Narrow it to the items you'd sell
   (the same filters as your inventory: search, kinds of item, event, collection, wear, container…) and the markets
   you'd use; the slider shows how much those can raise. It assumes you list a little under each market's price so
-  yours sell first (2% by default; choose 0-10%), and tells you what to list at.
+  yours sell first (2% by default; choose 0-10%), and tells you what to list at. It keeps part of each item for
+  later in case prices go up (half by default), selling the rest of every item first and the kept share only if needed.
+  Press Keep on any row to never sell that item; "Kept items" lists everything you've kept, with Unkeep to bring any back.
 - **Group by anything**: event (Paris 2023, Budapest 2025…), collection, type (knives, gloves, rifles…), weapon,
   rarity, wear or container, with subtotals.
 - **Biggest movers and portfolio mix**: what rose and fell the most, and how your value splits across knives,

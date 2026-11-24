@@ -1,6 +1,7 @@
 // "Sell Planner" tab: choose which items and markets to use, then an amount (the slider or the box),
 // and the page works out which items to sell, how many and where (plan-calc.js) from what the server
-// sends once (/api/sell-candidates). Items can be kept out of the plan.
+// sends once (/api/sell-candidates). Items can be kept out of the plan ("Keep" on a row); "Kept items"
+// above the plan lists them, each with Unkeep to bring it back.
 //
 // The slider always runs to everything you could sell on the chosen markets. The item filters (and
 // kept items) colour the part they can raise, with a marker at its end; an amount beyond it stays as
@@ -9,9 +10,10 @@
 import { api } from './api.js';
 import * as dialogs from './dialogs.js';
 import { marketLink, noCashLabel } from './market-filter.js';
-import { steady } from './motion.js';
+import { collapseOut, setBadge, steady } from './motion.js';
 import { choose, prepare } from './plan-calc.js';
 import { applySort } from './sortable.js';
+import { pageDoneToast } from './undo.js';
 import { CATEGORY_FILTERS, debounce, esc, groupOf, money, number, store, thumbHtml, toast } from './util.js';
 
 const SNAP_PX = 8;             // dragging this close to the filters' maximum lands on it exactly
@@ -36,10 +38,12 @@ export class PlannerView {
     this.el = {
       search: $('plan-search'), chips: $('plan-chips'), by: $('plan-filter-by'), only: $('plan-filter-only'),
       stored: $('plan-stored'), clear: $('plan-clear'), marketChips: $('plan-market-chips'), wallet: $('plan-wallet'),
-      bar: $('plan-bar'), slider: $('plan-slider'), target: $('plan-target'), undercut: $('plan-undercut'),
+      bar: $('plan-bar'), slider: $('plan-slider'), target: $('plan-target'), undercut: $('plan-undercut'), hold: $('plan-hold'),
       currency: $('plan-currency'), over: $('plan-over'), limit: $('plan-limit'), stats: $('plan-stats'),
       table: $('plan-table'), empty: $('plan-empty'), marketsCard: $('plan-markets-card'), markets: $('plan-markets'),
-      kept: $('plan-kept'),
+      kept: $('plan-kept'), keptBtn: $('plan-kept-btn'), keptCount: $('plan-kept-count'),
+      keptDialog: document.getElementById('kept-dialog'), keptBody: document.getElementById('kept-body'),
+      keptAll: document.getElementById('kept-all'),
     };
     const zones = root.querySelectorAll('.plan-zone');
     this.el.zones = { sel: zones[0], avail: zones[1], over: zones[2] };
@@ -50,6 +54,7 @@ export class PlannerView {
     if ([...this.el.undercut.options].some((o) => Number(o.value) === saved.undercut)) {
       this.el.undercut.value = String(saved.undercut);   // a choice no longer offered: the default
     }
+    if ([...this.el.hold.options].some((o) => Number(o.value) === saved.hold)) this.el.hold.value = String(saved.hold);
     this.el.by.value = this.filters.by;
     this.el.stored.checked = this.filters.stored;
     this.el.chips.innerHTML = `<button type="button" class="chip" data-cat="">All</button>${CATEGORIES
@@ -57,7 +62,7 @@ export class PlannerView {
       .join('')}`;
 
     // Item filters, markets and the undercut change what can be sold: work it all out again.
-    const rework = () => { this.persist(); this.prepare(); this.render(); };
+    const rework = (this.rework = () => { this.persist(); this.prepare(); this.render(); });
     this.el.search.addEventListener('input', debounce(() => { this.filters.q = this.el.search.value.trim(); rework(); }, 150));
     this.el.chips.addEventListener('click', (event) => {
       const chip = event.target.closest('.chip');
@@ -88,6 +93,7 @@ export class PlannerView {
     });
     this.el.wallet.addEventListener('change', rework);
     this.el.undercut.addEventListener('change', rework);
+    this.el.hold.addEventListener('change', rework);
 
     // The amount: the slider and the box show the same amount (the box can go past the slider's end).
     this.dragging = false;
@@ -109,8 +115,14 @@ export class PlannerView {
     this.el.table.addEventListener('click', (event) => {
       const keep = event.target.closest('[data-keep]');
       if (keep) {
-        keep.dataset.keep.split(',').forEach((id) => this.keep.add(Number(id)));
+        const ids = keep.dataset.keep.split(',').map(Number).filter((id) => !this.keep.has(id));
+        const name = keep.closest('tr')?.dataset.view || 'That item';
+        ids.forEach((id) => this.keep.add(id));
         rework();
+        pageDoneToast(`${name} is kept out of the plan. "Kept items" above the plan lists it.`, () => {
+          ids.forEach((id) => this.keep.delete(id));
+          this.rework();
+        });
         return;
       }
       if (event.target.closest('a')) return;            // a market link: just open it
@@ -120,17 +132,34 @@ export class PlannerView {
     this.el.table.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && event.target.matches('tr[data-view]')) this.view(event.target.dataset.view);
     });
-    this.el.kept.addEventListener('click', (event) => {
-      if (!event.target.closest('[data-unkeep]')) return;
+    // Kept items: a window listing them, each with Unkeep.
+    this.el.keptBtn.addEventListener('click', () => this.openKept());
+    this.el.keptBody.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-unkeep]');
+      if (!button || button.disabled) return;
+      button.disabled = true;
+      const lot = button.dataset.unkeep;
+      await collapseOut(button.closest('li'));
+      for (const row of this.data.rows) if (row.lot === lot) this.keep.delete(row.id);
+      this.rework();
+    });
+    this.el.keptAll.addEventListener('click', () => {
+      const before = [...this.keep];
+      const count = this.keptItems().length;
       this.keep.clear();
-      rework();
+      this.el.keptDialog.close();
+      this.rework();
+      pageDoneToast(`${number(count)} kept item${count === 1 ? ' is' : 's are'} back in the plan.`, () => {
+        before.forEach((id) => this.keep.add(id));
+        this.rework();
+      });
     });
     this.savePlan = debounce(() => this.persist(), 300);
   }
 
   persist() {
     store.set('planner', {
-      target: this.target(), undercut: Number(this.el.undercut.value), keep: [...this.keep],
+      target: this.target(), undercut: Number(this.el.undercut.value), hold: Number(this.el.hold.value), keep: [...this.keep],
       categories: this.filters.categories, filterBy: this.filters.by, filterOnly: this.filters.only,
       stored: this.filters.stored, wallet: this.el.wallet.checked, marketsOff: [...this.marketsOff],
     });
@@ -190,7 +219,8 @@ export class PlannerView {
   /** Everything that doesn't depend on the amount: what the filtered items can raise, and everything. */
   prepare() {
     if (!this.data) return;
-    const options = { markets: this.markets(), undercut: Number(this.el.undercut.value), keep: this.keep };
+    const options = { markets: this.markets(), undercut: Number(this.el.undercut.value), keep: this.keep,
+      holdBack: Number(this.el.hold.value) };
     this.picked = prepare(this.data, this.filtered(), options);
     this.everything = prepare(this.data, this.data.rows, { ...options, keep: new Set() });
   }
@@ -223,6 +253,73 @@ export class PlannerView {
     this.renderFilters();
     this.renderBar();
     this.renderPlan();
+    this.renderKept();
+  }
+
+  /** The kept items still in the inventory, one entry per item (most recently kept first), with how
+   *  many, where they're stored and what they'd fetch on the chosen markets. */
+  keptItems() {
+    if (!this.data || !this.keep.size) return [];
+    const rows = new Map(this.data.rows.map((row) => [row.id, row]));
+    const items = new Map();
+    for (const id of [...this.keep].reverse()) {
+      const row = rows.get(id);
+      if (!row) continue;                       // sold or gone since it was kept
+      let item = items.get(row.lot);
+      if (!item) {
+        const lot = this.data.lots[row.lot];
+        item = { lot: row.lot, name: lot?.name || row.lot, icon: lot?.icon || null, rows: [] };
+        items.set(row.lot, item);
+      }
+      item.rows.push(row);
+    }
+    if (!items.size) return [];
+    const worth = prepare(this.data, [...items.values()].flatMap((item) => item.rows),
+      { markets: this.markets(), undercut: Number(this.el.undercut.value) });
+    return [...items.values()].map((item) => {
+      const lot = worth.lots.get(item.lot);
+      return { ...item, quantity: item.rows.reduce((sum, row) => sum + row.quantity, 0),
+        value: lot?.steps ? lot.steps.reduce((sum, step) => sum + step.net * step.units, 0) : null,
+        locked: item.rows.every((row) => row.locked) };
+    });
+  }
+
+  /** The count on "Kept items", and the window's list when it's open. */
+  renderKept() {
+    const items = this.keptItems();
+    setBadge(this.el.keptCount, items.length);
+    if (this.el.keptDialog.open) this.renderKeptList(items);
+  }
+
+  openKept() {
+    this.renderKeptList(this.keptItems());
+    this.el.keptDialog.showModal();
+  }
+
+  renderKeptList(items) {
+    const cur = this.data?.currency;
+    this.el.keptAll.hidden = !items.length;
+    if (!items.length) {
+      this.el.keptBody.innerHTML = `<p class="muted">Nothing is kept out of the plan. Press <strong>Keep</strong> on a row of the
+        plan and the plan never sells that item; it's listed here, so you can bring it back whenever you like.</p>`;
+      return;
+    }
+    const where = (item) => {
+      const boxes = [...new Set(item.rows.filter((row) => row.in_container).map((row) => row.container_name || 'a container'))];
+      if (!boxes.length) return '';
+      return ` · in ${boxes.join(', ')}${item.rows.some((row) => !row.in_container) ? ' and your inventory' : ''}`;
+    };
+    const worth = (item) => (item.value != null
+      ? `you'd get ${money(item.value, cur)} for ${item.quantity === 1 ? 'it' : 'all of them'} on these markets`
+      : item.locked ? 'trade-locked' : 'no price on the markets chosen');
+    this.el.keptBody.innerHTML = `<p class="muted small">The plan never sells these. Unkeep one to let the plan use it again.
+        Most recently kept first.</p>
+      <ul class="kept-list">${items.map((item) => `<li class="kept-item">
+        ${thumbHtml({ icon: item.icon, category: 'other' })}
+        <div class="kept-what"><div class="item-name" title="${esc(item.name)}">${esc(item.name)}</div>
+          <div class="sub">${number(item.quantity)} kept${esc(where(item))} · ${esc(worth(item))}</div></div>
+        <button type="button" class="btn btn-small" data-unkeep="${esc(item.lot)}" title="Let the plan sell this again">Unkeep</button>
+      </li>`).join('')}</ul>`;
   }
 
   renderFilters() {
@@ -325,8 +422,10 @@ export class PlannerView {
             these markets is <strong>${esc(money(reach, cur))}</strong> - the plan below sells all of it.`;
     }
     const undercut = Number(this.el.undercut.value);
-    const how = undercut > 0 ? `listing each copy ${number(undercut)}% under the market price so it sells first.`
-      : 'listing at the market price.';
+    const held = this.el.hold.selectedOptions[0]?.textContent.replace(/\s*\(.*\)$/, '');
+    const how = (undercut > 0 ? `listing each copy ${number(undercut)}% under the market price so it sells first`
+      : 'listing at the market price')
+      + (Number(this.el.hold.value) > 0 ? `, and keeping ${held} item for later unless the amount needs it.` : '.');
     this.el.limit.textContent = limit != null
       ? `The items you've picked can raise up to ${money(limit, cur)} (everything on these markets: ${money(all, cur)}), ${how}`
       : `Up to ${money(all, cur)} can be raised from everything you could sell on these markets, ${how}`;
@@ -356,7 +455,7 @@ export class PlannerView {
           <span class="muted small">at ${money(m.net, cur)}${m.wallet ? ` · ${esc(noCashLabel(m.market, true))}` : ''}</span>`).join('<br>')}</td>
         <td class="num strong" data-v="${s.proceeds}">${money(s.proceeds, cur)}</td>
         <td class="small" data-v="${esc(s.reasons.join('; '))}">${s.reasons.map(esc).join('<br>')}</td>
-        <td><button type="button" class="btn btn-small" data-keep="${s.ids.join(',')}" title="Never sell this - plan without it">Keep</button></td>
+        <td><button type="button" class="btn btn-small" data-keep="${s.ids.join(',')}" title="Never sell this - plan without it (Kept items, above the plan, brings it back)">Keep</button></td>
       </tr>`).join('');
     applySort(this.el.table);
     this.el.empty.hidden = d.steps.length > 0;
@@ -375,9 +474,9 @@ export class PlannerView {
 
     const excluded = d.excluded;
     const notes = [];
-    if (this.keep.size) notes.push(`${number(this.keep.size)} item${this.keep.size === 1 ? '' : 's'} kept out of the plan <button type="button" class="link-btn" data-unkeep>Bring them back</button>`);
     if (excluded.locked) notes.push(`${number(excluded.locked)} trade-locked`);
     if (excluded.no_price) notes.push(`${number(excluded.no_price)} without a price on the chosen markets`);
-    this.el.kept.innerHTML = notes.length ? `Not in the plan: ${notes.join(' · ')}.` : '';
+    this.el.kept.innerHTML = notes.length ? `Not in the plan: ${notes.join(' · ')}.`
+      : 'Press Keep on a row to leave that item out of the plan.';
   }
 }

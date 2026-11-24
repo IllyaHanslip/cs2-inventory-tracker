@@ -1,6 +1,7 @@
 // Undo for the last change: the server answers an undoable change (removing, moving, deleting,
 // confirming a change from a Steam sync...) with a token, and the message saying it's done gets an
 // Undo button. Ctrl+Z does the same until something else changes (the server then refuses).
+// Changes made only in the page (keeping an item out of the Sell Planner) undo themselves the same way.
 
 import { api } from './api.js';
 import { dismissToast, toast } from './util.js';
@@ -8,7 +9,7 @@ import { dismissToast, toast } from './util.js';
 export const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 export const UNDO_KEY = IS_MAC ? '⌘Z' : 'Ctrl+Z';
 
-let last = null;              // { token, el }
+let last = null;              // { token, el }, or { undo, el } for a change made only in the page
 let refresh = async () => {};
 
 /** What to reload after an undo (set once by the app). */
@@ -27,6 +28,13 @@ export function doneToast(message, token, timeout = 0) {
   last = { token, el };
 }
 
+/** "Done" message for a change made only in the page: its Undo button (and Ctrl+Z) runs ``undo``. */
+export function pageDoneToast(message, undo, timeout = 0) {
+  dismissToast(last?.el);
+  const el = toast(message, 'ok', timeout, { action: { label: 'Undo', key: UNDO_KEY, run: () => undoLast() } });
+  last = { undo, el };
+}
+
 export function canUndo() {
   return Boolean(last);
 }
@@ -36,9 +44,14 @@ export async function undoLast() {
     toast('Nothing to undo.', 'info', 3000);
     return false;
   }
-  const { token, el } = last;
+  const { token, undo, el } = last;
   last = null;
   dismissToast(el);
+  if (undo) {
+    undo();
+    toast('Undone - everything is back as it was.', 'ok', 5000);
+    return true;
+  }
   try {
     await api(`/undo/${token}`, { method: 'POST' });
     toast('Undone - everything is back as it was.', 'ok', 5000);

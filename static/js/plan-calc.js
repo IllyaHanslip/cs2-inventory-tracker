@@ -10,6 +10,10 @@
 // best price first, each market taking only about what it sells in 30 days, so later copies of the same
 // item may fetch less. Near the end, cheap copies cover the last few pounds instead of selling something
 // expensive that overshoots. Every copy is listed a little under the market's price (the undercut).
+// Part of every item can be kept for later, in case its price goes up (``holdBack``, a share): the plan
+// first sells only the rest of each item, spreading the amount over more of them, and touches what's
+// kept back only when the amount can't be reached otherwise. (A single item can't be split, so it
+// counts as kept back.)
 
 /** Higher = keep. Falling items, big stacks and cheap copies score low, so they're sold first. */
 export function keepScore(weekly, stack, unitValue) {
@@ -47,7 +51,7 @@ export function bulkPlan(options, quantity) {
  *   keep      Set of row ids never to sell
  * Returns { copies (in selling order), lots, max, excluded: {kept, locked, no_price} }.
  */
-export function prepare(data, rows, { markets, undercut, keep = new Set() }) {
+export function prepare(data, rows, { markets, undercut, keep = new Set(), holdBack = 0 }) {
   const at = Math.max(0, data.undercuts.indexOf(undercut));
   const labels = new Map(data.markets.map((m) => [m.key, m.label]));
   // Trends from cash-out markets only, unless you'll also sell where money can't be withdrawn.
@@ -80,17 +84,20 @@ export function prepare(data, rows, { markets, undercut, keep = new Set() }) {
     lot.steps = bulkPlan(lot.options, lot.units);
     // One score per item (from its best price), so its copies go best-paying market first.
     lot.score = lot.steps.length ? keepScore(lot.weekly, lot.units, lot.steps[0].net) : Infinity;
+    // How many may go before what's kept for later: "keep half" of 9 keeps 5 and sells 4 at first.
+    lot.first = lot.units - Math.ceil(Math.min(Math.max(holdBack, 0), 1) * lot.units);
     let position = 0;
     for (const step of lot.steps) {
       for (let i = 0; i < step.units; i += 1) {
-        copies.push({ score: lot.score, position, lot, step });
+        copies.push({ score: lot.score, position, lot, step, kept: position >= lot.first ? 1 : 0 });
         max += step.net;
         position += 1;
       }
     }
   }
-  // Lowest keep score first (and an item's best-paying copies before its later ones).
-  copies.sort((a, b) => a.score - b.score || a.position - b.position);
+  // Every item's share before anything kept for later; then lowest keep score first (and an item's
+  // best-paying copies before its later ones).
+  copies.sort((a, b) => a.kept - b.kept || a.score - b.score || a.position - b.position);
   return { copies, lots, max, excluded };
 }
 
@@ -111,13 +118,16 @@ export function choose(prepared, target) {
     // Still short: the copy that covers the rest with the least left over, keep score breaking ties.
     const gap = target - total;
     const covering = later.filter((c) => c.step.net >= gap);
+    // (Not kept for later beats kept, then the smallest that covers it, then the lowest keep score.)
+    const better = (a, b) => b.kept < a.kept || (b.kept === a.kept && (b.step.net < a.step.net
+      || (b.step.net === a.step.net && b.score < a.score)));
     const pick = covering.length
-      ? covering.reduce((a, b) => (b.step.net < a.step.net || (b.step.net === a.step.net && b.score < a.score) ? b : a))
+      ? covering.reduce((a, b) => (better(a, b) ? b : a))
       : later.reduce((a, b) => (b.step.net > a.step.net ? b : a));
     chosen.push(pick);
     total += pick.step.net;
     if (total < target) {   // every copy is needed
-      for (const copy of [...later].sort((a, b) => a.score - b.score || a.position - b.position)) {
+      for (const copy of [...later].sort((a, b) => a.kept - b.kept || a.score - b.score || a.position - b.position)) {
         if (copy === pick || total >= target) continue;
         chosen.push(copy);
         total += copy.step.net;
@@ -131,7 +141,7 @@ export function choose(prepared, target) {
   for (const { lot, step, score } of chosen) {
     if (!steps.has(lot.key)) {
       steps.set(lot.key, { name: lot.name, ids: lot.ids, icon: lot.icon, units: 0, held: lot.units, proceeds: 0,
-        markets: new Map(), score, weekly: lot.weekly });
+        markets: new Map(), score, weekly: lot.weekly, first: lot.first });
     }
     const entry = steps.get(lot.key);
     entry.units += 1;
@@ -172,9 +182,13 @@ export function reasons(step) {
     out.push(`rising (about ${weekly.toFixed(0)}% a week)`);
     out.push('sold only to reach the target');
   }
-  if (step.held >= 5) {
-    out.push(`you have ${step.held.toLocaleString('en-GB')}`
-      + (step.units < step.held ? ` (selling ${step.units.toLocaleString('en-GB')})` : ''));
+  const n = (v) => v.toLocaleString('en-GB');
+  if (step.held > 1 && step.units < step.held) {
+    out.push(`you have ${n(step.held)} (selling ${n(step.units)}, keeping ${n(step.held - step.units)})`);
+  } else if (step.held > 1 && step.first != null && step.first < step.held) {
+    out.push(`you have ${n(step.held)} (selling all of them: needed to reach the amount)`);
+  } else if (step.held >= 5) {
+    out.push(`you have ${n(step.held)}`);
   }
   const quick = step.markets.filter((m) => m.capacity && m.capacity >= m.units);
   if (quick.length) out.push(`sells steadily on ${quick[0].label}`);
