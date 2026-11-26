@@ -30,7 +30,12 @@ class ApiError(Exception):
 
 
 class RateLimitError(ApiError):
-    """The API kept answering HTTP 429 (Too Many Requests)."""
+    """The API kept answering HTTP 429 (Too Many Requests). ``retry_after``: seconds to wait before
+    asking again - at least what the API itself said (Retry-After / X-RateLimit-Reset)."""
+
+    def __init__(self, message: str, status: int | None = 429, retry_after: float | None = None):
+        super().__init__(message, status)
+        self.retry_after = retry_after
 
 
 class AuthError(ApiError):
@@ -67,6 +72,20 @@ def _retry_after_seconds(resp: requests.Response) -> float | None:
         return max(0.0, when.timestamp() - time.time())
     except (TypeError, ValueError):
         return None
+
+
+def _reset_seconds(resp: requests.Response) -> float | None:
+    """X-RateLimit-Reset: when the allowance refills. APIs give it as seconds left, epoch seconds or
+    epoch milliseconds. It's only ever used to wait longer, never to ask sooner."""
+    try:
+        number = float(resp.headers.get("X-RateLimit-Reset"))
+    except (TypeError, ValueError):
+        return None
+    if number > 1e11:      # epoch milliseconds
+        number /= 1000
+    if number > 1e9:       # epoch seconds
+        number -= time.time()
+    return max(0.0, number)
 
 
 class RateLimitedClient:
@@ -142,13 +161,14 @@ class RateLimitedClient:
                 delay = _retry_after_seconds(resp)
                 if delay is None:
                     delay = self._backoff_delay(attempt)
+                delay = max(delay, _reset_seconds(resp) or 0)   # its allowance refills later: wait for that
                 with self._lock:
                     self._cooldown_until = max(self._cooldown_until, time.monotonic() + delay)
                 if attempt >= self.max_retries or delay > Config.MAX_BACKOFF_SECONDS:
                     raise RateLimitError(
                         f"{self.name} is rate-limiting requests from this computer (HTTP 429). "
                         f"It was left alone for now; try again in a few minutes.",
-                        status=429,
+                        status=429, retry_after=delay,
                     )
                 log.warning("%s: HTTP 429, cooling down for %.0fs (attempt %d)", self.name, delay, attempt + 1)
                 self._notify(f"{self.name} asked us to slow down (HTTP 429) - waiting {int(delay)}s…")

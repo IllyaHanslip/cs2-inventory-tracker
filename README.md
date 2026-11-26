@@ -297,10 +297,11 @@ open **Profile → Developers**, create a key, and put it in `.env` as `CSFLOAT_
 - **Storage units** aren't listed in public Steam inventories at all (Steam counts them in the inventory's
   total but doesn't show them, or what's in them), so their contents and item counts are entered by hand, or
   confirmed from what a sync noticed leaving or coming back. Only the public inventory is read, never your account.
-- **CSFloat** prices are fetched one item at a time. If CSFloat answers "too many requests", the app leaves it
-  alone for a while (1 hour, then longer each time, up to a day) instead of asking again on every refresh, and
-  then fetches your most valuable items first. The banner at the top shows each market's progress and how long
-  is left.
+- **CSFloat** prices are fetched one item at a time. If CSFloat answers "too many requests", the app stops at
+  once and leaves it alone for a while instead of asking again on every refresh: an hour after a run that got
+  a good batch of prices first, longer each time it refuses early (up to a day), and never sooner than CSFloat
+  itself says. Sticker comparisons leave it alone then too. Next time it fetches your most valuable items
+  first. The banner at the top shows each market's progress and how long is left.
 - **Estimates only**: fees change, sticker values are estimates, and none of this is financial advice.
 
 ## Privacy and security

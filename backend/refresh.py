@@ -141,10 +141,13 @@ def _mark_checked(market: str, *names: str) -> None:
     )
 
 
-# After a market answers "too many requests" (Steam's HTTP 429), it's left alone for a while -
-# longer each time it happens again - instead of being asked again on every refresh, which only
-# keeps the limit in place. Any successful run resets it.
+# After a market answers "too many requests" (HTTP 429), it's left alone for a while instead of
+# being asked again on every refresh, which only keeps the limit in place. A run it refuses early
+# waits longer each time (REST_HOURS). A run that got a good batch of prices first only used up its
+# allowance, so it waits the shortest time and the ladder starts again. Never sooner than the
+# market itself said. A run with no 429 at all clears the rest.
 REST_HOURS = (1, 3, 6, 12, 24)
+GOOD_BATCH = 20   # prices fetched before the 429 that make a run a partial success
 
 
 def resting_until(market: str) -> datetime | None:
@@ -157,16 +160,25 @@ def resting_until(market: str) -> datetime | None:
     return until if until > datetime.now(timezone.utc) else None
 
 
-def _after_run(market: str, limited: bool) -> datetime | None:
+def _after_run(market: str, limited: bool, found: int = 0, wait: float | None = None) -> datetime | None:
+    """Start, lengthen or clear a market's rest after a run. ``found``: prices it got before the 429;
+    ``wait``: seconds the market said to wait. Returns when it may be asked again (None: now)."""
     rest = settings.get(f"rest:{market}") or {}
     if not limited:
         if rest:
             settings.set_value(f"rest:{market}", {})
         return None
-    level = int(rest.get("level", 0))
-    until = datetime.now(timezone.utc) + timedelta(hours=REST_HOURS[min(level, len(REST_HOURS) - 1)])
+    level = 0 if found >= GOOD_BATCH else int(rest.get("level", 0))
+    hours = REST_HOURS[min(level, len(REST_HOURS) - 1)]
+    longest = REST_HOURS[-1] * 3600
+    until = datetime.now(timezone.utc) + timedelta(seconds=max(hours * 3600, min(wait or 0, longest)))
     settings.set_value(f"rest:{market}", {"until": until.isoformat(timespec="seconds"), "level": level + 1})
     return until
+
+
+def rest_after_limit(market: str, wait: float | None = None) -> datetime:
+    """A 429 outside the price run (e.g. comparing stickers): rest the market as a refused run would."""
+    return _after_run(market, True, 0, wait)
 
 
 def _most_valuable_first(names: list[str]) -> list[str]:
@@ -180,8 +192,18 @@ def _most_valuable_first(names: list[str]) -> list[str]:
     return sorted(names, key=lambda n: -(best.get(n) or 0) * (held.get(n) or 1))
 
 
-def _local_time(when: datetime) -> str:
-    return when.astimezone().strftime("%H:%M")
+def local_time(when: datetime, now: datetime | None = None) -> str:
+    """A time in words with its day: '17:28 today', '17:28 tomorrow', '17:28 on Saturday', '17:28 on 3 Dec'."""
+    local = when.astimezone()
+    days = (local.date() - (now or datetime.now(timezone.utc)).astimezone().date()).days
+    clock = local.strftime("%H:%M")
+    if days <= 0:
+        return f"{clock} today"
+    if days == 1:
+        return f"{clock} tomorrow"
+    if days < 7:
+        return f"{clock} on {local.strftime('%A')}"
+    return f"{clock} on {local.day} {local.strftime('%b')}"
 
 
 def _note_attempt(market: str) -> None:
@@ -265,8 +287,9 @@ def _fetch_items(source: MarketSource, todo: list[str], job, counter: dict) -> t
             return found, str(exc)
         except RateLimitError as exc:
             counter["limited"].add(source.key)
-            done = f" after {index} of {len(todo)} items" if index else ""
-            return found, f"{exc} Stopped{done}."
+            counter.setdefault("waits", {})[source.key] = exc.retry_after
+            when = f"after {index} of {len(todo)} items" if index else "straight away"
+            return found, f"{source.label} asked the app to slow down (HTTP 429) {when}."
         except ApiError as exc:
             errors += 1
             if errors >= 5:
@@ -309,10 +332,10 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
         if not source.bulk:
             until = resting_until(key)
             if until:
-                note = (f"{source.label} asked the app to slow down, so it's left alone until {_local_time(until)}; "
+                note = (f"{source.label} asked the app to slow down, so it's left alone until {local_time(until)}; "
                         "its prices are fetched again after that.")
                 job.warn(note)
-                job.step(key, label=source.label, note=f"resting until {_local_time(until)}", finished=True)
+                job.step(key, label=source.label, note=f"resting until {local_time(until)}", finished=True)
                 continue
             _note_attempt(key)
             per_item.append(source)
@@ -353,9 +376,10 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
             futures = {s.key: pool.submit(_run_per_item_source, s, work[s.key], job, counter) for s in per_item}
             for key, future in futures.items():
                 count, warning = future.result()
-                until = _after_run(key, key in counter["limited"])
+                until = _after_run(key, key in counter["limited"], count, counter.get("waits", {}).get(key))
                 if until:
-                    warning = (f"{warning} It's left alone until {_local_time(until)} (longer each time it happens), "
+                    longer = "" if count >= GOOD_BATCH else " (longer each time it refuses early)"
+                    warning = (f"{warning} It's left alone until {local_time(until)}{longer}, "
                                "then the rest are fetched, most valuable first.")
                 found[key] = count
                 if count:
@@ -365,8 +389,12 @@ def refresh_prices(job, force: bool = False) -> dict[str, Any]:
                 if warning:
                     job.warn(warning)
 
-    # Items whose stickers are worth more than the skin: value them from CSFloat comparables.
-    sticker_evidence = comparables.refresh_evidence(job)
+    # Items whose stickers are worth more than the skin: value them from CSFloat comparables
+    # (not while CSFloat is resting: it's left alone completely).
+    if resting_until("csfloat"):
+        sticker_evidence = {"checked": 0, "valued": 0}
+    else:
+        sticker_evidence = comparables.refresh_evidence(job)
 
     job.update(message="Finding pictures for items added by hand…")
     images.backfill()

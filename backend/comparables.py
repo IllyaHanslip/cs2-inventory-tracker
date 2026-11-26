@@ -118,6 +118,13 @@ def find_comparables(item: dict[str, Any], valuator, refresh: bool = False) -> d
         if cached is not None:
             return {**cached, "cached": True}
 
+    # CSFloat asked the app to slow down: it's left alone until then (refresh.py keeps the rest).
+    from .refresh import local_time, rest_after_limit, resting_until   # here: refresh imports this module
+    until = resting_until("csfloat")
+    if until:
+        raise RateLimitError(f"CSFloat asked the app to slow down, so it's left alone until {local_time(until)}. "
+                             "Compare again after that.")
+
     name = item["market_hash_name"]
     headers = {"Authorization": Config.CSFLOAT_API_KEY}
     key_ids = [k["id"] for k in key]
@@ -130,9 +137,14 @@ def find_comparables(item: dict[str, Any], valuator, refresh: bool = False) -> d
         })
         return _rows(resp)
 
-    combo_listings = listings(unique_ids)
-    top_listings = listings(unique_ids[:1]) if len(unique_ids) > 1 else []
-    sales = _rows(source.client.get(SALES_URL.format(name=quote(name, safe="")), headers=headers))
+    try:
+        combo_listings = listings(unique_ids)
+        top_listings = listings(unique_ids[:1]) if len(unique_ids) > 1 else []
+        sales = _rows(source.client.get(SALES_URL.format(name=quote(name, safe="")), headers=headers))
+    except RateLimitError as exc:
+        until = rest_after_limit("csfloat", exc.retry_after)
+        raise RateLimitError(f"CSFloat asked the app to slow down (HTTP 429), so it's left alone until "
+                             f"{local_time(until)}.", retry_after=exc.retry_after) from None
 
     names = sticker_names()
     refs = _reference_prices(valuator)

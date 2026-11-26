@@ -2,7 +2,18 @@
 It starts the app and opens the dashboard in your browser. Keep its window open while you use it;
 close the window to stop.
 
-### What's new in v1.5.6
+### What's new in v1.5.7
+
+- **CSFloat's wait says which day**: "left alone until 17:28" now says "17:28 today", "17:28 tomorrow" or the day
+  of the week.
+- **A shorter wait after a good run**: CSFloat is asked one item at a time, and it says "slow down" once its
+  allowance is used up. A run that got a good batch of prices first (say 184 of 373) now waits an hour and then
+  carries on with the rest, instead of counting as a refusal and waiting longer each time, up to a whole day.
+  A run CSFloat refuses early still waits longer each time, and the app never asks sooner than CSFloat says.
+- **Left alone means left alone**: sticker comparisons no longer ask CSFloat while it's resting, and a "slow
+  down" during one starts a rest too.
+
+### v1.5.6
 
 - **"Confirm all as set" straight after confirming one change** no longer sends that change again: you'd
   see "That change has already been dealt with" and a "still need you to choose" count one too high
